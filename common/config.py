@@ -44,6 +44,9 @@ SKILL_OWNER: dict[str, str] = {s: a.name for a in AGENTS.values() for s in a.ski
 MAX_DELEGATION_DEPTH = 3
 MAX_FANOUT = 3
 
+# Terminal outputs of these agents are reviewed by the Validator (PRD Validator loop)
+REVIEWED_AGENTS = {"carrier_ap", "shipper_ar", "controller", "cfo"}
+
 # Voice Desk: which caller may request which call purpose (PRD 7.5)
 CALL_PURPOSES = {"verification": "verification", "shipper_ar": "collections",
                  "controller": "approvals", "cfo": "cash_brief"}

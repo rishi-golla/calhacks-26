@@ -1,32 +1,26 @@
-"""Send the hero invoice to Carrier AP over real A2A; AP delegates to Risk. Requires `make agents`."""
+"""Fire the hero invoice at the running mesh (`make agents`) and print the case trail."""
 import asyncio
 import json
 import pathlib
-
-from a2a.client import ClientConfig, create_client
-from a2a.helpers import new_data_message
-from a2a.types import Role, SendMessageRequest
-
-from common.config import AGENTS
-from common.envelope import TaskEnvelope
-from common.runtime import extract_artifact_data
+import uuid
 
 HERO = json.loads((pathlib.Path(__file__).parent.parent / "sim/fixtures/hero_case.json").read_text())
 
 
-async def run() -> list[dict]:
-    env = TaskEnvelope(task_type="process_carrier_invoice", case_id=HERO["case_id"], subject=HERO, priority="P0")
-    msg = new_data_message(env.model_dump(), role=Role.ROLE_USER)
-    msg.metadata.update({"case_id": HERO["case_id"], "from_agent": "router"})
-    client = await create_client(AGENTS["carrier_ap"].url, ClientConfig(streaming=True))
-    out: list[dict] = []
-    try:
-        async for ev in client.send_message(SendMessageRequest(message=msg)):
-            out.extend(extract_artifact_data(ev))
-    finally:
-        await client.close()
-    return out
+async def run() -> dict:
+    from common import a2a_client, store
+    from router.main import dispatch
+    run_id = uuid.uuid4().hex[:4]
+    case_id = f"{HERO['case_id']}-{run_id}"
+    task_id = await dispatch({"event_id": f"EVT-{run_id}", "type": "carrier_invoice.received", "priority": "P0",
+                              "payload": {**HERO, "case_id": case_id, "invoice_id": f"INV-{run_id}"}})
+    for _ in range(240):
+        t = await a2a_client.get_task("carrier_ap", task_id)
+        if a2a_client.state_name(t) in ("completed", "failed"):
+            break
+        await asyncio.sleep(0.25)
+    return {"result": a2a_client.artifacts(t)[-1:], "events": [(e["agent"], e["kind"]) for e in store.events(case_id)]}
 
 
 if __name__ == "__main__":
-    print(json.dumps(asyncio.run(run()), indent=2))
+    print(json.dumps(asyncio.run(run()), indent=2, default=str))

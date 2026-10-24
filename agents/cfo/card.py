@@ -1,2 +1,4 @@
-"""Skill descriptions for the cfo Agent Card. Skills/ports come from common.config."""
-DESCRIPTIONS: dict[str, str] = {}
+DESCRIPTIONS = {
+    "assess_financial_impact": "Quantify the cash and margin impact of a case.",
+    "cash_forecast": "13-week style cash view from AP/AR subledgers.",
+}

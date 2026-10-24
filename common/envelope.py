@@ -9,7 +9,7 @@ BusinessStatus = Literal[
     "awaiting_call", "awaiting_human_approval", "resolved", "rejected", "failed",
 ]
 Outcome = Literal["clear", "suspicious", "verified", "unverified", "hold", "approve", "reject",
-                  "partial", "pass", "issue", "not_implemented"]
+                  "partial", "pass", "issue", "short_pay", "reconciled", "failed", "info", "not_implemented"]
 
 
 class TaskEnvelope(BaseModel):
@@ -34,6 +34,7 @@ class DelegationMeta(BaseModel):
     visited: list[str] = Field(default_factory=list)
     idempotency_key: str | None = None
     priority: Priority = "P2"
+    context_id: str | None = None
 
 
 class ResultArtifact(BaseModel):

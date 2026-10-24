@@ -1,2 +1,5 @@
-"""Skill descriptions for the shipper_ar Agent Card. Skills/ports come from common.config."""
-DESCRIPTIONS: dict[str, str] = {}
+DESCRIPTIONS = {
+    "reconcile_customer_payment": "Match a shipper payment to open invoices; chase short-pays.",
+    "chase_overdue": "Collections call to the shipper's AP contact ending in a promise-to-pay date.",
+    "set_credit_limit": "Set a shipper credit limit from CRS business credit.",
+}

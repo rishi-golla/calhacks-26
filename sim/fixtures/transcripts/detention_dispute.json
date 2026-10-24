@@ -1,0 +1,9 @@
+[
+  {"role": "agent", "text": "Hi, this is an AI assistant calling on behalf of Golden Gate Freight accounts payable. This call may be recorded. Am I speaking with dispatch?"},
+  {"role": "counterparty", "text": "Yeah, this is dispatch."},
+  {"role": "agent", "text": "Your invoice for load LOAD-4821 includes two hours of detention at the Reno consignee. Our GPS shows the truck on site from 14:02 to 14:49. Can you confirm how long the driver was detained?"},
+  {"role": "counterparty", "text": "Let me check... okay, the driver says he was in and out in about 45 minutes. The detention line was added by mistake."},
+  {"role": "agent", "text": "Thanks. Do you have a detention receipt or a signed in/out time from the facility?"},
+  {"role": "counterparty", "text": "No, we don't have a receipt. Go ahead and pay the linehaul, we'll withdraw the detention."},
+  {"role": "agent", "text": "Understood. We'll pay the linehaul of $1,850 and remove the $300 detention. Thank you."}
+]

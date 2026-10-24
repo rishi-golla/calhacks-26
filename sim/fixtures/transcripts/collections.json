@@ -1,0 +1,6 @@
+[
+  {"role": "agent", "text": "Hi, this is an AI assistant calling for Golden Gate Freight accounts receivable about an open balance."},
+  {"role": "counterparty", "text": "Sure, which invoice?"},
+  {"role": "agent", "text": "Invoice INV-S07-118 was short-paid by $400. Can you tell me when the balance will be paid?"},
+  {"role": "counterparty", "text": "That was a processing error. We will pay the remaining balance by 2026-10-30."}
+]

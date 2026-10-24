@@ -6,6 +6,7 @@ import {
   ChevronRight,
   FileSpreadsheet,
   ListTree,
+  Menu,
   Play,
   Plus,
   Wallet,
@@ -71,10 +72,12 @@ export default function Home({
   onNavigate,
   onOpenCase,
   onAsk,
+  onOpenMenu,
 }: {
   onNavigate: (view: string) => void;
   onOpenCase: (caseId: string) => void;
   onAsk: (query: string) => void;
+  onOpenMenu: () => void;
 }) {
   const { data } = useLive();
   const time = useClock();
@@ -92,6 +95,13 @@ export default function Home({
   return (
     <div className="home">
       <header className="home-top">
+        <button
+          className="home-menu"
+          aria-label="Open navigation"
+          onClick={onOpenMenu}
+        >
+          <Menu size={18} />
+        </button>
         <nav aria-label="Quick links">
           <button onClick={() => onNavigate("overview")}>Overview</button>
           <button onClick={() => onNavigate("companies")}>

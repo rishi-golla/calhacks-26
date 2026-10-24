@@ -404,8 +404,10 @@ function DashboardBody() {
             <Home
               onNavigate={navigate}
               onOpenCase={openCase}
+              onOpenMenu={openNavigation}
               onAsk={(text) => {
                 setQuery(text);
+                setCaseId("");
                 navigate("cases");
               }}
             />

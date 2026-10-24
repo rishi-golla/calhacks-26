@@ -100,6 +100,10 @@ def test_lifecycle_paper_trail_routes_cleanly(world, scenario):
     if scenario == "duplicate_renumbered":
         assert len(invoices) == 2 and invoices[0]["payload"]["bol"] == invoices[1]["payload"]["bol"]
         assert router._keys(invoices[0])[1] != router._keys(invoices[1])[1]
+        from agents.carrier_ap.tools import three_way_match
+        duplicate_match = three_way_match({**invoices[1]["payload"],
+                                           "duplicate_of": invoices[0]["payload"]["invoice_id"]})
+        assert "P-007" in duplicate_match["policy_ids"]
     if scenario == "pod_unsigned":
         assert inv["pod_signed"] is False
     if scenario in ("bank_change", "factoring_unverified"):
@@ -114,6 +118,26 @@ def test_lifecycle_paper_trail_routes_cleanly(world, scenario):
     g.record_answer(load, scenario, load["planted"])
     key = json.loads((g.data_dir() / "answer_key.jsonl").read_text().splitlines()[-1])
     assert key["scenario"] == scenario and key["expected"]
+
+
+@pytest.mark.parametrize("scenario", sorted(
+    __import__("sim.generator").generator.SCENARIOS
+    - {"clean", "duplicate_invoice", "duplicate_renumbered", "shipper_short_pay", "bank_change",
+       "detention_supported"}))
+def test_exception_invoices_are_held_by_ap_policy(world, scenario):
+    from agents.carrier_ap.tools import three_way_match
+    _, _, evs = _run(world, scenario)
+    invoice = next(e["payload"] for e in evs if e["type"] == "carrier_invoice.received")
+    assert not three_way_match(invoice)["matched"]
+
+
+def test_unsupported_detention_without_receipt_is_held_over_contract(world):
+    from agents.carrier_ap.tools import three_way_match
+    world["lanes"][0].update(contract_rate=8000, linehaul=8000)
+    _, _, evs = _run(world, "detention_unsupported")
+    invoice = next(e["payload"] for e in evs if e["type"] == "carrier_invoice.received")
+    match = three_way_match(invoice)
+    assert not match["matched"] and "P-014" in match["policy_ids"]
 
 
 def test_gps_breadcrumbs_follow_the_lane(world):

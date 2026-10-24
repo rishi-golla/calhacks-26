@@ -131,7 +131,8 @@ only database coordinates, never provider or service credentials.
 1. Start Postgres/Redis (`make infra`) and provision W2 using `spacetime/README.md`. Publish the
    updated module and provision the new Documents identity before using it. Load the generated
    `SPACETIME_TOKEN_<ID>` credentials into each service environment.
-2. Provide a trusted W4 source export through `SOURCE_DATA_PATH`: a JSON object with `cases`,
+2. Provide a trusted W4 source export through `SOURCE_DATA_PATH` (`make ingest` writes it to
+   `data/source.json`; see README "Live data"): a JSON object with `cases`,
    `companies`, and `contacts`. Cases are keyed by resolved `case_id`; contacts are keyed by
    company ID and contain verified directory provenance. The bundled fixture is only for an
    explicitly simulated run. Live mode never promotes task-supplied financial values to facts.

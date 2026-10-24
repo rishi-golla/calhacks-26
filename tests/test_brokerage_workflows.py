@@ -45,6 +45,17 @@ def test_invoice_tolerance_uses_this_load(amount, contract, exceeds):
     assert result["matched"] is not exceeds
 
 
+def test_discount_lines_count_toward_the_invoice_total():
+    source = invoice(1869.44, 1907.59)
+    source["line_items"] = [{"kind": "linehaul", "amount": 1850}, {"kind": "fuel_surcharge", "amount": 57.59},
+                            {"kind": "quickpay_discount", "amount": -38.15}]
+    result = three_way_match(source)
+    assert result["totals_match"] is True and result["matched"] is True
+    source["invoice_amount"] = -1
+    with pytest.raises(SourceUnavailable):
+        three_way_match(source)
+
+
 @pytest.mark.parametrize("value", [True, None, "NaN", "Infinity", -1, 1.001])
 def test_money_rejects_invalid_or_fractional_cents(value):
     with pytest.raises(SourceUnavailable):
@@ -299,3 +310,12 @@ def test_fixture_source_contains_multiple_financial_scenarios():
     data = json.loads(Path("sim/fixtures/brokerage_source.json").read_text())
     assert len(data["cases"]) >= 3
     assert len({case["invoice_amount"] for case in data["cases"].values()}) > 1
+
+
+async def test_invoice_from_a_different_carrier_is_held_not_paid():
+    source = invoice()
+    source.update(carrier_identity_mismatch=True, carrier_identity={
+        "tendered_usdot": "1111111", "invoice_usdot": "2222222", "flags": ["usdot_mismatch"]})
+    result = await run_handler(CarrierAPAgent, "process_carrier_invoice", source)
+    assert result.outcome == "hold" and result.findings["payment_blocked"] is True
+    assert "payment_proposal" not in result.findings and "P-002" in result.policy_ids

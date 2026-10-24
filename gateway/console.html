@@ -23,14 +23,16 @@ td.c{cursor:pointer}td.c:hover{background:#1d2738}.pill{padding:1px 6px;border-r
 .cs{border-left:3px solid var(--acc);padding:4px 8px;margin:6px 0;font-size:12px}.b{color:var(--bad);text-decoration:line-through}.a{color:var(--ok)}
 .span2{grid-column:span 2}#toast{position:fixed;bottom:12px;right:12px;background:#222c3f;padding:8px 12px;border-radius:8px;display:none}
 </style></head><body>
-<header><h1>Golden Gate Freight · Live Ops Console</h1><span class="demo">DEMO MODE · outreach routed to team allowlist only</span>
+<header><h1>Golden Gate Freight · Live Ops Console</h1><span class="demo">Outreach: team phones/inboxes only (real contacts shown, never dialed)</span>
 <input id="tok" placeholder="gateway token" size="12" type="password">
 <span class="pill live" id="rate">stream …</span><span class="pill" id="clk">business time …</span>
+<details><summary>Manual inject</summary>
 <button onclick="inject('detention_unsupported')">Inject detention dispute (call)</button>
 <button onclick="inject('detention_unsupported',{channel:'email'})">… (email)</button>
 <button class="sec" onclick="inject('detention_unsupported',{force_human_approval:true})">… + human approval</button>
 <button class="sec" onclick="inject('shipper_short_pay')">Shipper short-pay</button>
 <button class="sec" onclick="inject('bank_change')">Bank-change request</button>
+</details>
 <span id="chain" class="pill">chain …</span></header>
 <main>
 <section class="card" style="grid-row:span 2"><h2>Cases</h2><div id="cases"></div></section>

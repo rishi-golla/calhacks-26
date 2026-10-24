@@ -12,7 +12,7 @@ from common.envelope import TaskEnvelope
 from harness.chat import complete
 from harness.ingest.amounts import MONEY, READERS
 from harness.ingest.dispatch import Dispatcher, DispatchError
-from harness.ingest.redact import BUSINESS, known_spans, leftovers, redact_obj, replace_spans
+from harness.ingest.redact import ALLOWLIST_LABEL, BUSINESS, known_spans, leftovers, redact_obj, replace_spans
 from harness.ingest.routing import Route, classify, table_route
 from harness.ingest.schemas import AMOUNT_FIELDS, DOC_TYPE, PII_ONLY, SCHEMAS, is_structured, lite_schema
 from harness.ingest.vault import TOKEN_RE, Vault
@@ -105,8 +105,8 @@ def _verbatim_spans(items: list[dict], text: str, vault: Vault, kinds: dict[str,
         t = (p.get("text") or "").strip()
         if len(t) < 3 or t not in text or TOKEN_RE.search(t):
             continue
-        if MONEY.fullmatch(t):
-            continue  # amounts are not personal data
+        if MONEY.fullmatch(t) or ALLOWLIST_LABEL.fullmatch(t):
+            continue  # amounts and demo allowlist labels (team-N) are not personal data
         if p.get("kind") == "name" and BUSINESS.search(t):
             continue  # company names are not personal data and agents need them
         spans[t] = vault.tokenize(kinds.get(p.get("kind", ""), "PII"), t)

@@ -3,25 +3,34 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev --turbopack --port 3001",
     "build": "next build --turbopack",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "next start --port 3001",
+    "lint": "eslint",
+    "test": "tsx --test lib/*.test.ts"
   },
   "dependencies": {
+    "@xyflow/react": "^12.12.0",
+    "lucide-react": "^1.61.0",
+    "next": "15.5.28",
     "react": "19.1.0",
+    "react-data-grid": "7.0.0-beta.47",
     "react-dom": "19.1.0",
-    "next": "15.5.28"
+    "spacetimedb": "2.10.2"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@tailwindcss/postcss": "^4",
-    "tailwindcss": "^4",
     "eslint": "^9",
     "eslint-config-next": "15.5.28",
-    "@eslint/eslintrc": "^3"
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5"
+  },
+  "overrides": {
+    "postcss": "8.5.31"
   }
 }

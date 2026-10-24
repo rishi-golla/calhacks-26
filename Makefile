@@ -1,5 +1,5 @@
 PY := .venv/bin/python
-.PHONY: setup infra harness agents gateway router web test lint demo world sim live
+.PHONY: setup infra harness agents gateway router ingest web test lint demo world sim live
 
 setup:            ## create venv + install
 	python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -14,6 +14,8 @@ gateway:          ## webhooks + demo endpoints on :9000
 	$(PY) -m gateway.app
 router:           ## Redis -> first-hop A2A
 	$(PY) -m router.main
+ingest:           ## Read raw email and bank inputs -> case-opening events
+	$(PY) -m ingest.main
 world:            ## refresh real carriers (FMCSA) + shippers (SEC EDGAR) -> data/world.json
 	$(PY) -m sim.world --refresh
 sim:              ## real-time event stream -> Redis `events`

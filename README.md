@@ -35,6 +35,9 @@ make test
 ## Live data (W4)
 `make live` starts Redis, all 8 agents, the router, the gateway and the real-time simulator, then open
 the `console#token=…` link `make live` prints (it generates a token if `.env` has none).
+Raw carrier invoices, bank-change requests, remittance emails, and BAI2 records are read by the ingestion service,
+matched against structured TMS events, and only then emitted as case-opening events for the router. Ingestion keeps
+its matching state in `data/ingest.db`.
 - **Counterparties are real.** Carriers come from FMCSA's Company Census (active, for-hire, general freight, with a
   registered phone and email); shippers come from SEC EDGAR (manufacturing, wholesale and retail filers). `make world`
   refreshes `data/world.json`. Contacts are shown unmasked; outreach still only reaches the demo allowlist.

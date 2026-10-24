@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full live stack: Redis, real-counterparty world, 8 agents, router, gateway and the real-time simulator.
+# Full live stack: Redis, real-counterparty world, 8 agents, router, ingestion, gateway and simulator.
 # Calls/emails park for a human playing the counterparty (no scripted transcripts). Ctrl-C stops everything.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -16,6 +16,7 @@ pids=()
 ./scripts/dev_agents.sh & pids+=($!)
 sleep 4
 $PY -m router.main & pids+=($!)
+$PY -m ingest.main & pids+=($!)
 $PY -m gateway.app & pids+=($!)
 sleep 2
 $PY -m sim.generator & pids+=($!)

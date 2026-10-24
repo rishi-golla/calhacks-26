@@ -135,41 +135,62 @@ def _email_needs_review(trigger: dict, message: dict) -> dict:
     return _document_event(trigger, "other", "needs_review", fields, evidence_refs=_evidence_refs(message))
 
 
+def _email_event(trigger: dict, message: dict) -> dict:
+    refs = _evidence_refs(message)
+    payload = {**trigger.get("payload", {}),
+               "text": message.get("body") or trigger.get("payload", {}).get("snippet") or "",
+               "from": message.get("from") or "",
+               "to": message.get("to") or "",
+               "subject": message.get("subject") or "",
+               "date": trigger.get("payload", {}).get("sent_at") or message.get("date"),
+               "evidence_refs": refs}
+    return _event(trigger, "email.received", payload, evidence_refs=refs)
+
+
 async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -> list[dict]:
     attachments = message.get("attachments", [])
     invoice_doc = next((item for item in attachments if classify(item.get("text", "")) == "carrier_invoice"), None)
+    refs = _evidence_refs(message)
     if not invoice_doc:
-        return [_document_event(trigger, "carrier_invoice", "needs_review", evidence_refs=_evidence_refs(message))]
+        return [_document_event(trigger, "carrier_invoice", "needs_review", evidence_refs=refs),
+                _email_event(trigger, message)]
     extracted = await extract_invoice(invoice_doc.get("text", ""), str(trigger.get("case_hint") or "unmatched"))
     fields = extracted["fields"]
-    refs = _evidence_refs(message)
     load, load_mismatch = _find_load(db, fields)
     if load_mismatch:
         mismatch_fields = {**fields, "mismatch": load_mismatch}
         return [_document_event(trigger, "carrier_invoice", "needs_review", mismatch_fields,
-                                extracted["confidence"], extracted["method"], evidence_refs=refs)]
+                                extracted["confidence"], extracted["method"], evidence_refs=refs),
+                _email_event(trigger, message)]
     if not load:
         return [_document_event(trigger, "carrier_invoice", "needs_review", fields, extracted["confidence"],
-                                extracted["method"], load, evidence_refs=refs)]
+                                extracted["method"], load, evidence_refs=refs), _email_event(trigger, message)]
 
     carrier_fields = load.get("carrier") or {}
     load_usdot = carrier_fields.get("usdot")
-    if fields.get("usdot") and load_usdot and not _same_identifier(fields["usdot"], load_usdot):
-        mismatch_fields = {**fields, "mismatch": "usdot"}
-        return [_document_event(trigger, "carrier_invoice", "needs_review", mismatch_fields,
-                                extracted["confidence"], extracted["method"], load, evidence_refs=refs)]
     line_items = fields.get("line_items") or []
     if not line_items:
         mismatch_fields = {**fields, "mismatch": "no_line_items"}
         return [_document_event(trigger, "carrier_invoice", "needs_review", mismatch_fields,
-                                extracted["confidence"], extracted["method"], load, evidence_refs=refs)]
+                                extracted["confidence"], extracted["method"], load, evidence_refs=refs),
+                _email_event(trigger, message)]
     if fields.get("total") is None or not fields.get("invoice_number"):
         return [_document_event(trigger, "carrier_invoice", "needs_review", fields, extracted["confidence"],
-                                extracted["method"], load, evidence_refs=refs)]
+                                extracted["method"], load, evidence_refs=refs), _email_event(trigger, message)]
 
     usdot = load_usdot or fields.get("usdot")
     carrier = directory.by_usdot(str(load_usdot)) if load_usdot else None
     carrier = carrier or carrier_fields
+    invoice_carrier_name = fields.get("carrier_name")
+    remit_to_name = fields.get("remit_to_name")
+    ingest_flags = []
+    if fields.get("usdot") and load_usdot and not _same_identifier(fields["usdot"], load_usdot):
+        ingest_flags.append("usdot_mismatch")
+    if invoice_carrier_name and carrier_fields.get("name") \
+            and not _same_identifier(invoice_carrier_name, carrier_fields["name"]):
+        ingest_flags.append("carrier_mismatch")
+    if remit_to_name and carrier_fields.get("name") and not _same_identifier(remit_to_name, carrier_fields["name"]):
+        ingest_flags.append("remit_to_mismatch")
     load_id = load["load_id"]
     invoice_number = fields["invoice_number"]
     invoice_id = f"INV-{usdot or ''}-{invoice_number}"
@@ -219,6 +240,7 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
         "bol": load.get("bol"), "po": load.get("po"), "invoice_id": invoice_id,
         "invoice_number": invoice_number, "carrier": carrier, "shipper": load.get("shipper"),
         "contract_rate": load.get("contract_rate"), "invoice_amount": fields["total"], "line_items": line_items,
+        "invoice_carrier_usdot": fields.get("usdot"), "ingest_flags": ingest_flags,
         "detention_hours_claimed": next(
             (
                 float(match.group(1))
@@ -238,7 +260,11 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
     document_fields = {**fields, "attachments": {"pod": pod, "detention_log": detention_log,
                                                    "lumper_receipt": has_lumper_receipt},
                        "unmatched_attachments": unmatched_attachments}
-    document = _document_event(trigger, "carrier_invoice", "extracted", document_fields, extracted["confidence"],
+    if ingest_flags:
+        document_fields["ingest_flags"] = ingest_flags
+        document_fields["mismatch"] = ingest_flags[0].removesuffix("_mismatch")
+    document = _document_event(trigger, "carrier_invoice", "needs_review" if ingest_flags else "extracted",
+                               document_fields, extracted["confidence"],
                                extracted["method"], load, case_id, refs)
     priority = "P1" if has_accessorial_line or (
         payload["contract_rate"] is not None and payload["invoice_amount"] > payload["contract_rate"]) else "P2"
@@ -252,7 +278,8 @@ def _bank_change(trigger: dict, message: dict, db: sqlite3.Connection) -> list[d
     refs = _evidence_refs(message)
     subject_match = re.search(r"remittance details\s*-\s*(.+)$", message.get("subject", ""), re.IGNORECASE)
     number_match = re.search(r"\binvoice\s+(\S+),", message.get("body", ""), re.IGNORECASE)
-    account_match = re.search(r"\bAccount\s+\*{4}(\d{4})", message.get("body", ""), re.IGNORECASE)
+    account_match = re.search(r"\bAccount(?:\s+number)?\s*:\s*(\d{10,12})\b", message.get("body", ""), re.IGNORECASE)
+    account_last4_match = re.search(r"\bAccount\s+\*{4}(\d{4})", message.get("body", ""), re.IGNORECASE)
     carrier_name = subject_match.group(1).strip() if subject_match else ""
     carriers = directory.load().get("carriers", [])
     carrier = next((item for item in carriers if carrier_name.casefold() in {
@@ -266,22 +293,16 @@ def _bank_change(trigger: dict, message: dict, db: sqlite3.Connection) -> list[d
                     or str(registered.get("usdot", "")) == str(carrier.get("usdot", ""))):
                 invoice = candidate
                 break
-    if not carrier or not invoice or not account_match:
-        fields = {"carrier": carrier_name or None, "invoice_number": number_match.group(1) if number_match else None,
-                  "new_account_last4": account_match.group(1) if account_match else None}
-        return [_document_event(trigger, "bank_change_request", "needs_review", fields,
-                                {key: 0.95 if value else 0.0 for key, value in fields.items()},
-                                evidence_refs=refs)]
-
-    invoice_carrier = invoice.get("carrier") or carrier
-    remit_name = (invoice.get("remit_to") or {}).get("name")
-    carrier_name = carrier.get("name") or invoice_carrier.get("name", "")
+    invoice_carrier = invoice.get("carrier") if invoice else carrier
+    invoice_carrier = invoice_carrier or {}
+    remit_name = ((invoice or {}).get("remit_to") or {}).get("name")
+    carrier_name = (carrier or {}).get("name") or invoice_carrier.get("name") or carrier_name
     requested_via = ("invoice_remit_to" if remit_name and
                      remit_name.strip().casefold() != carrier_name.strip().casefold() else "email")
-    load_id = invoice.get("load_id")
-    case_id = f"CASE-{load_id}-BANK"
+    load_id = invoice.get("load_id") if invoice else None
+    case_id = f"CASE-{load_id}-BANK" if load_id else trigger.get("case_hint")
     sender_address = parseaddr(str(message.get("from") or ""))[1].strip()
-    registered_email = str(carrier.get("email") or "").strip()
+    registered_email = str((carrier or {}).get("email") or "").strip()
     sender_domain = sender_address.rpartition("@")[2]
     registered_domain = registered_email.rpartition("@")[2]
     sender_matches_registered = bool(
@@ -289,21 +310,26 @@ def _bank_change(trigger: dict, message: dict, db: sqlite3.Connection) -> list[d
         and sender_address.casefold() == registered_email.casefold()
         and sender_domain.casefold() == registered_domain.casefold()
     )
-    payload = {"case_id": case_id, "load_id": load_id, "lane": invoice.get("lane"), "pro": invoice.get("pro"),
-               "bol": invoice.get("bol"), "po": invoice.get("po"), "carrier": invoice_carrier,
-               "invoice_id": invoice.get("invoice_id"), "requested_via": requested_via,
+    account_number = account_match.group(1) if account_match else None
+    account_last4 = account_number[-4:] if account_number else (
+        account_last4_match.group(1) if account_last4_match else None)
+    payload = {"case_id": case_id, "load_id": load_id, "lane": invoice.get("lane") if invoice else None,
+               "pro": invoice.get("pro") if invoice else None,
+               "bol": invoice.get("bol") if invoice else None, "po": invoice.get("po") if invoice else None,
+               "carrier": invoice_carrier or None,
+               "invoice_id": invoice.get("invoice_id") if invoice else None, "requested_via": requested_via,
                "from": message.get("from"), "registered_email": registered_email,
                "sender_matches_registered": sender_matches_registered,
-               "new_payee": remit_name or carrier_name, "new_account_last4": account_match.group(1),
+               "new_payee": remit_name or carrier_name, "new_account_last4": account_last4,
                "source_email": message.get("mail_id")}
+    fields = {"carrier": carrier_name or None, "invoice_number": number_match.group(1) if number_match else None,
+              "new_account_last4": account_last4, "requested_via": requested_via,
+              "sender_matches_registered": sender_matches_registered}
+    status = "extracted_unverified_sender" if not sender_matches_registered else (
+        "extracted" if carrier and account_last4 else "needs_review")
     document = _document_event(
-        trigger, "bank_change_request",
-        "extracted" if sender_matches_registered else "extracted_unverified_sender",
-        {"carrier": carrier_name, "invoice_number": number_match.group(1),
-         "new_account_last4": account_match.group(1), "requested_via": requested_via,
-         "sender_matches_registered": sender_matches_registered},
-        {"carrier": 0.95, "invoice_number": 0.95, "new_account_last4": 0.95,
-         "requested_via": 0.95, "sender_matches_registered": 0.95},
+        trigger, "bank_change_request", status, fields,
+        {key: 0.95 if value else 0.0 for key, value in fields.items()},
         load={"load_id": load_id}, case_id=case_id, evidence_refs=refs)
     return [document, _event(trigger, "bank_change.requested", payload, "P0", refs)]
 
@@ -321,9 +347,11 @@ def _remittance_advice(trigger: dict, message: dict, db: sqlite3.Connection) -> 
         fields = {"invoice_id": invoice_id, "deduction_reason": reason}
         return [_document_event(trigger, "remittance_advice", "needs_review", fields,
                                 {"invoice_id": 0.95 if invoice_id else 0.0,
-                                 "deduction_reason": 0.95 if reason else 0.0}, evidence_refs=refs)]
+                                 "deduction_reason": 0.95 if reason else 0.0}, evidence_refs=refs),
+                _email_event(trigger, message)]
     invoice["deduction_reason"] = reason
     invoice["source_email"] = message.get("mail_id")
+    invoice["remittance_text"] = message.get("body") or ""
     db.execute("UPDATE shipper_invoices SET json=? WHERE invoice_id=?", (_dump(invoice), invoice_id))
     fields = {"invoice_id": invoice_id, "deduction_reason": reason}
     case_id = f"{invoice.get('case_id')}-AR"
@@ -353,32 +381,41 @@ def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
     output = []
     for line in pending:
         if not line.startswith("16,"):
+            if record is not None:
+                output.append(_event(trigger, "bank.event", {
+                    "amount": None, "direction": "credit", "counterparty": None, "reference": None,
+                    "posted_at": trigger.get("sim_ts"), "txn_id": None, "file": filename, "record": line,
+                }))
             continue
         parts = line.rstrip("/\r\n").split(",")
         txn_id = parts[4] if len(parts) > 4 else None
         if txn_id and db.execute("SELECT 1 FROM bank_txns WHERE txn_id=?", (txn_id,)).fetchone():
             continue
-        if len(parts) < 7:
-            output.append(_document_event(trigger, "bank_transaction", "needs_review",
-                                          {"file": filename, "record": line}))
-            if txn_id:
-                db.execute("INSERT OR IGNORE INTO bank_txns(txn_id) VALUES (?)", (txn_id,))
-            continue
-        cents, reference, counterparty = parts[2], parts[5], parts[6]
+        cents = parts[2] if len(parts) > 2 else None
+        reference = parts[5] if len(parts) > 5 else None
+        counterparty = parts[6].rstrip("/") if len(parts) > 6 else None
         try:
-            paid_amount = round(int(cents) / 100, 2)
+            paid_amount = round(int(cents) / 100, 2) if cents is not None else None
         except ValueError:
-            output.append(_document_event(trigger, "bank_transaction", "needs_review",
-                                          {"file": filename, "record": line}))
+            paid_amount = None
+        direction = "debit" if len(parts) > 1 and parts[1] == "455" else "credit"
+        if len(parts) < 7 or paid_amount is None:
+            output.append(_event(trigger, "bank.event", {
+                "amount": paid_amount, "direction": direction, "counterparty": counterparty,
+                "reference": reference, "posted_at": trigger.get("sim_ts"), "txn_id": txn_id,
+                "file": filename, "record": line,
+            }))
             if txn_id:
                 db.execute("INSERT OR IGNORE INTO bank_txns(txn_id) VALUES (?)", (txn_id,))
             continue
         invoice = _read_json(db.execute("SELECT json FROM shipper_invoices WHERE invoice_id=?",
                                         (reference,)).fetchone())
         if not invoice:
-            output.append(_document_event(trigger, "bank_transaction", "needs_review",
-                                          {"file": filename, "reference": reference,
-                                           "counterparty": counterparty, "paid_amount": paid_amount}))
+            output.append(_event(trigger, "bank.event", {
+                "amount": paid_amount, "direction": direction, "counterparty": counterparty,
+                "reference": reference, "posted_at": trigger.get("sim_ts"), "txn_id": txn_id,
+                "file": filename, "record": line,
+            }))
             if txn_id:
                 db.execute("INSERT OR IGNORE INTO bank_txns(txn_id) VALUES (?)", (txn_id,))
             continue
@@ -409,27 +446,36 @@ async def _handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
             load = dict(payload)
             load.setdefault("gps_dwell_min", None)
             db.execute("INSERT OR REPLACE INTO loads(load_id, json) VALUES (?,?)", (load_id, _dump(load)))
+        return [ev]
     elif event_type == "gps.ping" and payload.get("milestone") == "delivery.departed":
         load = _load(db, payload.get("load_id"))
         if load:
             load["gps_dwell_min"] = payload.get("dwell_min")
             db.execute("UPDATE loads SET json=? WHERE load_id=?", (_dump(load), load["load_id"]))
+        return [ev]
+    elif event_type in {"load.dispatched", "load.delivered", "pod.received"}:
+        return [ev]
+    elif event_type == "load.status":
+        return []
+    elif event_type == "scenario.injected":
+        return [{**ev, "payload": {**payload, "generated_type": "load.tendered"}}]
     elif event_type == "shipper_invoice.issued":
         invoice_id = payload.get("invoice_id")
         if invoice_id:
             invoice = {**payload, "_evidence_refs": ev.get("evidence_refs", [])}
             db.execute("INSERT OR REPLACE INTO shipper_invoices(invoice_id, json) VALUES (?,?)",
                        (invoice_id, _dump(invoice)))
+        return []
     elif event_type == "email.received":
         mail_id = payload.get("mail_id")
         if not mail_id:
-            return [_email_needs_review(ev, payload)]
+            return [_email_needs_review(ev, payload), _email_event(ev, payload)]
         path = data_dir() / "mail" / f"{Path(str(mail_id)).name}.eml"
         try:
             message = read_email(path)
         except Exception:
             log.exception("email file unreadable for %s", mail_id)
-            return [_email_needs_review(ev, payload)]
+            return [_email_needs_review(ev, payload), _email_event(ev, payload)]
         kind = classify(message)
         if kind == "invoice_email":
             return await _invoice_email(ev, message, db)
@@ -451,8 +497,12 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
     trigger_id = str(trigger_id)
     if not trigger_id.startswith("EVT-"):
         trigger_id = f"EVT-{trigger_id}"
-    for index, event in enumerate(derived):
+    index = 0
+    for event in derived:
+        if event.get("event_id") == ev.get("event_id"):
+            continue
         event["event_id"] = f"{trigger_id}:{index}"
+        index += 1
     return derived
 
 

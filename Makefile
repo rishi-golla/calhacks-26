@@ -1,7 +1,8 @@
 PY := .venv/bin/python
+SIM_DATA_DIR ?= data
 SPACETIME_DB ?= freightops
 SPACETIME_URL ?= http://127.0.0.1:3000
-.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check
+.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest verify-data
 
 setup:            ## create venv + install
 	python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -16,6 +17,14 @@ gateway:          ## webhooks + demo endpoints on :9000
 	$(PY) -m gateway.app
 router:           ## Redis -> first-hop A2A
 	$(PY) -m router.main
+ingest:           ## Consume Redis raw; publish routable events and extracted documents
+	$(PY) -m ingest.main
+world:            ## refresh real carriers (FMCSA) + shippers (SEC EDGAR) -> data/world.json
+	$(PY) -m sim.world --refresh
+sim:              ## publish raw simulator arrivals to Redis `raw`
+	$(PY) -m sim.generator
+verify-data:      ## verify generated W4 documents and event traces
+	$(PY) -m sim.verify --data "$(SIM_DATA_DIR)"
 web:              ## dashboard on :3001
 	cd web && npm run dev -- -p 3001
 test:

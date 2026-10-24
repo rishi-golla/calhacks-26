@@ -17,11 +17,11 @@ gateway:          ## webhooks + demo endpoints on :9000
 	$(PY) -m gateway.app
 router:           ## Redis -> first-hop A2A
 	$(PY) -m router.main
-ingest:           ## Read raw email and bank inputs -> case-opening events
+ingest:           ## Consume Redis raw; publish routable events and extracted documents
 	$(PY) -m ingest.main
 world:            ## refresh real carriers (FMCSA) + shippers (SEC EDGAR) -> data/world.json
 	$(PY) -m sim.world --refresh
-sim:              ## real-time event stream -> Redis `events`
+sim:              ## publish raw simulator arrivals to Redis `raw`
 	$(PY) -m sim.generator
 verify-data:      ## verify generated W4 documents and event traces
 	$(PY) -m sim.verify --data "$(SIM_DATA_DIR)"

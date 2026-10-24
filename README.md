@@ -38,10 +38,16 @@ make test
 - **Counterparties are real.** Carriers come from FMCSA's Company Census (active, for-hire, general freight, with a
   registered phone and email); shippers come from SEC EDGAR (manufacturing, wholesale and retail filers). `make world`
   refreshes `data/world.json`. Contacts are shown unmasked; outreach still only reaches the demo allowlist.
-- **Events are real-time.** Every ~20s a new load starts and runs tender -> GPS -> POD -> carrier invoice -> shipper
-  payment in wall-clock time on Redis `events`. Planted exceptions (unsupported/supported detention, shipper short-pay,
-  bank-change request, duplicate invoice) are logged with their expected outcome in `data/answer_key.jsonl`; source
-  documents go to `data/docs/`.
+- **Events are real-time, on a business clock.** Every ~20s a new load starts on a real lane (Census-geocoded
+  facilities, real mileage, FSC, accessorial schedule). Business time runs `SIM_TIME_RATIO`x wall time (default
+  1 s = 10 min), so tender -> pickup -> transit -> delivery -> invoice -> shipper payment plays out in minutes with
+  consistent timestamps. Each load produces the full paper trail: TMS status and GPS breadcrumbs, PDF rate con /
+  BOL / signed POD / carrier invoice (per-carrier layout) / shipper invoice under `data/docs/`, raw `.eml` inbox
+  messages under `data/mail/` (never delivered), and BAI2-style bank lines under `data/bank/`.
+- **Planted exceptions** (unsupported/supported detention, shipper short-pay, lookalike-domain bank change,
+  unverified factoring remit-to, duplicate and renumbered-duplicate invoices, linehaul over contract, fuel-surcharge
+  error, line items that don't sum, lumper without receipt, unsigned POD) are logged with the planted field values
+  and the expected outcome in `data/answer_key.jsonl`.
 - **Humans play the counterparty.** Calls and emails park in the console until someone answers as the carrier/shipper.
 
 ## Rules

@@ -764,7 +764,7 @@ function writeInstruction(m: Mutation, agent: string, diff: string, reason: stri
 }
 
 function checkInstructionVersion(m: Mutation, agent: string): void {
-  if (m.p.expected_version === undefined) throw new Error('expected_version is required');
+  if (m.p.expected_version === undefined || m.p.expected_version === null) throw new Error('expected_version is required');
   const latest = [...m.ctx.db.instruction_version.agent.filter(agent)]
     .reduce((max, row) => Math.max(max, row.version), 0);
   if (uint(m.p, 'expected_version') !== latest) throw new Error('instruction version conflict');

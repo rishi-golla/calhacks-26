@@ -68,8 +68,10 @@ Instruction history is append-only except for the active marker. A normal row (`
 
 Validator publishes code-generated evidence/cents reminders after deterministic review failures.
 The patch and base version are durably checkpointed before publication. The reducer rejects a
-stale or missing `expected_version`; it never rebases automatically over human edits. Replays
-with the same write ID retain the original receipt. New tasks load the reconstructed latest
+stale or missing `expected_version`; it never rebases automatically over human edits. When
+the version advanced between planning and publication, Validator re-plans once from the new
+history: an already-present reminder is reported as `superseded`, and the review still resolves
+its flag. Replays with the same write ID retain the original receipt. New tasks load the reconstructed latest
 instructions; already-running tasks retain their checkpointed instruction version.
 
 Automated patches can only append the approved advisory template. Model output, flag text and

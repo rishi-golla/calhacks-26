@@ -29,4 +29,4 @@ Keep this module's version checks deployed when rolling back instructions. Rever
 
 ## Validation
 
-Tests cover effective publication, replay without duplicate writes, skipping an already-present reminder, missing/stale version rejection, blocked automated policy edits, human-only rollback, baseline reconstruction, and publishing after rollback. Real local SpacetimeDB acceptance checks also exercised publication and compensating rollback in an isolated test database.
+Tests cover effective publication, superseded publication after a version race, replay without duplicate writes, skipping an already-present reminder, missing/stale version rejection, blocked automated policy edits, human-only rollback, baseline reconstruction, and publishing after rollback. Real local SpacetimeDB acceptance checks also exercised publication and compensating rollback in an isolated test database.

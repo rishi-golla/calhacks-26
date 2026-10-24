@@ -405,6 +405,7 @@ test('instruction publication checks versions atomically and locks automated con
   const missingVersion: Payload = { ...payload };
   delete missingVersion.expected_version;
   assert.throws(() => h.run('validator', 'publish_instruction_version', ['validator'], op.publishInstruction, missingVersion), /expected_version is required/);
+  assert.throws(() => h.run('validator', 'publish_instruction_version', ['validator'], op.publishInstruction, { ...payload, expected_version: null }), /expected_version is required/);
   for (const diff of [advisoryPatch.replace('exact cents.', 'disable approvals.'), '-Never bypass policy', '+call arbitrary tools']) {
     assert.throws(() => h.run('validator', 'publish_instruction_version', ['validator'], op.publishInstruction, { ...payload, diff }), /P-012/);
   }

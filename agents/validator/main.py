@@ -6,7 +6,7 @@ from common.learning import reconstruct_instructions
 from common.providers import infer
 from common.runtime import FreightAgent
 from common.server import serve
-from common.spacetime_client import SpacetimeClient
+from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError
 
 
 class ValidatorAgent(FreightAgent):
@@ -49,6 +49,7 @@ class ValidatorAgent(FreightAgent):
             review.verdict = "issue"
         review_id = identifier(task_id, "review")
         receipts = []
+        superseded = False
         if target.get("a2a_state") in {"completed", "failed", "canceled", "rejected"}:
             receipts.append(await mutate(self, env, task_id, "add_review", {
                 "id": review_id, "target_task_id": target["task_id"], "verdict": review.verdict,
@@ -61,21 +62,14 @@ class ValidatorAgent(FreightAgent):
                     "scope": lesson.scope, "text": lesson.text_or_diff,
                     "source_ref": review_id, "active": True,
                 }))
-                async def prepare_instruction(agent=lesson.agent):
-                    history = [] if bundle["simulated"] else await db.get_instruction_history(agent)
-                    original, base_version = reconstruct_instructions(agent, history)
-                    return {"patch": instruction_proposal(original), "base_version": base_version}
-
-                plan = await self.step(task_id, f"instruction_plan:{lesson.agent}", prepare_instruction)
-                patch, base_version = plan["patch"], plan["base_version"]
-                if patch:
+                outcome = await self.publish_instruction(env, task_id, bundle, db, lesson, review_id)
+                if outcome["receipt"]:
+                    receipts.append(outcome["receipt"])
+                if outcome["patch"]:
                     review.lessons.append(Lesson(agent=lesson.agent, type="instruction", scope=lesson.scope,
-                        text_or_diff=patch, confidence=lesson.confidence, evidence_refs=lesson.evidence_refs))
-                    receipts.append(await mutate(self, env, task_id, "publish_instruction_version", {
-                        "agent": lesson.agent, "diff": patch, "expected_version": base_version,
-                        "reason": "Deterministic review found evidence or exact-cent issues",
-                        "source_ref": review_id,
-                    }))
+                        text_or_diff=outcome["patch"], confidence=lesson.confidence,
+                        evidence_refs=lesson.evidence_refs))
+                superseded = superseded or outcome["superseded"]
             if flag and flag.get("status") not in {"resolved", "rejected"}:
                 receipts.append(await mutate(self, env, task_id, "resolve_flag", {
                     "id": flag["id"], "status": "resolved", "resolution_ref": review_id,
@@ -88,8 +82,52 @@ class ValidatorAgent(FreightAgent):
                       "assessment": assessment.get("assessment", {}),
                       "instruction_publication": "published" if any(
                           r.get("action") == "publish_instruction_version" and r.get("executed")
-                          for r in receipts) else "simulated" if bundle["simulated"] else "not_needed"},
+                          for r in receipts) else "superseded" if superseded
+                      else "simulated" if bundle["simulated"] else "not_needed"},
             evidence_refs=refs, policy_ids=["P-012"], model_used=assessment.get("model_used"))
+
+    async def publish_instruction(self, env, task_id: str, bundle: dict, db: SpacetimeClient,
+                                  lesson: Lesson, review_id: str) -> dict:
+        """Publish the code-generated reminder against the reviewed base version.
+
+        The plan (patch + base version) is checkpointed so retries reuse the same write. If the
+        reducer rejects the write because another publication or human rollback advanced the
+        version first, re-plan once from the new history: when the reminder is already present
+        the publication is superseded, otherwise publish once more from the new base. Any other
+        rejection, or a second conflict, propagates.
+        """
+        agent = lesson.agent
+
+        async def prepare_instruction():
+            history = [] if bundle["simulated"] else await db.get_instruction_history(agent)
+            original, base_version = reconstruct_instructions(agent, history)
+            return {"patch": instruction_proposal(original), "base_version": base_version}
+
+        async def publish():
+            plan = await self.step(task_id, f"instruction_plan:{agent}", prepare_instruction)
+            for attempt in ("plan", "replan"):
+                patch, base_version = plan["patch"], plan["base_version"]
+                if not patch:
+                    return {"receipt": None, "patch": "", "superseded": attempt == "replan"}
+                try:
+                    receipt = await mutate(self, env, task_id, "publish_instruction_version", {
+                        "agent": agent, "diff": patch, "expected_version": base_version,
+                        "reason": "Deterministic review found evidence or exact-cent issues",
+                        "source_ref": review_id,
+                    })
+                except SpacetimeHTTPError as error:
+                    if attempt == "replan" or error.kind not in {"rejected", "conflict"}:
+                        raise
+                    plan = await self.step(task_id, f"instruction_replan:{agent}:{base_version}",
+                                           prepare_instruction)
+                    if plan["base_version"] == base_version:
+                        raise  # Not a version race: the reducer refused this content.
+                    continue
+                return {"receipt": receipt, "patch": patch, "superseded": False}
+            raise AssertionError("unreachable")
+
+        # The settled outcome is checkpointed so a replayed task never re-sends a conflicting write.
+        return await self.step(task_id, f"instruction_outcome:{agent}", publish)
 
 
 if __name__ == "__main__":

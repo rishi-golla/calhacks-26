@@ -203,3 +203,75 @@ async def test_review_publishes_effective_instructions_and_replays_without_dupli
         assert writes.count("publish_instruction_version") == 1
     finally:
         await store.close()
+
+
+async def test_version_race_is_superseded_and_real_rejections_propagate(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from common.learning import ROOT, reconstruct_instructions
+    from common.spacetime_client import SpacetimeHTTPError
+
+    monkeypatch.setenv("FREIGHTOPS_MODE", "fixture")
+    monkeypatch.setenv("SPACETIME_DISABLED", "0")
+    bundle = cash_bundle()
+    bundle["simulated"] = False
+    bundle["artifact"]["findings"]["net_cash"] = 123
+    base = (ROOT / "agents/cfo/instructions.md").read_text()
+    external = {"agent": "cfo", "version": 1, "diff": instruction_proposal(base), "reverts_version": 0}
+    history, writes, reads = [], [], []
+
+    async def load(*args):
+        return copy.deepcopy(bundle)
+
+    async def get_history(self, agent):
+        reads.append(agent)
+        return copy.deepcopy(history)
+
+    async def write(self, operation, payload):
+        writes.append(operation)
+        if operation == "publish_instruction_version":
+            if payload["expected_version"] != len(history):
+                raise SpacetimeHTTPError(400, mutation=True)
+            history.append({"agent": "cfo", "version": len(history) + 1, "diff": payload["diff"],
+                            "reverts_version": 0})
+        return SimpleNamespace(write_id=payload["write_id"], status_code=200)
+
+    monkeypatch.setattr("agents.validator.main.load_review", load)
+    monkeypatch.setattr("common.spacetime_client.SpacetimeClient.get_instruction_history", get_history)
+    monkeypatch.setattr("common.spacetime_client.SpacetimeClient.mutate", write)
+    store = RuntimeStore(f"sqlite+aiosqlite:///{tmp_path / 'race.sqlite'}")
+    agent = ValidatorAgent(store=store)
+    meta = DelegationMeta(case_id="case-varied", from_agent="router")
+    env = TaskEnvelope(task_type="review_output", case_id="case-varied")
+    try:
+        # Another writer publishes the same reminder between planning and publication.
+        original_write = write
+
+        async def racing_write(self, operation, payload):
+            if operation == "publish_instruction_version" and not history:
+                history.append(external)
+            return await original_write(self, operation, payload)
+        monkeypatch.setattr("common.spacetime_client.SpacetimeClient.mutate", racing_write)
+        result = await agent.run_workflow(env, meta, "review-race", None)
+        assert result.findings["instruction_publication"] == "superseded"
+        assert result.outcome == "issue" and reconstruct_instructions("cfo", history)[1] == 1
+        assert writes.count("publish_instruction_version") == 1  # the conflicting attempt only
+        assert [x["type"] for x in result.findings["review"]["lessons"]] == ["memory"]
+        # Replaying the task reuses the checkpointed outcome without another write.
+        await agent.run_workflow(env, meta, "review-race", None)
+        assert writes.count("publish_instruction_version") == 1
+
+        # A rejection without a version change is not a race and must surface.
+        history.clear()
+        reads.clear()
+
+        async def rejecting_write(self, operation, payload):
+            if operation == "publish_instruction_version":
+                raise SpacetimeHTTPError(400, mutation=True)
+            return await original_write(self, operation, payload)
+        monkeypatch.setattr("common.spacetime_client.SpacetimeClient.mutate", rejecting_write)
+        with pytest.raises(SpacetimeHTTPError):
+            await agent.run_workflow(env, meta, "review-rejected", None)
+        assert reads == ["cfo", "cfo"]  # plan plus exactly one re-plan
+    finally:
+        await store.close()

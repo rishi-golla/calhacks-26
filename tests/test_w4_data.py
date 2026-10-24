@@ -121,7 +121,7 @@ def test_lifecycle_paper_trail_routes_cleanly(world, scenario):
 
 
 @pytest.mark.parametrize("scenario", sorted(
-    __import__("sim.generator").generator.SCENARIOS
+    set(__import__("sim.generator").generator.SCENARIOS)
     - {"clean", "duplicate_invoice", "duplicate_renumbered", "shipper_short_pay", "bank_change",
        "detention_supported"}))
 def test_exception_invoices_are_held_by_ap_policy(world, scenario):

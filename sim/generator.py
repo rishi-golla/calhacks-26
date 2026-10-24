@@ -25,7 +25,7 @@ import redis.asyncio as redis
 from common import store
 from sim import bank, clock, docs, events, geo, mail
 from sim import retention
-from sim.world import ensure
+from sim.world import ensure, offline_world
 
 SCENARIOS = {"clean": 0.40, "decoy_detention_supported_small": 0.06, "decoy_quickpay": 0.06,
              "detention_unsupported": 0.04, "detention_supported": 0.04, "shipper_short_pay": 0.04,
@@ -574,5 +574,37 @@ async def main() -> None:
         await asyncio.sleep(interval * rnd.uniform(0.6, 1.4))
 
 
+async def offline(loads: int, root: pathlib.Path, seed: int = 7) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    os.environ["SIM_DATA_DIR"] = str(root)
+    os.environ["WORLD_FILE"] = str(root / "world.json")
+    if not (root / "world.json").exists():
+        from integrations import directory
+        directory.save(offline_world())
+    world = ensure()
+    await seed_hero(world)
+    rnd = random.Random(seed)
+    now = _now()
+    history_days = int(os.getenv("SIM_HISTORY_DAYS", "90"))
+    for _ in range(loads):
+        scenario = pick(rnd)
+        load = new_load(world, rnd)
+        start = now - timedelta(days=rnd.uniform(3, max(3, history_days)))
+        steps = lifecycle(load, scenario, rnd, t0=start)
+        record_answer(load, scenario, load.get("planted"))
+        for step in steps:
+            for event in step.make():
+                await publish(None, event)
+    retention.prune(root)
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--loads", type=int, default=40)
+    parser.add_argument("--data", type=pathlib.Path, default=pathlib.Path("data"))
+    parser.add_argument("--seed", type=int, default=7)
+    args = parser.parse_args()
+    asyncio.run(offline(args.loads, args.data, args.seed) if args.offline else main())

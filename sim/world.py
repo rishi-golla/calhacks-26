@@ -50,6 +50,46 @@ def price_lane(miles: int, rnd: random.Random) -> dict:
             "shipper_linehaul": float(round(linehaul * margin / 25) * 25), "shipper_fsc": fsc}
 
 
+def offline_world() -> dict:
+    carriers = [
+        {"id": "C-311", "name": "Sierra Haul LLC", "usdot": "3141592", "phone": "+15550143159",
+         "email": "dispatch@sierrahaul.example", "terms": "Net 30", "owner_operator": True,
+         "source": "prd_hero_fixture", "city": "Stockton", "state": "CA", "lat": 37.9577, "lon": -121.2908},
+        {"id": "C-77", "name": "Rapid Ridge Transport", "usdot": "7700770", "phone": "+15550770077",
+         "email": "dispatch@rapidridge.example", "terms": "Net 30", "source": "prd_hero_fixture",
+         "city": "Stockton", "state": "CA", "lat": 37.9577, "lon": -121.2908},
+        {"id": "C-OFF-2", "name": "Sage Valley Carriers", "usdot": "8800880", "mc": "MC-880088",
+         "phone": "+15550880088", "email": "billing@sagevalley.example", "terms": "Net 30",
+         "source": "offline_fixture", "city": "Reno", "state": "NV", "lat": 39.5296, "lon": -119.8138},
+    ]
+    shippers = [
+        {"id": "S-07", "name": "Bay Produce Co", "cik": "0000000007", "phone": "+15550070007",
+         "email": "ap@bayproduce.example", "source": "prd_hero_fixture", "city": "Stockton", "state": "CA",
+         "lat": 37.9577, "lon": -121.2908},
+        {"id": "S-OFF-2", "name": "Valley Market Foods", "cik": "0000000008", "phone": "+15550080008",
+         "email": "ap@valleymarket.example", "source": "offline_fixture", "city": "Reno", "state": "NV",
+         "lat": 39.5296, "lon": -119.8138},
+    ]
+    lane_base = {"miles": 133, "linehaul": 1850.0, "fsc": 0.0, "contract_rate": 1850.0,
+                 "shipper_linehaul": 2100.0, "shipper_fsc": 0.0, "carrier_rpm": 13.91,
+                 "free_time_min": 120, "detention_rate_hr": 50.0, "transit_hours": 1.0,
+                 "equipment": "53' Reefer", "commodity": "Produce", "nmfc_class": 70, "temp_f": 34,
+                 "accessorials": {"lumper": "reimbursed at cost with receipt", "layover": 250.0,
+                                  "tonu": 150.0, "stop_off": 75.0, "driver_assist": 100.0}}
+    lanes = []
+    for carrier, shipper, dest in ((carriers[0], shippers[0], "Reno, NV"),
+                                    (carriers[2], shippers[0], "Reno, NV"),
+                                    (carriers[1], shippers[1], "Stockton, CA")):
+        lanes.append({"id": f"LN-{shipper['id']}-{carrier['id']}", "shipper_id": shipper["id"],
+                      "carrier_id": carrier["id"], "consignee_id": (shippers[1] if dest == "Reno, NV"
+                                                                        else shippers[0])["id"],
+                      "origin": f"{shipper['city']}, {shipper['state']}", "destination": dest, **lane_base})
+    return {"schema": WORLD_SCHEMA, "built_at": datetime.now(UTC).isoformat(), "brokerage": "Golden Gate Freight",
+            "brokerage_mc": "MC-000000", "diesel_usd": DIESEL_USD, "fsc_per_mile": fsc_per_mile(),
+            "sources": {"offline": "synthetic fixture"}, "gl_accounts": GL_ACCOUNTS,
+            "carriers": carriers, "shippers": shippers, "lanes": lanes}
+
+
 def _geocode_all(companies: list[dict]) -> None:
     with httpx.Client(timeout=20) as c, ThreadPoolExecutor(6) as ex:
         for co, g in zip(companies, ex.map(lambda x: geo.geocode(x.get("address"), x.get("state"), c), companies),

@@ -1,161 +1,88 @@
-import type { CSSProperties, ReactNode } from "react";
+"use client";
+import type { CSSProperties } from "react";
 import "./mascot.css";
 
-type Palette = { body: string; deep: string };
-const INK = "#1d2330";
+type Point = readonly [number, number];
+type Spec = { color: string; shape: string; face: Point };
 
-export const MASCOT_COLORS: Record<string, Palette> = {
-  carrier_ap: { body: "#6ca8ff", deep: "#3f7fe0" },
-  shipper_ar: { body: "#ed91b5", deep: "#cf6390" },
-  risk: { body: "#f8b86a", deep: "#d98a2f" },
-  verification: { body: "#b99af7", deep: "#8b68e0" },
-  controller: { body: "#89aaff", deep: "#5a7fe6" },
-  voice_desk: { body: "#e2a272", deep: "#bf7a45" },
-  cfo: { body: "#8fc38c", deep: "#5e9d5a" },
-  validator: { body: "#b8a2e8", deep: "#8f74cf" },
-  documents: { body: "#67c4b6", deep: "#3a9a8b" },
-  all: { body: "#f5c451", deep: "#d29b1e" },
-};
-const FALLBACK: Palette = { body: "#a5b1c4", deep: "#7b879a" };
-
-function Face({ x = 24, y = 23 }: { x?: number; y?: number }) {
+const round = (value: number) => Math.round(value * 100) / 100;
+const rad = (deg: number) => (deg * Math.PI) / 180;
+function roundedPolygon(points: Point[], t: number) {
   return (
-    <g>
-      <g className="mascot-eyes">
-        <ellipse cx={x - 5} cy={y} rx={2.1} ry={2.6} fill={INK} />
-        <ellipse cx={x + 5} cy={y} rx={2.1} ry={2.6} fill={INK} />
-        <circle cx={x - 4.3} cy={y - 0.9} r={0.75} fill="#fff" />
-        <circle cx={x + 5.7} cy={y - 0.9} r={0.75} fill="#fff" />
-      </g>
-      <ellipse cx={x - 8.6} cy={y + 3.6} rx={1.9} ry={1.15} fill="#fff" opacity={0.38} />
-      <ellipse cx={x + 8.6} cy={y + 3.6} rx={1.9} ry={1.15} fill="#fff" opacity={0.38} />
-      <path
-        d={`M${x - 2.5} ${y + 4.1} Q${x} ${y + 6.4} ${x + 2.5} ${y + 4.1}`}
-        stroke={INK}
-        strokeWidth={1.6}
-        strokeLinecap="round"
-        fill="none"
-      />
-    </g>
+    points
+      .map(([x, y], i) => {
+        const [px, py] = points[(i + points.length - 1) % points.length];
+        const [nx, ny] = points[(i + 1) % points.length];
+        return `${i ? "L" : "M"}${round(x + (px - x) * t)} ${round(y + (py - y) * t)}Q${round(x)} ${round(y)} ${round(x + (nx - x) * t)} ${round(y + (ny - y) * t)}`;
+      })
+      .join("") + "Z"
   );
 }
+const polar = (count: number, radius: number, cx: number, cy: number, offset = -90) =>
+  Array.from({ length: count }, (_, i): Point => [
+    cx + Math.cos(rad(offset + (i * 360) / count)) * radius,
+    cy + Math.sin(rad(offset + (i * 360) / count)) * radius,
+  ]);
+const circle = (cx: number, cy: number, r: number) => `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0Z`;
+const lobes = (count: number, ring: number, r: number, cx: number, cy: number) =>
+  polar(count, ring, cx, cy).map(([x, y]) => circle(round(x), round(y), r)).join("") + circle(cx, cy, ring);
 
-const SCALLOPS = Array.from({ length: 10 }, (_, i) => {
-  const angle = (i / 10) * Math.PI * 2;
-  const round = (value: number) => Math.round(value * 100) / 100;
-  return [round(24 + Math.cos(angle) * 13.6), round(25 + Math.sin(angle) * 13.6)] as const;
-});
+const SPECS: Record<string, Spec> = {
+  all: {
+    color: "#14856b",
+    shape: circle(60, 62, 40),
+    face: [60, 60],
+  },
+  carrier_ap: {
+    color: "#1683ff",
+    shape: "M60 24C91 24 98 31 98 62C98 93 91 100 60 100C29 100 22 93 22 62C22 31 29 24 60 24Z",
+    face: [60, 60],
+  },
+  shipper_ar: {
+    color: "#ff2d55",
+    shape: "M42 33H78A29 29 0 0 1 78 91H42A29 29 0 0 1 42 33Z",
+    face: [60, 61],
+  },
+  risk: {
+    color: "#ff3d9a",
+    shape: "M60 22C67 22 71 28 75 35L97 73C103 84 99 98 84 98H36C21 98 17 84 23 73L45 35C49 28 53 22 60 22Z",
+    face: [60, 73],
+  },
+  verification: {
+    color: "#8f55ff",
+    shape: roundedPolygon(polar(6, 42, 60, 62), 0.16),
+    face: [60, 62],
+  },
+  controller: {
+    color: "#69717e",
+    shape: "M24 60C24 38 40 22 60 22C80 22 96 38 96 60V90C96 95 93 98 88 98H32C27 98 24 95 24 90Z",
+    face: [60, 62],
+  },
+  voice_desk: {
+    color: "#ff6a00",
+    shape: "M30 44C41 29 62 22 80 28C98 34 106 56 100 74C94 92 74 100 54 96C34 92 18 82 18 66C18 57 24 51 30 44Z",
+    face: [60, 62],
+  },
+  cfo: {
+    color: "#f59e0b",
+    shape: "M60 18C64 18 67 21 70 25L88 50C94 58 98 66 98 76C98 92 81 104 60 104C39 104 22 92 22 76C22 66 26 58 32 50L50 25C53 21 56 18 60 18Z",
+    face: [60, 75],
+  },
+  validator: {
+    color: "#00b0a0",
+    shape: lobes(6, 25, 17, 60, 62),
+    face: [60, 62],
+  },
+  documents: {
+    color: "#a86b3c",
+    shape:
+      circle(38, 72, 18) + circle(60, 56, 24) + circle(84, 66, 18) + circle(90, 86, 12) + circle(30, 86, 12) + "M30 78V98H90V78Z",
+    face: [60, 72],
+  },
+};
+const FALLBACK: Spec = { color: "#8b95a5", shape: circle(60, 62, 40), face: [60, 60] };
 
-function figure(id: string, { body, deep }: Palette): ReactNode {
-  switch (id) {
-    case "carrier_ap": // truck cab
-      return (
-        <>
-          <rect x={20} y={6.5} width={8} height={4.5} rx={2} fill={deep} />
-          <rect x={8} y={10} width={32} height={26} rx={9} fill={body} />
-          <circle cx={16} cy={37.5} r={4.2} fill={deep} />
-          <circle cx={32} cy={37.5} r={4.2} fill={deep} />
-          <circle cx={16} cy={37.5} r={1.4} fill="#fff" opacity={0.6} />
-          <circle cx={32} cy={37.5} r={1.4} fill="#fff" opacity={0.6} />
-          <Face y={22} />
-        </>
-      );
-    case "shipper_ar": // coin
-      return (
-        <>
-          <circle cx={24} cy={24} r={17} fill={body} />
-          <circle cx={24} cy={24} r={13.6} fill="none" stroke="#fff" strokeOpacity={0.4} strokeWidth={1.5} />
-          <Face y={23.5} />
-        </>
-      );
-    case "risk": // auditor with a monocle
-      return (
-        <>
-          <rect x={8} y={9} width={32} height={32} rx={12} fill={body} />
-          <Face y={23} />
-          <circle cx={29} cy={23} r={4.6} fill="#fff" fillOpacity={0.28} stroke={deep} strokeWidth={1.8} />
-          <path d="M32.3 26.3 L36.2 30.2" stroke={deep} strokeWidth={2.4} strokeLinecap="round" />
-        </>
-      );
-    case "verification": // shield
-      return (
-        <>
-          <path d="M24 5.5 L39.5 11 V23 C39.5 32.5 33 39.6 24 42.8 C15 39.6 8.5 32.5 8.5 23 V11 Z" fill={body} />
-          <Face y={21.5} />
-        </>
-      );
-    case "controller": // approval stamp
-      return (
-        <>
-          <circle cx={24} cy={8.5} r={4.5} fill={deep} />
-          <rect x={21} y={10.5} width={6} height={6.5} rx={1.5} fill={deep} />
-          <rect x={9} y={16} width={30} height={21} rx={8} fill={body} />
-          <rect x={7} y={35.5} width={34} height={5.5} rx={2.75} fill={deep} />
-          <Face y={25} />
-        </>
-      );
-    case "voice_desk": // headset
-      return (
-        <>
-          <path d="M8 25 A16 16 0 0 1 40 25" fill="none" stroke={deep} strokeWidth={3} strokeLinecap="round" />
-          <circle cx={24} cy={26} r={14.5} fill={body} />
-          <rect x={5} y={21} width={6.5} height={11} rx={3.25} fill={deep} />
-          <rect x={36.5} y={21} width={6.5} height={11} rx={3.25} fill={deep} />
-          <path d="M39.5 31 Q39 37.5 32 38" fill="none" stroke={deep} strokeWidth={1.8} strokeLinecap="round" />
-          <circle cx={31} cy={38} r={2} fill={deep} />
-          <Face y={25.5} />
-        </>
-      );
-    case "cfo": // sprout
-      return (
-        <>
-          <path d="M24 16 V9.5" stroke={deep} strokeWidth={2} strokeLinecap="round" />
-          <path d="M24 10 C24 6.2 27.4 4 31.2 4.4 C31.2 8 28.2 10.6 24 10 Z" fill={deep} />
-          <path d="M24 11.2 C23.6 8.2 21 6.6 17.8 7 C17.8 9.9 20.4 11.7 24 11.2 Z" fill={deep} />
-          <rect x={9.5} y={15} width={29} height={26} rx={11} fill={body} />
-          <Face y={27} />
-        </>
-      );
-    case "validator": // rosette + sparkle
-      return (
-        <>
-          {SCALLOPS.map(([cx, cy], i) => (
-            <circle key={i} cx={cx} cy={cy} r={5.4} fill={body} />
-          ))}
-          <circle cx={24} cy={25} r={14.2} fill={body} />
-          <path d="M39 3.5 Q39.7 7.3 43.5 8 Q39.7 8.7 39 12.5 Q38.3 8.7 34.5 8 Q38.3 7.3 39 3.5 Z" fill={deep} />
-          <Face y={24.5} />
-        </>
-      );
-    case "documents": // page with folded corner
-      return (
-        <>
-          <path d="M14 6 H29 L38 15 V38 Q38 42 34 42 H14 Q10 42 10 38 V10 Q10 6 14 6 Z" fill={body} />
-          <path d="M29 6 V12 Q29 15 32 15 H38 Z" fill={deep} />
-          <Face y={25} />
-        </>
-      );
-    case "all": // chat bubble
-      return (
-        <>
-          <path d="M15.5 33 L13 41.5 L24 34 Z" fill={body} />
-          <rect x={5.5} y={7.5} width={37} height={28} rx={12.5} fill={body} />
-          <circle cx={40} cy={9} r={3.4} fill={deep} />
-          <Face y={21.5} />
-        </>
-      );
-    default:
-      return (
-        <>
-          <circle cx={24} cy={24} r={16} fill={body} />
-          <Face y={23.5} />
-        </>
-      );
-  }
-}
-
-const blinkDelay = (id: string) =>
-  [...id].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 50 / 10;
+export const MASCOT_IDS = Object.keys(SPECS);
 
 export function Mascot({
   id,
@@ -168,18 +95,32 @@ export function Mascot({
   working?: boolean;
   className?: string;
 }) {
-  const palette = MASCOT_COLORS[id] ?? FALLBACK;
+  const spec = SPECS[id] ?? FALLBACK;
+  const [x, y] = spec.face;
+  const delay = ([...id].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 40) / 10;
   return (
     <svg
       className={`mascot ${working ? "working" : ""} ${className}`}
+      data-mascot={SPECS[id] ? id : undefined}
       width={size}
       height={size}
-      viewBox="0 0 48 48"
+      viewBox="0 0 120 120"
       aria-hidden="true"
       focusable="false"
-      style={{ "--blink-delay": `${blinkDelay(id)}s` } as CSSProperties}
+      style={{ "--blink-delay": `${delay}s` } as CSSProperties}
     >
-      {figure(id, palette)}
+      <g className="mascot-figure">
+        <path className="mascot-body" d={spec.shape} fill={spec.color} />
+        <g className="mascot-eyes">
+          <path
+            className="mascot-gaze"
+            d={`M${x - 13} ${y - 4.5}V${y + 4.5}M${x + 13} ${y - 4.5}V${y + 4.5}`}
+            stroke="#fff"
+            strokeWidth={9.5}
+            strokeLinecap="round"
+          />
+        </g>
+      </g>
     </svg>
   );
 }

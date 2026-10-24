@@ -2,27 +2,144 @@
   display: block;
   flex-shrink: 0;
   overflow: visible;
-}
-.mascot .mascot-eyes {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: mascot-blink 5.5s infinite;
-  animation-delay: var(--blink-delay, 0s);
+  --speed: 1;
 }
 .mascot.working {
-  animation: mascot-bob 1.6s ease-in-out infinite;
+  --speed: 0.45;
 }
+.mascot .mascot-figure,
+.mascot .mascot-body,
+.mascot .mascot-eyes,
+.mascot .mascot-gaze {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+.mascot .mascot-eyes {
+  animation: mascot-blink 6s infinite var(--blink-delay, 0s);
+}
+.mascot.working .mascot-gaze {
+  animation: mascot-look calc(2.4s * var(--speed) / 0.45) ease-in-out infinite;
+}
+
+/* Team chat: breathing squash. */
+.mascot[data-mascot="all"] .mascot-figure {
+  transform-origin: 50% 100%;
+  animation: mascot-breathe calc(3.2s * var(--speed)) ease-in-out infinite;
+}
+/* Carrier Settlement: rocks like a cab on the road. */
+.mascot[data-mascot="carrier_ap"] .mascot-figure {
+  transform-origin: 50% 100%;
+  animation: mascot-rock calc(3s * var(--speed)) ease-in-out infinite;
+}
+/* Billing & Collections: jelly wobble. */
+.mascot[data-mascot="shipper_ar"] .mascot-figure {
+  transform-origin: 50% 100%;
+  animation: mascot-jelly calc(2.8s * var(--speed)) ease-in-out infinite;
+}
+/* Accessorial Audit: scans left and right. */
+.mascot[data-mascot="risk"] .mascot-gaze,
+.mascot.working[data-mascot="risk"] .mascot-gaze {
+  animation: mascot-scan calc(4s * var(--speed)) ease-in-out infinite;
+}
+/* Trust & Verification: steady pulse. */
+.mascot[data-mascot="verification"] .mascot-figure {
+  animation: mascot-pulse calc(2.8s * var(--speed)) ease-in-out infinite;
+}
+/* Settlement Approvals: a firm nod. */
+.mascot[data-mascot="controller"] .mascot-figure {
+  animation: mascot-nod calc(3.6s * var(--speed)) ease-in-out infinite;
+}
+.mascot[data-mascot="controller"] .mascot-gaze,
+.mascot.working[data-mascot="controller"] .mascot-gaze {
+  animation: mascot-nod-eyes calc(3.6s * var(--speed)) ease-in-out infinite;
+}
+/* Dispatcher Outreach: chatty wobble. */
+.mascot[data-mascot="voice_desk"] .mascot-figure {
+  transform-origin: 50% 100%;
+  animation: mascot-talk calc(1.6s * var(--speed)) ease-in-out infinite;
+}
+/* Load Profitability: happy hop. */
+.mascot[data-mascot="cfo"] .mascot-figure {
+  transform-origin: 50% 100%;
+  animation: mascot-hop calc(2.4s * var(--speed)) ease-in-out infinite;
+}
+/* Quality Review: body spins, eyes stay put. */
+.mascot[data-mascot="validator"] .mascot-body {
+  animation: mascot-spin calc(14s * var(--speed)) linear infinite;
+}
+/* Document Chase: drifts around. */
+.mascot[data-mascot="documents"] .mascot-figure {
+  animation: mascot-float calc(4s * var(--speed)) ease-in-out infinite;
+}
+
 @keyframes mascot-blink {
-  0%, 93%, 100% { transform: scaleY(1); }
-  95.5% { transform: scaleY(0.1); }
+  0%, 94%, 100% { scale: 1 1; }
+  96.5% { scale: 1 0.1; }
 }
-@keyframes mascot-bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-1.5px); }
+@keyframes mascot-look {
+  0%, 100% { translate: 0 0; }
+  25% { translate: -6px 0; }
+  55% { translate: 5px -3px; }
+  80% { translate: 0 2px; }
 }
+@keyframes mascot-breathe {
+  0%, 100% { scale: 1 1; }
+  50% { scale: 1.03 0.96; }
+}
+@keyframes mascot-rock {
+  0%, 100% { rotate: -4deg; }
+  50% { rotate: 4deg; }
+}
+@keyframes mascot-jelly {
+  0%, 55%, 100% { scale: 1 1; }
+  65% { scale: 1.08 0.92; }
+  75% { scale: 0.95 1.05; }
+  85% { scale: 1.02 0.98; }
+}
+@keyframes mascot-scan {
+  0%, 15%, 100% { translate: 0 0; }
+  30%, 45% { translate: -7px 0; }
+  60%, 75% { translate: 7px 0; }
+}
+@keyframes mascot-pulse {
+  0%, 100% { scale: 1; }
+  50% { scale: 1.06; }
+}
+@keyframes mascot-nod {
+  0%, 60%, 100% { translate: 0 0; }
+  70% { translate: 0 4px; }
+  80% { translate: 0 0; }
+  88% { translate: 0 3px; }
+}
+@keyframes mascot-nod-eyes {
+  0%, 60%, 100% { translate: 0 0; }
+  70%, 92% { translate: 0 4px; }
+}
+@keyframes mascot-talk {
+  0%, 100% { scale: 1 1; rotate: 0deg; }
+  25% { scale: 1.04 0.96; rotate: -2deg; }
+  50% { scale: 0.98 1.03; rotate: 0deg; }
+  75% { scale: 1.03 0.97; rotate: 2deg; }
+}
+@keyframes mascot-hop {
+  0%, 50%, 100% { translate: 0 0; scale: 1 1; }
+  58% { translate: 0 0; scale: 1.08 0.9; }
+  70% { translate: 0 -10px; scale: 0.95 1.06; }
+  82% { translate: 0 0; scale: 1.06 0.93; }
+  90% { scale: 1 1; }
+}
+@keyframes mascot-spin {
+  to { rotate: 360deg; }
+}
+@keyframes mascot-float {
+  0%, 100% { translate: 0 0; }
+  33% { translate: 3px -4px; }
+  66% { translate: -3px -2px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .mascot,
-  .mascot .mascot-eyes {
-    animation: none;
+  .mascot *,
+  .mascot.working * {
+    animation: none !important;
   }
 }

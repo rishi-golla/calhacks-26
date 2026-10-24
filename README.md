@@ -32,6 +32,18 @@ make demo      # hero smoke test: Carrier AP -> Risk over real A2A
 make test
 ```
 
+## Live data (W4)
+`make live` starts Redis, all 8 agents, the router, the gateway and the real-time simulator, then open
+`http://localhost:9000/console` and paste `GATEWAY_TOKEN`.
+- **Counterparties are real.** Carriers come from FMCSA's Company Census (active, for-hire, general freight, with a
+  registered phone and email); shippers come from SEC EDGAR (manufacturing, wholesale and retail filers). `make world`
+  refreshes `data/world.json`. Contacts are shown unmasked; outreach still only reaches the demo allowlist.
+- **Events are real-time.** Every ~20s a new load starts and runs tender -> GPS -> POD -> carrier invoice -> shipper
+  payment in wall-clock time on Redis `events`. Planted exceptions (unsupported/supported detention, shipper short-pay,
+  bank-change request, duplicate invoice) are logged with their expected outcome in `data/answer_key.jsonl`; source
+  documents go to `data/docs/`.
+- **Humans play the counterparty.** Calls and emails park in the console until someone answers as the carrier/shipper.
+
 ## Rules
 - `OUTREACH_MODE=demo`: calls/emails are only ever routed to `DEMO_ALLOWLIST_*`; the real contact is shown as `intended_to`.
 - Money and ledger changes go through `common/policy.py` and SpacetimeDB reducers; never through the LLM.

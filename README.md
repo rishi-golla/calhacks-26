@@ -110,13 +110,22 @@ The ASUS/W1 router consumes `events`; extracted and reviewable document results 
 `documents` for audit and W2 workflows, never to the router. All three stream names are configurable through
 `RAW_STREAM`, `EVENTS_STREAM`, and `DOCUMENTS_STREAM` (defaults: `raw`, `events`, and `documents`). Its
 transactional load, invoice, remittance, and bank-offset state lives in `data/ingest.db`. Use `make world` to
-refresh the public counterparty directory and `make ingest` to run the consumer. Simulator retention is
+refresh the public counterparty directory and `make ingest` to run the consumer.
+
+Ingest also keeps the agents' source dataset current in `data/source.json` (`SOURCE_EXPORT_PATH`), the file live
+agents read through `SOURCE_DATA_PATH`. It is rewritten atomically before any case-opening event is published, so
+a routed case is always readable. One case per resolved case ID: `CASE-<load>` (carrier invoice), `-R` (re-numbered
+invoice), `-BANK` (bank-change request) and `-AR` (shipper receivable). Brokerage records are marked
+`"synthetic": true`; companies and contacts come from `data/world.json` with their FMCSA/SEC provenance. Values
+ingest never observed are omitted rather than defaulted. `make source` re-exports from `data/ingest.db`. Simulator retention is
 configurable with `SIM_DATA_MAX_MB` and `SIM_KEEP_LOADS`; hero fixtures and event/answer-key history are preserved.
 
 For a Redis-free dataset and formal checks:
 ```bash
 .venv/bin/python -m sim.generator --offline --loads 40 --data /tmp/w4-data
 make verify-data SIM_DATA_DIR=/tmp/w4-data
+SIM_DATA_DIR=/tmp/w4-data WORLD_FILE=/tmp/w4-data/world.json .venv/bin/python -m ingest.source_export \
+  --replay /tmp/w4-data/events.jsonl --db /tmp/w4-data/replay.db   # -> /tmp/w4-data/source.json
 ```
 `make verify-data` defaults to `data/` and writes `verify_report.json` there.
 

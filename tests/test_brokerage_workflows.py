@@ -45,6 +45,17 @@ def test_invoice_tolerance_uses_this_load(amount, contract, exceeds):
     assert result["matched"] is not exceeds
 
 
+def test_discount_lines_count_toward_the_invoice_total():
+    source = invoice(1869.44, 1907.59)
+    source["line_items"] = [{"kind": "linehaul", "amount": 1850}, {"kind": "fuel_surcharge", "amount": 57.59},
+                            {"kind": "quickpay_discount", "amount": -38.15}]
+    result = three_way_match(source)
+    assert result["totals_match"] is True and result["matched"] is True
+    source["invoice_amount"] = -1
+    with pytest.raises(SourceUnavailable):
+        three_way_match(source)
+
+
 @pytest.mark.parametrize("value", [True, None, "NaN", "Infinity", -1, 1.001])
 def test_money_rejects_invalid_or_fractional_cents(value):
     with pytest.raises(SourceUnavailable):

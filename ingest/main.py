@@ -12,6 +12,7 @@ from pathlib import Path
 
 import redis.asyncio as redis
 
+from ingest import source_export
 from ingest.documents import (
     classify,
     extract_detention_log_rules,
@@ -36,6 +37,8 @@ CREATE TABLE IF NOT EXISTS invoices (invoice_id TEXT PRIMARY KEY, load_id TEXT, 
 CREATE TABLE IF NOT EXISTS shipper_invoices (invoice_id TEXT PRIMARY KEY, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS bank_offsets (file TEXT PRIMARY KEY, offset INT NOT NULL);
 CREATE TABLE IF NOT EXISTS bank_txns (txn_id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS bank_changes (case_id TEXT PRIMARY KEY, json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS deposits (txn_id TEXT PRIMARY KEY, invoice_id TEXT, json TEXT NOT NULL);
 """
 
 
@@ -79,6 +82,21 @@ def _load_by_bol(db: sqlite3.Connection, bol: str | None) -> dict | None:
             if candidate.get("bol") == bol:
                 return candidate
     return None
+
+
+def _record_documents(db: sqlite3.Connection, load: dict | None, documents: list[dict]) -> None:
+    """Remember which source documents arrived for a load; the latest reading of a ref wins."""
+    if not load or not documents:
+        return
+    merged = {item["ref"]: item for item in load.get("documents", [])}
+    for document in documents:
+        merged[document["ref"]] = {**merged.get(document["ref"], {}), **document, "load_id": load["load_id"]}
+    load["documents"] = list(merged.values())
+    db.execute("UPDATE loads SET json=? WHERE load_id=?", (_dump(load), load["load_id"]))
+
+
+def _attachment_ref(item: dict) -> str:
+    return f"doc:{Path(item.get('filename', '')).stem}"
 
 
 def _find_load(db: sqlite3.Connection, fields: dict) -> tuple[dict | None, str | None]:
@@ -211,9 +229,11 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
     invoice_number = fields["invoice_number"]
     invoice_id = f"INV-{usdot or ''}-{invoice_number}"
     existing = db.execute("SELECT invoice_number FROM invoices WHERE load_id=?", (load_id,)).fetchall()
-    case_id = f"CASE-{load_id}" + ("-R" if any(row[0] != invoice_number for row in existing) else "")
+    case_id = (load.get("case_id") or f"CASE-{load_id}") + (
+        "-R" if any(row[0] != invoice_number for row in existing) else "")
 
     unmatched_attachments = []
+    received = [{"kind": "carrier_invoice", "ref": _attachment_ref(invoice_doc)}]
     pod = None
     pod_signed = False
     detention_log = None
@@ -229,6 +249,7 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
                     or _same_identifier(candidate.get("bol"), load.get("bol")):
                 pod = candidate
                 pod_signed = candidate["signed"]
+                received.append({"kind": "pod", "ref": _attachment_ref(item), "signed": pod_signed})
             else:
                 unmatched_attachments.append(filename)
         elif attachment_kind == "detention_log":
@@ -237,12 +258,14 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
                     or _same_identifier(candidate.get("bol"), load.get("bol")):
                 detention_log = candidate
                 has_detention_log = True
+                received.append({"kind": "detention_log", "ref": _attachment_ref(item)})
             else:
                 unmatched_attachments.append(filename)
         elif attachment_kind == "lumper_receipt":
             candidate = extract_lumper_receipt_rules(text)
             if _same_identifier(candidate.get("po"), load.get("po")):
                 has_lumper_receipt = True
+                received.append({"kind": "lumper_receipt", "ref": _attachment_ref(item)})
             else:
                 unmatched_attachments.append(filename)
     has_receipt = has_detention_log or has_lumper_receipt
@@ -292,6 +315,7 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
     invoice_event = _event(trigger, "carrier_invoice.received", payload, priority, refs)
     db.execute("INSERT OR REPLACE INTO invoices(invoice_id, load_id, invoice_number, json) VALUES (?,?,?,?)",
                (invoice_id, load_id, invoice_number, _dump(payload)))
+    _record_documents(db, load, received)
     return [document, invoice_event]
 
 
@@ -321,7 +345,9 @@ def _bank_change(trigger: dict, message: dict, db: sqlite3.Connection) -> list[d
     requested_via = ("invoice_remit_to" if remit_name and
                      remit_name.strip().casefold() != carrier_name.strip().casefold() else "email")
     load_id = invoice.get("load_id") if invoice else None
-    case_id = f"CASE-{load_id}-BANK" if load_id else trigger.get("case_hint")
+    case_id = trigger.get("case_hint")
+    if load_id:
+        case_id = f"{(_load(db, load_id) or {}).get('case_id') or f'CASE-{load_id}'}-BANK"
     sender_address = parseaddr(str(message.get("from") or ""))[1].strip()
     registered_email = str((carrier or {}).get("email") or "").strip()
     sender_domain = sender_address.rpartition("@")[2]
@@ -374,6 +400,9 @@ def _bank_change(trigger: dict, message: dict, db: sqlite3.Connection) -> list[d
                   routing_last4_match.group(1) if routing_last4_match else None),
               "requested_via": requested_via,
               "sender_matches_registered": sender_matches_registered}
+    if case_id:
+        db.execute("INSERT OR REPLACE INTO bank_changes(case_id, json) VALUES (?,?)",
+                   (case_id, _dump({**payload, "sim_ts": trigger.get("sim_ts")})))
     status = "extracted_unverified_sender" if not sender_matches_registered else (
         "extracted" if carrier and invoice and account_last4 else "needs_review")
     document = _document_event(
@@ -459,6 +488,12 @@ def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
             continue
         invoice = _read_json(db.execute("SELECT json FROM shipper_invoices WHERE invoice_id=?",
                                         (reference,)).fetchone())
+        if txn_id and direction == "credit":
+            deposit = {"id": txn_id, "invoice_id": reference, "amount": paid_amount,
+                       "shipper_id": ((invoice or {}).get("shipper") or {}).get("id"),
+                       "counterparty": counterparty, "posted_at": trigger.get("sim_ts"), "file": filename}
+            db.execute("INSERT OR IGNORE INTO deposits(txn_id, invoice_id, json) VALUES (?,?,?)",
+                       (txn_id, reference, _dump(deposit)))
         if not invoice:
             output.append(_event(trigger, "bank.event", {
                 "amount": paid_amount, "direction": direction, "counterparty": counterparty,
@@ -502,7 +537,11 @@ async def _handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
         if load_id:
             load = dict(payload)
             load.setdefault("gps_dwell_min", None)
+            # The tender carries the rate confirmation; keep documents already received on a re-tender.
+            load["documents"] = (_load(db, load_id) or {}).get("documents", [])
             db.execute("INSERT OR REPLACE INTO loads(load_id, json) VALUES (?,?)", (load_id, _dump(load)))
+            _record_documents(db, load, [{"kind": "rate_confirmation", "ref": ref}
+                                         for ref in ev.get("evidence_refs", [])[:1]])
         return [ev]
     elif event_type == "gps.ping":
         if payload.get("milestone") == "delivery.departed":
@@ -511,16 +550,24 @@ async def _handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
                 load["gps_dwell_min"] = payload.get("dwell_min")
                 db.execute("UPDATE loads SET json=? WHERE load_id=?", (_dump(load), load["load_id"]))
         return [ev]
-    elif event_type in {"load.dispatched", "load.delivered", "pod.received"}:
+    elif event_type == "pod.received":
+        if payload.get("pod_ref"):
+            _record_documents(db, _load(db, payload.get("load_id")), [
+                {"kind": "pod", "ref": payload["pod_ref"], "signed": payload.get("signed") is True}])
+        return [ev]
+    elif event_type in {"load.dispatched", "load.delivered"}:
         return [ev]
     elif event_type == "load.status":
+        if payload.get("status") == "loaded":
+            _record_documents(db, _load(db, payload.get("load_id")), [
+                {"kind": "bill_of_lading", "ref": ref} for ref in ev.get("evidence_refs", [])[:1]])
         return []
     elif event_type == "scenario.injected":
         return [{**ev, "payload": {**payload, "generated_type": "load.tendered"}}]
     elif event_type == "shipper_invoice.issued":
         invoice_id = payload.get("invoice_id")
         if invoice_id:
-            invoice = {**payload, "_evidence_refs": ev.get("evidence_refs", [])}
+            invoice = {**payload, "_evidence_refs": ev.get("evidence_refs", []), "_issued_at": ev.get("sim_ts")}
             db.execute("INSERT OR REPLACE INTO shipper_invoices(invoice_id, json) VALUES (?,?)",
                        (invoice_id, _dump(invoice)))
         return []
@@ -564,10 +611,17 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
     return derived
 
 
-async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict) -> bool:
+async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict,
+                         exporter: source_export.Exporter | None = None) -> bool:
     try:
         raw = values.get(b"json") or values.get("json")
         events = await handle(json.loads(raw), db)
+        if exporter is not None:
+            exporter.changed()
+            if any(event.get("type") != "document.extracted" and (event.get("payload") or {}).get("case_id")
+                   for event in events):
+                # Agents read the case from the export as soon as the router admits it, so write it first.
+                exporter.flush(db)
         for event in events:
             stream = DOCUMENTS_STREAM if event.get("type") == "document.extracted" else EVENTS_STREAM
             await r.xadd(stream, {"json": json.dumps(event, default=str)},
@@ -584,6 +638,7 @@ async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict) -> b
 async def main() -> None:
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     db = connect()
+    exporter = source_export.Exporter()
     try:
         try:
             await r.xgroup_create(RAW_STREAM, GROUP, id="0", mkstream=True)
@@ -598,14 +653,16 @@ async def main() -> None:
                     break
                 failed = False
                 for entry_id, values in entries:
-                    if not await _process_entry(r, db, entry_id, values):
+                    if not await _process_entry(r, db, entry_id, values, exporter):
                         failed = True
                 if failed:
                     await asyncio.sleep(1)
+            # Catch up on state that opened no case (documents, deposits, TMS) before blocking for more.
+            exporter.flush(db)
             response = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: ">"}, count=10, block=2000)
             for _stream, entries in response or []:
                 for entry_id, values in entries:
-                    await _process_entry(r, db, entry_id, values)
+                    await _process_entry(r, db, entry_id, values, exporter)
     finally:
         db.close()
         await r.aclose()

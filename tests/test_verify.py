@@ -71,6 +71,33 @@ def test_verifier_accepts_all_scenarios_and_hero_seeds(generated_data):
     }
 
 
+def test_answer_key_scenarios_and_outcomes_are_isolated(generated_data):
+    from pypdf import PdfReader
+
+    def strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for child in value.values():
+                yield from strings(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from strings(child)
+
+    answers = [json.loads(line) for line in (generated_data / "answer_key.jsonl").read_text().splitlines()]
+    forbidden = set(generator.SCENARIOS)
+    for answer in answers:
+        forbidden.update(strings(answer.get("expected", {})))
+    artifacts = [generated_data / "events.jsonl", *generated_data.glob("docs/*.json"),
+                 *generated_data.glob("mail/*.eml")]
+    for path in generated_data.glob("docs/*.pdf"):
+        text = "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
+        assert not any(term.casefold() in text.casefold() for term in forbidden), path.name
+    for path in artifacts:
+        data = path.read_bytes().decode("utf-8", "replace").casefold()
+        assert not any(term.casefold() in data for term in forbidden), path.name
+
+
 def test_verifier_detects_invoice_total_mutation(generated_data, tmp_path):
     root = _copy_data(generated_data, tmp_path / "total-mutation")
     clean_load = next(item["load_id"] for item in
@@ -110,12 +137,12 @@ def test_verifier_detects_counterparty_phone_mutation(generated_data, tmp_path):
     clean_load = next(item["load_id"] for item in
                       (json.loads(line) for line in (root / "answer_key.jsonl").read_text().splitlines())
                       if item["scenario"] == "clean")
-    invoice_path = next(path for path in (root / "docs").glob("*.json")
-                        if (doc := json.loads(path.read_text())).get("load_id") == clean_load
-                        and doc.get("type") == "carrier_invoice")
-    invoice = json.loads(invoice_path.read_text())
-    invoice["carrier"]["phone"] = "+15550000000"
-    invoice_path.write_text(json.dumps(invoice))
+    rate_con_path = next(path for path in (root / "docs").glob("*.json")
+                         if (doc := json.loads(path.read_text())).get("load_id") == clean_load
+                         and doc.get("type") == "rate_confirmation")
+    rate_con = json.loads(rate_con_path.read_text())
+    rate_con["carrier"]["phone"] = "+15550000000"
+    rate_con_path.write_text(json.dumps(rate_con))
     report = verify.run(root)
     assert not report["ok"]
     assert any(item["rule"] == "V10" and item["load_id"] == clean_load

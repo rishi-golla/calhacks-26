@@ -1,3 +1,4 @@
+import copy
 import json
 import random
 from datetime import UTC, datetime, timedelta
@@ -118,3 +119,60 @@ def test_backdated_lifecycle_has_immediate_events(world):
     ready = [step for step in steps if step.at <= now]
     assert ready
     assert any(event["type"] == "load.tendered" for step in ready for event in step.make())
+
+
+def test_per_load_generation_is_order_independent(world, tmp_path, monkeypatch):
+    from sim import generator as g
+
+    loads = [g.new_load(world, random.Random(seed)) for seed in (41, 42)]
+    t0 = datetime(2026, 10, 24, 8, 0, tzinfo=UTC)
+
+    def generate(root, ordered):
+        monkeypatch.setenv("SIM_DATA_DIR", str(root))
+        monkeypatch.setenv("WORLD_FILE", str(root / "world.json"))
+        monkeypatch.setenv("SIM_SEED", "701")
+        root.mkdir()
+        (root / "world.json").write_text(json.dumps(world))
+        for load in ordered:
+            for step in g.lifecycle(copy.deepcopy(load), "clean", random.Random(99), t0=t0):
+                step.make()
+            g.record_answer(load, "clean", ts=t0)
+        documents = {}
+        for path in (root / "docs").glob("*.json"):
+            doc = json.loads(path.read_text())
+            documents.setdefault(doc["load_id"], {})[path.name] = path.read_bytes()
+        answers = {item["load_id"]: item for item in
+                   (json.loads(line) for line in (root / "answer_key.jsonl").read_text().splitlines())}
+        return documents, answers
+
+    first = generate(tmp_path / "order-a", loads)
+    second = generate(tmp_path / "order-b", list(reversed(loads)))
+    assert first == second
+
+
+def test_500_loads_have_unique_invoice_numbers_and_document_paths(world, monkeypatch):
+    from sim import generator as g
+
+    writes = []
+    original_write = g.docs.write
+
+    def tracked_write(ref, kind, data):
+        writes.append(f"{ref}.pdf")
+        return original_write(ref, kind, data)
+
+    monkeypatch.setattr(g.docs, "write", tracked_write)
+    rnd = random.Random(500)
+    t0 = datetime(2026, 10, 24, 8, 0, tzinfo=UTC)
+    for _ in range(500):
+        load = g.new_load(world, rnd)
+        for step in g.lifecycle(load, "clean", rnd, t0=t0):
+            step.make()
+    invoices = [json.loads(path.read_text())["invoice_number"]
+                for path in (g.data_dir() / "docs").glob("*.json")
+                if json.loads(path.read_text()).get("type") == "carrier_invoice"]
+    assert len(writes) == len(set(writes))
+    assert len(invoices) == len(set(invoices)) == 500
+    registry_path = g.data_dir() / "invoice_registry.json"
+    assert registry_path.exists()
+    g._INVOICE_REGISTRIES.pop(registry_path)
+    assert g._reserve_invoice_number(world["carriers"][0], random.Random(9), "restarted-load") not in invoices

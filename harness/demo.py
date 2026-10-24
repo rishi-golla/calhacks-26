@@ -58,7 +58,7 @@ EVENTS = [
                     "sender_matches_registered": False, "text": BANK_TEXT}}),
     ("Invoice whose line items do not add up", {
         "type": "carrier_invoice.received", "priority": "P2",
-        "payload": {"case_id": "CASE-4877", "load_id": "LOAD-4877", "carrier": {"id": "C-311", "name": "Sierra Haul LLC"},
+        "payload": {"case_id": "CASE-4877", "load_id": f"LOAD-4877-{RUN}", "carrier": {"id": "C-311", "name": "Sierra Haul LLC"},
                     "contract_rate": 1850.0, "invoice_amount": 2250.0, "text": MATH_TEXT}}),
     ("Same invoice re-sent a day later: blocked as a duplicate (P-007)", None),
     ("GPS ping: no model, no agent", {
@@ -162,6 +162,17 @@ def main() -> None:
             leaked_total += len(leaked)
             tokens = len(set(TOKEN_RE.findall(blob)))
             print(f"  scrubbed: {tokens} values tokenized; personal data in envelope: {leaked or 'none'}")
+            ctx = env["subject"].get("intake_context") or {}
+            car = ctx.get("carrier") or {}
+            if car:
+                print(f"  context: {car.get('carrier_id')} sent {car.get('documents_90d')} documents in 90 days "
+                      f"({car.get('invoices_90d')} invoices, avg ${car.get('avg_invoice') or 0:,.2f}); "
+                      f"flags {car.get('flags_90d') or 'none'}")
+            if ctx.get("warning"):
+                print(f"  {ctx['warning']}")
+            if ctx.get("similar"):
+                top = ctx["similar"][0]
+                print(f"  most similar past document: {top['event_id']} ({top['type']}, {top['status']})")
             notes = env["subject"].get("review_notes") or []
             print(f"  review: {'FLAGGED: ' + '; '.join(notes) if env['subject'].get('needs_review') else 'clean'}")
         print(f"  route: {res['status'].upper()} -> {res['agent'] or '-'} / {res['skill'] or '-'}   ({res['reason']})")

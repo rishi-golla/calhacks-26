@@ -11,8 +11,9 @@ from typing import Any
 from common.envelope import TaskEnvelope
 from harness.chat import complete
 from harness.ingest.amounts import MONEY, READERS
+from harness.ingest.context import ContextStore
 from harness.ingest.dispatch import Dispatcher, DispatchError
-from harness.ingest.memory import Memory, event_time
+from harness.ingest.memory import Memory, carrier_of, event_time
 from harness.ingest.redact import ALLOWLIST_LABEL, BUSINESS, known_spans, leftovers, redact_obj, replace_spans
 from harness.ingest.routing import Route, classify, table_route
 from harness.ingest.schemas import AMOUNT_FIELDS, DOC_TYPE, PII_ONLY, SCHEMAS, is_structured, lite_schema
@@ -58,6 +59,15 @@ def default_memory() -> Memory:
     global _memory
     _memory = _memory or Memory()
     return _memory
+
+
+_context: ContextStore | None = None
+
+
+def default_context() -> ContextStore:
+    global _context
+    _context = _context or ContextStore()
+    return _context
 
 
 def case_id_for(event: dict) -> str | None:
@@ -129,7 +139,8 @@ def _verbatim_spans(items: list[dict], text: str, vault: Vault, kinds: dict[str,
 
 
 async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict, *,
-                  dispatch: bool = True, memory: Memory | None = None) -> dict[str, Any]:
+                  dispatch: bool = True, memory: Memory | None = None,
+                  context: ContextStore | None = None) -> dict[str, Any]:
     t0 = time.perf_counter()
     timings: dict[str, int] = {}
 
@@ -153,6 +164,7 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
 
     # 0. Input validation and intake memory, before any model runs (synthetic or real input is never assumed right).
     memory = memory or default_memory()
+    context = context or default_context()
     payload, early_notes, fatal = validate(etype, payload)
     if fatal:
         raise BadEvent(fatal)
@@ -166,6 +178,9 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
             if dispatch:
                 dispatcher.record(event_id, case_id or "", original["skill"], original["agent"], original["task_id"],
                                   "duplicate", reason, None)
+            await context.remember(ContextStore.record(event, payload, carrier_id=carrier_of(payload), at=at,
+                                                       status="duplicate", notes=[reason], skill=original["skill"],
+                                                       agent=original["agent"]))
             return {**out, "status": "duplicate", "prior": original, "reason": reason, "duplicate_of": dup}
         if dup:
             early_notes.append(f"possible duplicate of {dup['event_id']} ({dup['rule']})")
@@ -183,6 +198,8 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
         if dispatch:
             dispatcher.record(event_id, case_id or "", None, None, None, "not_routed", route.reason, None)
         return {**out, "status": "not_routed", "route": route.__dict__, "timings_ms": timings}
+
+    intake_context = await context.build(event_id, carrier_of(payload), text, at)   # carrier history + similar
 
     # 2. Model A. Lanes (INGEST_MODE=fast, the default): no free text -> no extraction call (structured fields are
     # handled by key rules); structured payload + text -> "lite" (personal-data spans + amounts only);
@@ -251,6 +268,8 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
     subject = {**{k: v for k, v in extracted.items() if v not in (None, [], "")}, **payload_r,
                "event_type": etype, "doc_type": doc_type, "needs_review": needs_review,
                "review_notes": notes[:12], "redacted_tokens": len(set(tokens)) + len(spans)}
+    if intake_context:
+        subject["intake_context"] = intake_context
     refs = [f"event:{event_id}"] + [r for r in payload.get("evidence_refs", []) if isinstance(r, str)]
     env = TaskEnvelope(task_type=route.skill or "triage", case_id=case_id or "", subject=subject,
                        evidence_refs=refs,
@@ -278,6 +297,9 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
             out["error"] = str(e)
             status = "dispatch_failed"
         lap("dispatch", t)
+    await context.remember(ContextStore.record(
+        event, payload, carrier_id=carrier_of(payload), at=at, status=status, notes=notes, text=text,
+        skill=route.skill or "", agent=(out.get("dispatch") or {}).get("agent", "")))
     if status in ("accepted", "dry_run"):   # remember only what was actually taken on
         if etype == "carrier_invoice.received":
             memory.remember_invoice(event_id, case_id or "", payload, at)

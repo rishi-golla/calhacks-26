@@ -151,9 +151,11 @@ async def test_pipeline_blocks_a_resent_invoice(tmp):
         vault, disp, mem = Vault(tmp / "v.sqlite"), Dispatcher(tmp / "d.sqlite"), Memory(tmp / "m.sqlite")
         ev = {"event_id": "EVT-1", "type": "carrier_invoice.received", "sim_ts": "2026-10-01T00:00:00Z",
               "payload": INVOICE}
-        first = await process(pool, vault, disp, ev, memory=mem)
+        from harness.ingest.context import ContextStore
+        off = ContextStore("")
+        first = await process(pool, vault, disp, ev, memory=mem, context=off)
         resent = await process(pool, vault, disp, {**ev, "event_id": "EVT-2", "sim_ts": "2026-10-02T00:00:00Z"},
-                               memory=mem)
+                               memory=mem, context=off)
     finally:
         dispatch_mod.send_task = original
         await pool.aclose()

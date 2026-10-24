@@ -99,7 +99,9 @@ async def test_hero_invoice_end_to_end(pool, agents, tmp_path):
                          "detention_hours_claimed": 2, "free_time_min": 120, "gps_dwell_min": 47,
                          "receipt_attached": False, "text": HERO_TEXT}}
 
-    res = await process(pool, vault, dispatcher, event, memory=memory)
+    from harness.ingest.context import ContextStore
+    off = ContextStore("")
+    res = await process(pool, vault, dispatcher, event, memory=memory, context=off)
 
     assert res["status"] == "accepted", res
     assert res["case_id"] == "CASE-4821"
@@ -136,5 +138,5 @@ async def test_hero_invoice_end_to_end(pool, agents, tmp_path):
     assert not [p for p in PII if p in received]
     assert task["history"][0]["metadata"]["idempotency_key"] == f"event:{event['event_id']}"
 
-    again = await process(pool, vault, dispatcher, event, memory=memory)
+    again = await process(pool, vault, dispatcher, event, memory=memory, context=off)
     assert again["status"] == "duplicate" and again["prior"]["task_id"] == res["dispatch"]["task_id"]

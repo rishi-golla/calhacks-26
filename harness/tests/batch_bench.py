@@ -24,6 +24,7 @@ import redis
 
 from common.config import SKILL_OWNER
 from harness.ingest.consumer import MODEL_CONCURRENCY, needs_model
+from harness.ingest.context import ContextStore
 from harness.ingest.dispatch import Dispatcher
 from harness.ingest.memory import Memory
 from harness.ingest.pipeline import BUSINESS, process
@@ -132,6 +133,7 @@ async def run(args) -> dict:
     tmp = Path(tempfile.mkdtemp(prefix="bench-"))
     vault, dispatcher = Vault(tmp / "vault.sqlite"), Dispatcher(tmp / "ingest.sqlite")
     memory = Memory(tmp / "memory.sqlite")   # fresh per run, so re-runs don't flag their own earlier copies
+    context = ContextStore(index=f"w1-bench-{args.tag}")   # its own index: never the live memory
     slots = asyncio.Semaphore(args.concurrency)
 
     async def one(i: int, ev: dict) -> dict:
@@ -140,10 +142,12 @@ async def run(args) -> dict:
         if needs_model(ev):
             async with slots:
                 t1 = time.perf_counter()
-                res = await process(pool, vault, dispatcher, ev, dispatch=args.dispatch, memory=memory)
+                res = await process(pool, vault, dispatcher, ev, dispatch=args.dispatch, memory=memory,
+                                    context=context)
         else:
             t1 = t0
-            res = await process(pool, vault, dispatcher, ev, dispatch=args.dispatch, memory=memory)
+            res = await process(pool, vault, dispatcher, ev, dispatch=args.dispatch, memory=memory,
+                                    context=context)
         res["_wait_ms"] = int((t1 - t0) * 1000)
         res["_e2e_ms"] = int((time.perf_counter() - t0) * 1000)
         res["_source"] = ev

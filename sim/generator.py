@@ -34,7 +34,7 @@ def _now() -> datetime:
 
 
 def _id(prefix: str) -> str:
-    return f"{prefix}-{_now():%m%d}-{uuid.uuid4().hex[:4].upper()}"
+    return f"{prefix}-{_now():%m%d}-{uuid.uuid4().hex[:8].upper()}"
 
 
 def pick(rnd: random.Random, weights: dict[str, float] = SCENARIOS) -> str:
@@ -91,8 +91,8 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
         claimed_h, receipt = math.ceil((dwell - free) / 60), True
     else:
         dwell, claimed_h, receipt = rnd.randint(25, 110), 0, None
-    arrived = _now() + timedelta(seconds=20)
-    departed = arrived + timedelta(minutes=dwell)
+    departed = _now() - timedelta(minutes=rnd.randint(5, 30))
+    arrived = departed - timedelta(minutes=dwell)
     gps = {"arrived": f"{arrived:%H:%M}", "departed": f"{departed:%H:%M}"}
     for delay, stop, kind in ((6, lane["origin"], "pickup.arrived"), (5, lane["origin"], "pickup.departed"),
                               (8, lane["destination"], "delivery.arrived"),
@@ -106,7 +106,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
     lines = [{"desc": "Linehaul", "amount": rate}]
     if claimed_h:
         lines.append({"desc": f"Detention {claimed_h}h", "amount": claimed_h * lane["detention_rate_hr"]})
-    inv_id = f"INV-{c['usdot']}-{lid[-4:]}"
+    inv_id = f"INV-{c['usdot']}-{lid.rsplit('-', 1)[1]}"
     total = round(sum(li["amount"] for li in lines), 2)
     inv = write_doc(inv_id, {"type": "carrier_invoice", "invoice_id": inv_id, "remit_to": c, "bill_to":
                              "Golden Gate Freight", **base, "line_items": lines, "total": total})

@@ -21,9 +21,16 @@ class CarrierAPAgent(FreightAgent):
         if case.env.task_type == "answer_payment_status":
             cells = {c["col"]: c["value"] for c in store.sheet(SHEET) if c["row"] == _row(s)}
             return ResultArtifact(outcome="info", confidence=1.0, findings={"invoice": _row(s), "status": cells})
-        match = three_way_match(s)
         row = _row(s)
+        rows_by_row = {}
+        for cell in store.sheet(SHEET):
+            rows_by_row.setdefault(cell["row"], {})[cell["col"]] = cell["value"]
+        dup = next((r for r, cols in rows_by_row.items()
+                    if r != row and cols.get("load_id") == s.get("load_id") and s.get("load_id")), None)
+        match = three_way_match({**s, "duplicate_of": dup})
         case.commit("record_invoice", [
+            {"sheet": SHEET, "row": row, "col": "load_id", "after": s.get("load_id")},
+            {"sheet": SHEET, "row": row, "col": "bol", "after": s.get("bol")},
             {"sheet": SHEET, "row": row, "col": "carrier", "after": s.get("carrier", {}).get("name")},
             {"sheet": SHEET, "row": row, "col": "invoiced", "after": s["invoice_amount"]},
             {"sheet": SHEET, "row": row, "col": "contract", "after": s["contract_rate"]},
@@ -37,6 +44,11 @@ class CarrierAPAgent(FreightAgent):
         case.commit("place_hold", [{"sheet": SHEET, "row": row, "col": "status", "after": "on_hold"},
                                    {"sheet": SHEET, "row": row, "col": "hold_reason", "after": match["reason"]}],
                     policy_ids=match["policy_ids"])
+        if s.get("detention_hours_claimed", 0) <= 0:
+            return ResultArtifact(outcome="hold", confidence=0.9, policy_ids=match["policy_ids"],
+                                 evidence_refs=case.env.evidence_refs,
+                                 findings={"invoice_amount": s["invoice_amount"], "match": match},
+                                 recommended_next=["controller.review_hold"])
         await case.status("awaiting_other_agent", waiting_on="risk")
         d = await case.delegate("investigate_charge")
         if d.parked:

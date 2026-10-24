@@ -34,7 +34,7 @@ import { InboxView, LearningView } from "./human-views";
 import { CounterpartiesView, DemoView, HarnessView } from "./support-views";
 import { Dialog, Submit, type FlagTarget } from "./ui";
 import AgentInbox from "./agent-inbox";
-import Home from "./home";
+import Workflow from "./workflow";
 const AuditWorkspace = dynamic(() => import("./audit-workspace"), {
   ssr: false,
   loading: () => <div className="loading">Loading audit workspace…</div>,
@@ -278,32 +278,37 @@ function DashboardBody() {
           </button>
         </div>
         <nav aria-label="Main navigation">
-          {views.map((item) => (
-            <div key={item.id}>
-              <button
-                className={`nav-item ${view === item.id ? "active" : ""}`}
-                aria-current={view === item.id ? "page" : undefined}
-                aria-label={item.label}
-                title={item.label}
-                onClick={() => navigate(item.id)}
-              >
-                <item.icon size={17} />
-                <span>{item.label}</span>
-                {item.id === "inbox" && pending > 0 && (
-                  <span className="nav-count">{pending}</span>
-                )}
-                {item.id === "demo" && <span className="nav-demo">DEMO</span>}
-              </button>
-            </div>
-          ))}
+          {views
+            .filter((item) => item.id === "home")
+            .map((item) => (
+              <div key={item.id}>
+                <button
+                  className={`nav-item ${view === item.id ? "active" : ""}`}
+                  aria-current={view === item.id ? "page" : undefined}
+                  aria-label={item.label}
+                  title={item.label}
+                  onClick={() => navigate(item.id)}
+                >
+                  <item.icon size={17} />
+                  <span>{item.label}</span>
+                  {item.id === "inbox" && pending > 0 && (
+                    <span className="nav-count">{pending}</span>
+                  )}
+                  {item.id === "demo" && <span className="nav-demo">DEMO</span>}
+                </button>
+              </div>
+            ))}
         </nav>
         <div className="side-chats">
           <div className="side-chats-head">
             <span>Chats</span>
             <button
               className="icon-button"
-              aria-label="Search cases"
-              onClick={() => navigate("cases")}
+              aria-label="Show all cases"
+              onClick={() => {
+                setCaseId("");
+                navigate("home");
+              }}
             >
               <Search size={14} />
             </button>
@@ -311,11 +316,11 @@ function DashboardBody() {
           {data.case.slice(0, 12).map((row) => (
             <button
               key={String(row.case_id)}
-              className={`side-chat ${view === "cases" && caseId === row.case_id ? "active" : ""}`}
+              className={`side-chat ${caseId === row.case_id ? "active" : ""}`}
               title={String(row.title || row.case_id)}
               onClick={() => {
-                openCase(String(row.case_id));
-                setMobile(false);
+                setCaseId(String(row.case_id));
+                navigate("home");
               }}
             >
               {String(row.title || row.case_id).replace(
@@ -401,15 +406,10 @@ function DashboardBody() {
         </header>
         <main id="main-content" tabIndex={-1}>
           {view === "home" && (
-            <Home
-              onNavigate={navigate}
-              onOpenCase={openCase}
+            <Workflow
+              caseId={caseId}
+              onClearCase={() => setCaseId("")}
               onOpenMenu={openNavigation}
-              onAsk={(text) => {
-                setQuery(text);
-                setCaseId("");
-                navigate("cases");
-              }}
             />
           )}
           {view === "agents" && (

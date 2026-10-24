@@ -1,5 +1,6 @@
 """First-hop router: Redis Streams `events` -> owning agent's A2A skill (PRD 7.3). No orchestration:
-it starts one task per new case and returns immediately; agents delegate to each other from there."""
+it starts one task per new case and returns immediately; agents delegate to each other from there.
+Telemetry events (load.tendered, gps.ping, pod.received) are not routed: they arrive as evidence on the invoice."""
 import asyncio
 import json
 import logging
@@ -13,7 +14,6 @@ from common.envelope import DelegationMeta, TaskEnvelope
 
 ROUTES = {
     "carrier_invoice.received": "process_carrier_invoice",
-    "pod.received": "process_carrier_invoice",
     "shipper_payment.received": "reconcile_customer_payment",
     "bank.event": "reconcile_customer_payment",
     "bank_change.requested": "screen_bank_change",

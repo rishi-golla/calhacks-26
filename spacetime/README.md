@@ -1,4 +1,4 @@
-# FreightOps operational database (W2)
+# FreightLine operational database (W2)
 
 SpacetimeDB **2.10.2**, TypeScript module, generated TypeScript dashboard bindings, and a
 Python HTTP integration boundary. Operational records, identity permissions, financial controls,

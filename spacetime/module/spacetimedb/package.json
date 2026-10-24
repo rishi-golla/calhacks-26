@@ -1,8 +1,8 @@
 {
-  "name": "freightops",
+  "name": "freightline",
   "type": "module",
   "version": "1.0.0",
-  "description": "Transactional operational state and policy controls for FreightOps",
+  "description": "Transactional operational state and policy controls for FreightLine",
   "scripts": {
     "build": "spacetime build --module-path .",
     "publish": "spacetime publish --module-path . --server local freightops",

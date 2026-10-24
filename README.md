@@ -1,4 +1,4 @@
-# FreightOps: Autonomous Back Office for Freight Brokerages
+# FreightLine: Autonomous Back Office for Freight Brokerages
 
 Nine brokerage-specific agents coordinate through real A2A services and SpacetimeDB: Carrier Settlement,
 Shipper Billing & Collections, Load Profitability, Accessorial Audit, Carrier Trust & Verification,

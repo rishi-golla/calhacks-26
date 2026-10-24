@@ -169,8 +169,8 @@ not implemented as an exception.
 
 ## Enable a real demo phone call
 
-The current account has three FreightOps hosted personas—verification, collections and approvals—
-and one Cartesia-provided outbound number. Their IDs and the operator's team destination are saved
+The current account has three FreightLine hosted personas—verification, collections and approvals,
+still named `FreightOps · …` in Cartesia—and one Cartesia-provided outbound number. Their IDs and the operator's team destination are saved
 only in private local configuration. This provisioning did not place a phone call. The calling
 window was closed at setup, so the first end-to-end team call remains pending.
 

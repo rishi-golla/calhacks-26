@@ -63,7 +63,9 @@ class Mutation {
   }
   finish(): void {
     const { ctx, p, actor, action } = this;
-    const taskId = text(p, 'task_id', '');
+    // Dispatch references a remote first-hop task, which may not yet be mirrored
+    // here. Its ID lives on the dispatch row, not as a router-owned audit task.
+    const taskId = action === 'record_dispatch' ? '' : text(p, 'task_id', '');
     if (taskId) {
       const task = must(ctx.db.task.task_id.find(taskId), 'audit task does not exist');
       if (action === 'record_delegation') {
@@ -89,7 +91,7 @@ class Mutation {
     });
     const base = {
       parent_id: head?.id ?? '', parent_hash: head?.hash ?? '', sequence: (head?.sequence ?? 0) + 1,
-      case_id: caseId, task_id: text(p, 'task_id', ''), agent: actor.actor,
+      case_id: caseId, task_id: taskId, agent: actor.actor,
       actor_identity: actor.identity, action, summary: text(p, 'summary', action), policy_ids,
       instr_version: uint(p, 'instr_version'), memory_ids: list(p, 'memory_ids'), ts: now(ctx),
       write_id: text(p, 'write_id', undefined, 200),
@@ -673,9 +675,37 @@ export const addPrecedent: Handler = m => {
   p.case_id = source_case;
 };
 
+export const recordDispatch: Handler = m => {
+  const { ctx, p } = m;
+  const event_id = text(p, 'event_id');
+  const previous = ctx.db.dispatch.event_id.find(event_id);
+  const status = choice(p, 'status', ['accepted', 'triage', 'not_routed', 'duplicate']);
+  const row = {
+    event_id, case_id: text(p, 'case_id', ''), skill: text(p, 'skill', ''),
+    agent: choice(p, 'agent', ['', ...AGENTS], ''), task_id: text(p, 'task_id', ''),
+    status, reason: text(p, 'reason'), queue_ms: uint(p, 'queue_ms'),
+    policy_version: text(p, 'policy_version'), ts: now(ctx),
+  };
+  if (row.agent && !SKILLS[row.agent].includes(row.skill)) throw new Error('dispatch skill does not belong to agent');
+  if (['accepted', 'duplicate'].includes(status) && (!row.case_id || !row.agent || !row.skill || !row.task_id)) {
+    throw new Error('accepted dispatch requires case, agent, skill and task');
+  }
+  if (previous && ['accepted', 'duplicate'].includes(previous.status)) {
+    if (!['accepted', 'duplicate'].includes(status) ||
+        ['case_id', 'agent', 'skill', 'task_id'].some(key => previous[key as keyof typeof previous] !== row[key as keyof typeof row])) {
+      throw new Error('accepted dispatch route is immutable');
+    }
+    row.status = 'duplicate';
+    row.queue_ms = previous.queue_ms;
+    row.policy_version = previous.policy_version;
+  }
+  if (previous) ctx.db.dispatch.event_id.update(row); else ctx.db.dispatch.insert(row);
+  m.capture('dispatch', event_id, previous, row);
+};
+
 export const logLlmCall: Handler = m => {
   const { ctx, p } = m;
-  const row = { id: text(p, 'id'), ts: now(ctx), agent: choice(p, 'agent', AGENTS), model: text(p, 'model'), latency_ms: uint(p, 'latency_ms'), tokens: uint(p, 'tokens'), route_reason: text(p, 'route_reason', ''), ensemble_agreement: bool(p, 'ensemble_agreement') };
+  const row = { id: text(p, 'id'), ts: now(ctx), agent: choice(p, 'agent', [...AGENTS, 'router', 'ingest']), model: text(p, 'model'), latency_ms: uint(p, 'latency_ms'), tokens: uint(p, 'tokens'), route_reason: text(p, 'route_reason', ''), ensemble_agreement: bool(p, 'ensemble_agreement') };
   ctx.db.llm_call.insert(row);
   m.capture('llm_call', row.id, null, row);
 };

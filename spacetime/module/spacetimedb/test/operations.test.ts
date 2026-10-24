@@ -9,7 +9,7 @@ import * as op from '../src/operations';
 // SpacetimeDB 2.10 HTTP/auth/storage integration.
 type Row = Record<string, unknown>;
 const primaryKeys: Record<string, string> = {
-  case: 'case_id', task: 'task_id', agent: 'name', agent_config: 'agent', ledger_entry: 'id', hold: 'id',
+  dispatch: 'event_id', case: 'case_id', task: 'task_id', agent: 'name', agent_config: 'agent', ledger_entry: 'id', hold: 'id',
   payment_proposal: 'id', approval: 'id', audit_event: 'id', call: 'id', precedent: 'id', llm_call: 'id', metric: 'name',
   change_set: 'id', cell_change: 'id', doc_read: 'id', review: 'id', agent_memory: 'id', instruction_version: 'id',
   flag: 'id', company: 'id', contact: 'id', delegation_edge: 'id', invoice: 'id', accounting_period: 'period',
@@ -85,6 +85,20 @@ class Harness {
 }
 function assertPresent<T>(value: T | undefined): T { assert.notEqual(value, undefined); return value as T; }
 const lines = [{ account: 'Expense', debit: 9400, credit: 0 }, { account: 'AP', debit: 0, credit: 9400 }];
+
+test('harness can log intake model calls without granting intake writers telemetry access', () => {
+  const h = new Harness();
+  const payload = { model: 'intake-classifier', latency_ms: 12, tokens: 34, route_reason: 'classify event', ensemble_agreement: false };
+  for (const agent of ['router', 'ingest', 'documents', 'carrier_ap']) {
+    h.run('harness', 'log_llm_call', ['harness'], op.logLlmCall, { ...payload, id: `LLM-${agent}`, agent });
+    assert.equal(h.row('llm_call', `LLM-${agent}`).agent, agent);
+  }
+  assert.throws(() => h.run('harness', 'log_llm_call', ['harness'], op.logLlmCall, { ...payload, id: 'invalid', agent: 'unknown' }));
+  for (const actor of ['router', 'ingest']) {
+    assert.throws(() => h.run(actor, 'log_llm_call', ['harness'], op.logLlmCall, { ...payload, id: `unauthorized-${actor}`, agent: actor }));
+  }
+  assert.equal(h.rows('llm_call').length, 4);
+});
 
 test('sender auth cannot be replaced by caller payload or admin privilege', () => {
   const h = new Harness();
@@ -420,4 +434,34 @@ test('instruction publication checks versions atomically and locks automated con
   assert.equal(h.row('instruction_version', 'carrier_ap:2').diff, '');
   assert.equal(h.row('instruction_version', 'carrier_ap:1').active, false);
   assert.equal(h.rows('instruction_version').filter(x => x.active).length, 1);
+});
+
+test('dispatch records remote admission, retries and triage with router-only authorization', () => {
+  const h = new Harness();
+  const payload = { event_id: 'event-1', case_id: 'external-case', agent: 'carrier_ap',
+    skill: 'process_carrier_invoice', task_id: 'external-task', status: 'accepted',
+    reason: 'Known invoice event', queue_ms: 120, policy_version: 'first-hop-v1' };
+  for (const actor of ['harness', 'ingest', 'carrier_ap', 'admin', 'stranger']) {
+    assert.throws(() => h.run(actor, 'record_dispatch', ['router'], op.recordDispatch, payload));
+  }
+  const first = h.run('router', 'record_dispatch', ['router'], op.recordDispatch, payload);
+  assert.equal(h.row('dispatch', 'event-1').status, 'accepted');
+  h.run('router', 'record_dispatch', ['router'], op.recordDispatch, first);
+  assert.equal(h.row('dispatch', 'event-1').status, 'accepted');
+  h.run('router', 'record_dispatch', ['router'], op.recordDispatch, { ...payload, queue_ms: 999 });
+  assert.equal(h.row('dispatch', 'event-1').status, 'duplicate');
+  assert.equal(h.row('dispatch', 'event-1').queue_ms, 120);
+  assert.equal(h.rows('dispatch').length, 1);
+  for (const patch of [{ task_id: 'other-task' }, { status: 'triage' }, { queue_ms: -1 },
+    { skill: 'receive_document' }, { status: 'invented' }, { task_id: '' }]) {
+    assert.throws(() => h.run('router', 'record_dispatch', ['router'], op.recordDispatch, { ...payload, ...patch }));
+  }
+  for (const status of ['triage', 'not_routed']) {
+    h.run('router', 'record_dispatch', ['router'], op.recordDispatch, {
+      event_id: status, status, reason: 'No first-hop destination', policy_version: 'first-hop-v1', queue_ms: 0,
+    });
+    assert.equal(h.row('dispatch', status).case_id, '');
+  }
+  h.run('router', 'record_dispatch', ['router'], op.recordDispatch, { ...payload, event_id: 'triage' });
+  assert.equal(h.row('dispatch', 'triage').status, 'accepted');
 });

@@ -4,12 +4,16 @@ import json
 import logging
 import os
 import socket
+import time
 
 import redis.asyncio as redis
 
 from common.a2a_transport import send_task
 from common.config import SKILL_OWNER
 from common.envelope import DelegationMeta, TaskEnvelope
+from common.spacetime_client import SpacetimeClient
+
+POLICY_VERSION = 'first-hop-v1'
 
 ROUTES = {
     "carrier_invoice.received": "process_carrier_invoice",
@@ -46,13 +50,36 @@ def route_event(event: dict) -> tuple[str, TaskEnvelope, DelegationMeta]:
     return SKILL_OWNER[skill], env, meta
 
 
+async def record_dispatch(entry_id, event, status, reason, *, agent='', skill='', task_id='', received_ms=None) -> None:
+    db = SpacetimeClient(actor='router')
+    if db.disabled:
+        return
+    entry = entry_id.decode() if isinstance(entry_id, bytes) else str(entry_id)
+    payload = event.get('payload', {})
+    case_id = event.get('case_id') or (payload.get('case_id') if isinstance(payload, dict) else '')
+    event_id = event.get('event_id')
+    # A malformed event still gets a stable telemetry identity from Redis.
+    event_id = event_id if isinstance(event_id, str) and event_id.strip() else f'redis:{entry}'
+    queue_ms = min(4294967295, max(0, (received_ms or int(time.time() * 1000)) - int(entry.split('-')[0])))
+    await db.mutate('record_dispatch', {
+        'event_id': event_id, 'case_id': case_id if isinstance(case_id, str) else '',
+        'agent': agent, 'skill': skill, 'task_id': task_id, 'status': status,
+        'reason': reason, 'queue_ms': queue_ms, 'policy_version': POLICY_VERSION,
+    })
+
+
 async def process_entry(client, entry_id, fields) -> None:
+    received_ms = int(time.time() * 1000)
+    event = {}
     try:
-        event = json.loads(fields.get(b"json", fields.get("json", "")))
-        if not isinstance(event, dict):
+        parsed = json.loads(fields.get(b"json", fields.get("json", "")))
+        if not isinstance(parsed, dict):
             raise TypeError("event must be an object")
-        agent, env, meta = route_event(event)
+        event = parsed
+        if event.get('type') != 'gps.ping':
+            agent, env, meta = route_event(event)
     except (ValueError, TypeError) as error:
+        await record_dispatch(entry_id, event, 'triage', str(error), received_ms=received_ms)
         # Keep malformed/unclassified intake visible; atomic DLQ+ack avoids message loss.
         async with client.pipeline(transaction=True) as pipeline:
             pipeline.xadd("events:dead_letter", {"entry_id": entry_id, "reason": str(error),
@@ -60,9 +87,16 @@ async def process_entry(client, entry_id, fields) -> None:
             pipeline.xack("events", "router", entry_id)
             await pipeline.execute()
         return
+    if event.get('type') == 'gps.ping':
+        await record_dispatch(entry_id, event, 'not_routed', 'GPS ping does not require a finance agent',
+                              received_ms=received_ms)
+        await client.xack('events', 'router', entry_id)
+        return
     accepted = await send_task(agent, env, meta)
     if not accepted.id or accepted.context_id != env.case_id:
         raise ValueError("agent acceptance did not preserve the case")
+    await record_dispatch(entry_id, event, 'accepted', f"Known event type: {event['type']}",
+                          agent=agent, skill=env.task_type, task_id=accepted.id, received_ms=received_ms)
     await client.xack("events", "router", entry_id)
     log.info("event %s admitted as %s by %s", event["event_id"], accepted.id, agent)
 

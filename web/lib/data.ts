@@ -12,6 +12,7 @@ export const TABLES = [
   "call",
   "precedent",
   "llm_call",
+  "dispatch",
   "metric",
   "change_set",
   "cell_change",

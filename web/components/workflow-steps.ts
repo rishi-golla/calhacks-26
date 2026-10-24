@@ -493,9 +493,7 @@ export function targetUrl(
 ) {
   const companies = rows(all, "company");
   const carrierId = rows(d, "invoice")[0]?.carrier_id;
-  const carrier =
-    companies.find((c) => c.id === carrierId && c.usdot) ??
-    companies.find((c) => c.usdot);
+  const carrier = companies.find((c) => c.id === carrierId && c.usdot);
   const safer = carrier
     ? `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=${encodeURIComponent(str(carrier.usdot))}`
     : "";

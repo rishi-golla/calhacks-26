@@ -72,10 +72,7 @@ async def dispatch(ev: dict) -> str | None:
         return None
     agent, env, meta = p
     keys = _keys(ev)
-    claimed = [k for k in keys if store.seen_once(k)]  # atomic claim: concurrent deliveries can't both pass
-    if len(claimed) < len(keys):
-        for k in claimed:
-            store.forget(k)
+    if not store.claim_all(list(keys)):  # concurrent deliveries: exactly one claims every key
         return None
     try:
         task = await a2a_client.start_task(agent, env.model_dump(), meta, context_id=env.case_id)

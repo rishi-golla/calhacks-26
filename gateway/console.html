@@ -34,11 +34,12 @@ td.c{cursor:pointer}td.c:hover{background:#1d2738}.pill{padding:1px 6px;border-r
 </main><div id="toast"></div>
 <script>
 const $=id=>document.getElementById(id);let sel=null;
-const qt=new URLSearchParams(location.search).get('token');if(qt){localStorage.tok=qt;history.replaceState(null,'','/console')}$('tok').value=localStorage.tok||'';$('tok').onchange=e=>{localStorage.tok=e.target.value;tick()};
+$('tok').value=sessionStorage.tok||'';$('tok').onchange=e=>{sessionStorage.tok=e.target.value;tick()};
 const toast=m=>{$('toast').textContent=m;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',3000)};
 async function api(p,body){const r=await fetch(p,{method:body?'POST':'GET',headers:{'x-gateway-token':$('tok').value,'content-type':'application/json'},body:body?JSON.stringify(body):undefined});
  if(!r.ok)throw new Error(r.status+' '+(await r.text()));return r.json()}
-const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const A=v=>esc(JSON.stringify(String(v??'')));  // safe JS string literal inside a double-quoted handler attribute
 const brief=d=>{if(!d)return'';const o={...d};return esc(JSON.stringify(o)).slice(0,260)};
 async function fire(kind,human){try{const r=await api('/demo/'+kind,{force_human_approval:!!human});sel=r.case_id;toast('dispatched '+r.case_id);tick()}catch(e){toast(e.message)}}
 const SAY={deny:"Hi, yes this is dispatch. Driver was in and out in about 45 minutes. The detention was added by mistake and we have no receipt, so we withdraw the detention charge.",
@@ -49,23 +50,23 @@ async function complete(k,kind){const t=$('t_'+k).value;try{
 async function decide(k,d){try{await api('/approvals/'+k,{decision:d,approver:$('who_'+k).value||'controller'});toast(d+'d');tick()}catch(e){toast(e.message)}}
 function parkedCard(p){const pl=p.payload||{};const k=esc(p.key);
  if(p.kind==='approval')return `<div class="p"><b>Approval</b> <span class="pill">${esc(p.case_id)}</span><div class="d">${brief(pl)}</div>
-  <div class="row"><input id="who_${k}" placeholder="approver name" value="human-controller"><button class="ok" onclick="decide('${k}','approve')">Approve</button><button class="bad" onclick="decide('${k}','reject')">Reject</button></div></div>`;
+  <div class="row"><input id="who_${k}" placeholder="approver name" value="human-controller"><button class="ok" onclick="decide(${A(p.key)},'approve')">Approve</button><button class="bad" onclick="decide(${A(p.key)},'reject')">Reject</button></div></div>`;
  const tgt=pl.target||pl;return `<div class="p"><b>${p.kind==='call'?'Live call':'Email'}</b> <span class="pill">${esc(p.case_id)}</span> · ${esc(p.agent)}
   <div>intended_to: <b>${esc(tgt.intended_to)}</b> &nbsp; routed_to: <b>${esc(tgt.routed_to)}</b> <span class="pill">${esc(tgt.mode||'demo')}</span></div>
   <div class="d">${brief(pl)}</div><div style="margin-top:6px;color:var(--mut)">You are the carrier. What do you say?</div>
   <textarea id="t_${k}" rows="3" style="width:100%">${SAY.deny}</textarea>
-  <div class="row"><button class="sec" onclick="$('t_${k}').value=SAY.deny">Carrier withdraws detention</button><button class="sec" onclick="$('t_${k}').value=SAY.confirm">Carrier confirms detention</button>
-  <button onclick="complete('${k}','${p.kind}')">${p.kind==='call'?'End call → send transcript':'Send reply'}</button></div></div>`}
+  <div class="row"><button class="sec" onclick="$(${A('t_'+p.key)}).value=SAY.deny">Carrier withdraws detention</button><button class="sec" onclick="$(${A('t_'+p.key)}).value=SAY.confirm">Carrier confirms detention</button>
+  <button onclick="complete(${A(p.key)},${A(p.kind)})">${p.kind==='call'?'End call → send transcript':'Send reply'}</button></div></div>`}
 async function blame(r,c){const h=await api(`/audit/blame/ap_subledger/${encodeURIComponent(r)}/${encodeURIComponent(c)}`);
  $('blame').innerHTML=`<h2 style="margin-top:10px">blame ${esc(r)} · ${esc(c)}</h2>`+h.map(x=>`<div class="cs">${esc(x.change_set)} · <b>${esc(x.agent)}</b> ${esc(x.action)} [${esc((x.policy_ids||[]).join(','))}]<br><span class="b">${esc(JSON.stringify(x.before))}</span> → <span class="a">${esc(JSON.stringify(x.after))}</span></div>`).join('')}
 async function tick(){if(!$('tok').value){$('chain').textContent='enter token';return}
  try{const cs=await api('/cases');if(!sel&&cs.length)sel=cs[0];
-  $('cases').innerHTML=cs.map(c=>`<div class="case ${c===sel?'sel':''}" onclick="sel='${esc(c)}';tick()">${esc(c)}</div>`).join('')||'<i>fire a case →</i>';
+  $('cases').innerHTML=cs.map(c=>`<div class="case ${c===sel?'sel':''}" onclick="sel=${A(c)};tick()">${esc(c)}</div>`).join('')||'<i>fire a case →</i>';
   const pk=await api('/parked');const open=document.activeElement&&document.activeElement.id.startsWith('t_');
   if(!open)$('parked').innerHTML=pk.map(parkedCard).join('')||'<i style="color:var(--mut)">nothing parked</i>';
   const log=await api('/audit/log');$('chain').textContent=log.chain_ok?'hash chain OK':'CHAIN BROKEN';$('chain').style.background=log.chain_ok?'#1d5c42':'#7a2222';
   const rows=await api('/audit/sheet/ap_subledger');const by={};const cols=new Set();rows.forEach(r=>{(by[r.row]=by[r.row]||{})[r.col]=r.value;cols.add(r.col)});const C=[...cols];
-  $('sheet').innerHTML=`<table><tr><th>row</th>${C.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`+Object.entries(by).map(([r,v])=>`<tr><td>${esc(r)}</td>${C.map(c=>`<td class="c" onclick="blame('${esc(r)}','${esc(c)}')">${esc(typeof v[c]==='object'?JSON.stringify(v[c]):v[c])}</td>`).join('')}</tr>`).join('')+'</table>';
+  $('sheet').innerHTML=`<table><tr><th>row</th>${C.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`+Object.entries(by).map(([r,v])=>`<tr><td>${esc(r)}</td>${C.map(c=>`<td class="c" onclick="blame(${A(r)},${A(c)})">${esc(typeof v[c]==='object'?JSON.stringify(v[c]):v[c])}</td>`).join('')}</tr>`).join('')+'</table>';
   if(!sel)return;$('cid').textContent='· '+sel;const c=await api('/cases/'+encodeURIComponent(sel));
   $('trail').innerHTML=c.events.map(e=>`<div class="ev"><span class="d">${new Date(e.ts*1000).toLocaleTimeString()}</span><span class="ag">${esc(e.agent)}</span><span><span class="k">${esc(e.kind)}</span> <span class="d">${brief(e.detail)}</span></span></div>`).join('');
   $('audit').innerHTML=c.change_sets.map(x=>`<div class="cs"><b>${esc(x.id)}</b> ← ${esc(x.parent_id||'root')} · <b>${esc(x.agent)}</b> ${esc(x.action)} [${esc((x.policy_ids||[]).join(','))}]<br>${(x.cells||[]).map(cl=>`${esc(cl.sheet)}!${esc(cl.row)}.${esc(cl.col)}: <span class="b">${esc(JSON.stringify(cl.before))}</span> → <span class="a">${esc(JSON.stringify(cl.after))}</span>`).join('<br>')}</div>`).join('')

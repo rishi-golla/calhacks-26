@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 FIXTURES = Path(__file__).parent.parent / "sim" / "fixtures" / "transcripts"
 
 DENY = re.compile(r"(withdraw|by mistake|in and out|about \d+ minutes|under an hour"
-                  r"|not detained|wasn't detained)", re.IGNORECASE)
+                  r"|(didn't|did not|never) wait|not detained|wasn't detained)", re.IGNORECASE)
 CONFIRM = re.compile(r"(yes,? (he|the driver) was (there|detained)|receipt (is )?attached|sending the receipt"
                      r"|two hours,? confirmed|detention is valid|stand by the charge"
                      r"|waited (over |about )?two hours)", re.IGNORECASE)

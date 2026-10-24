@@ -108,7 +108,8 @@ async def voice_tool(name: str, req: Request):
     case_id = call["case_id"]
     if name == "get_payment_status":
         inv = body.get("invoice_id", "")
-        if not any(c["row"] == inv for cs in store.change_sets(case_id) for c in cs["cells"]):
+        if not any(c["sheet"] == "ap_subledger" and c["row"] == inv
+                   for cs in store.change_sets(case_id) for c in cs["cells"]):
             raise HTTPException(403, "invoice not part of this call's case")
         return {"invoice_id": inv, "status": {c["col"]: c["value"] for c in store.sheet("ap_subledger")
                                               if c["row"] == inv}}

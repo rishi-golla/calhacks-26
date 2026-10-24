@@ -292,6 +292,18 @@ def is_seen(key: str) -> bool:
         return c.execute("SELECT 1 FROM seen WHERE key=?", (key,)).fetchone() is not None
 
 
+def claim_all(keys: list[str]) -> bool:
+    """Atomically record every key, or none of them if any was already seen."""
+    with connect() as c:
+        c.execute("BEGIN IMMEDIATE")
+        if any(c.execute("SELECT 1 FROM seen WHERE key=?", (k,)).fetchone() for k in keys):
+            c.execute("ROLLBACK")
+            return False
+        c.executemany("INSERT INTO seen VALUES (?,?)", [(k, time.time()) for k in keys])
+        c.execute("COMMIT")
+        return True
+
+
 def forget(key: str) -> None:
     with connect() as c:
         c.execute("DELETE FROM seen WHERE key=?", (key,))

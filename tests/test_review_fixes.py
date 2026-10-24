@@ -114,3 +114,4 @@ def test_transcript_denial_vs_missing_receipt():
     said = "Yes, the driver waited two hours. We have no receipt though."
     assert not DENY.search(said) and CONFIRM.search(said)
     assert DENY.search("Driver was in and out, we withdraw the detention.")
+    assert DENY.search("No, the driver didn't wait over two hours.")

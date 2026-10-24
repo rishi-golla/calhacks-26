@@ -1,5 +1,5 @@
 "use client";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -10,6 +10,7 @@ import {
   Position,
   type Edge,
   type Node,
+  type NodeChange,
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -262,6 +263,13 @@ export default function Workflow({
     return () => window.removeEventListener("keydown", onKey);
   }, [openId]);
 
+  const measured = useRef(new Map<string, { width: number; height: number }>());
+  const onNodesChange = useCallback((changes: NodeChange<Node<StepData>>[]) => {
+    for (const c of changes)
+      if (c.type === "dimensions" && c.dimensions)
+        measured.current.set(c.id, c.dimensions);
+  }, []);
+
   const rendered = [...visible, ...leaving.filter((id) => !visible.has(id))];
   const lastPos = useRef(new Map<string, { x: number; y: number }>());
   for (const [id, p] of pos) lastPos.current.set(id, p);
@@ -271,6 +279,7 @@ export default function Workflow({
       id,
       type: "step",
       position: pos.get(id) ?? lastPos.current.get(id) ?? { x: 0, y: 0 },
+      measured: measured.current.get(id),
       data: {
         step,
         events: feeds[id].length,
@@ -370,6 +379,7 @@ export default function Workflow({
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        onNodesChange={onNodesChange}
         fitView
         fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
         minZoom={0.2}

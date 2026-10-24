@@ -6,8 +6,8 @@ from data/world.json, producing the full paper trail a brokerage receives:
   docs    rate con, BOL, signed POD, carrier invoice, shipper invoice, lumper receipt, detention log (PDF + JSON)
   email   raw .eml: carrier invoice with attachments, bank-change requests, shipper remittance advice
   bank    BAI2-style operating-account lines for shipper receipts
-  finance carrier_invoice.received / shipper_payment.received / bank_change.requested -> router -> agents
-Exceptions are planted at configurable rates; the expected outcome of each (down to the field) is appended to
+Raw email and bank arrivals are published for ingest.main to read and turn into case-opening events. Exceptions are
+planted at configurable rates; the expected outcome of each (down to the field) is appended to
 data/answer_key.jsonl so agent decisions can be scored."""
 import asyncio
 import json
@@ -100,6 +100,10 @@ def _event(etype: str, load: dict, payload: dict, at: datetime, priority: str = 
     if refs:
         ev["evidence_refs"] = refs
     return ev
+
+
+def _email_payload(message: dict) -> dict:
+    return {key: message[key] for key in ("mail_id", "from", "to", "subject", "sent_at", "attachments")}
 
 
 def plan(load: dict, scenario: str, rnd: random.Random) -> dict:
@@ -226,7 +230,9 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
             "free_time_min": free, "detention_rate_hr": lane["detention_rate_hr"], "terms": c.get("terms", "Net 30"),
             "temp_f": lane.get("temp_f")})
         return [_event("load.tendered", load, {**tms, "carrier": c, "shipper": s, "consignee": k,
-                                                "contract_rate": rate, "pickup_appt": pickup.isoformat(),
+                                                "contract_rate": rate, "free_time_min": free,
+                                                "operator_overrides": overrides or {},
+                                                "pickup_appt": pickup.isoformat(),
                                                 "delivery_appt": delivery_appt.isoformat()}, t0, refs=[refs["rc"]])]
     add(t0, tender)
     dispatch_at = t0 + timedelta(minutes=rnd.randint(20, 90))
@@ -268,7 +274,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                 _event("pod.received", load, {**base, "pod_ref": refs["pod"], "signed": signed}, depart, refs=out)]
     add(depart, delivered)
 
-    def invoice_payload(number: str, iid: str, at: datetime, case_id: str = case) -> tuple[dict, list[str]]:
+    def invoice_payload(number: str, iid: str, at: datetime) -> tuple[dict, list[str]]:
         doc = docs.write(iid, "carrier_invoice", {
             **base, "invoice_number": number, "date": _ts(at), "terms": c.get("terms", "Net 30"),
             "due": _ts(at + timedelta(days=30)), "carrier": c, "remit_to": remit, "line_items": lines,
@@ -280,34 +286,25 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                        f"signed POD.\nTotal due: ${stated:,.2f}. Remit to {remit['name']}.\n\nThanks,\nBilling\n"
                        f"{c['name']} | {c.get('phone') or ''}", at, attach)
         evidence = [doc, refs.get("pod"), refs["rc"], refs.get("bol"), refs.get("det"), f"mail:{m['mail_id']}"]
-        inv = {**base, "case_id": case_id, "invoice_id": iid, "invoice_number": number, "carrier": c, "shipper": s,
-               "contract_rate": rate, "invoice_amount": stated, "line_items": lines,
-               "detention_hours_claimed": pl["claimed_h"], "free_time_min": free,
-               "gps": {"delivery_dwell_min": pl["dwell"], "free_time_min": free}, "gps_dwell_min": pl["dwell"],
-               "receipt_attached": pl["receipt"], "pod_signed": scenario != "pod_unsigned", "remit_to": remit,
-               "source_email": m["mail_id"], **(overrides or {})}
-        return ({"mail": m, "invoice": inv}, [x for x in evidence if x])
+        return {"mail": m}, [x for x in evidence if x]
 
     def billed() -> list[dict]:
         out, ev_refs = invoice_payload(inv_no, inv_id, billed_at)
         refs["inv_evidence"] = json.dumps(ev_refs)
-        refs["inv_payload"] = json.dumps(out["invoice"])
-        return [_event("email.received", load, {**base, **out["mail"]}, billed_at, refs=ev_refs[:1]),
-                _event("carrier_invoice.received", load, out["invoice"], billed_at,
-                       "P1" if pl["claimed_h"] or pl["planted"] else "P2", ev_refs)]
+        refs["invoice_email"] = json.dumps(_email_payload(out["mail"]))
+        return [_event("email.received", load, _email_payload(out["mail"]), billed_at, refs=ev_refs[:1])]
     add(billed_at, billed)
     if scenario == "duplicate_invoice":
         at = billed_at + timedelta(days=rnd.uniform(1, 2))
-        add(at, lambda: [_event("carrier_invoice.received", load, json.loads(refs["inv_payload"]), at, "P2",
+        add(at, lambda: [_event("email.received", load, json.loads(refs["invoice_email"]), at, "P2",
                                 json.loads(refs["inv_evidence"]))])
     if scenario == "duplicate_renumbered":
         at = billed_at + timedelta(days=rnd.uniform(2, 4))
         no2 = docs.invoice_number(c, seq + rnd.randint(3, 40))
 
         def renumbered() -> list[dict]:
-            out, ev_refs = invoice_payload(no2, f"INV-{c['usdot']}-{no2}", at, f"{case}-R")
-            return [_event("email.received", load, {**base, **out["mail"]}, at, refs=ev_refs[:1]),
-                    _event("carrier_invoice.received", load, out["invoice"], at, "P2", ev_refs)]
+            out, ev_refs = invoice_payload(no2, f"INV-{c['usdot']}-{no2}", at)
+            return [_event("email.received", load, _email_payload(out["mail"]), at, refs=ev_refs[:1])]
         add(at, renumbered)
     if scenario in ("bank_change", "factoring_unverified"):
         at = billed_at + timedelta(hours=rnd.uniform(2, 8))
@@ -321,13 +318,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                            f"including invoice {inv_no}, to the new account below.\nRouting ****{remit['routing_last4']}"
                            f" / Account ****{new_account_last4}\n\nThank you,\nAccounting", at,
                            reply_to=sender)
-            return [_event("email.received", load, {**base, **m}, at),
-                    _event("bank_change.requested", load, {
-                        **base, "case_id": f"{case}-BANK", "carrier": c, "invoice_id": inv_id,
-                        "requested_via": "email" if scenario == "bank_change" else "invoice_remit_to",
-                        "from": sender, "registered_email": c.get("email"), "new_payee": remit["name"],
-                        "new_account_last4": new_account_last4, "source_email": m["mail_id"]},
-                        at, "P0", [f"mail:{m['mail_id']}"])]
+            return [_event("email.received", load, _email_payload(m), at)]
         add(at, bank_change)
 
     sh_lines = [{"desc": f"Linehaul {lane['origin']} -> {lane['destination']} ({lane['miles']} mi)",
@@ -354,13 +345,8 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                        f"Remittance advice - {s['name']} - {sinv}",
                        f"Payment of ${amount:,.2f} sent via ACH for invoice {sinv} (PO {load['po']})."
                        + (f"\nDeduction ${short:,.2f}: rate dispute." if short else ""), paid_at)
-        return [_event("bank.transaction", load, {**base, **txn}, paid_at),
-                _event("email.received", load, {**base, **m}, paid_at),
-                _event("shipper_payment.received", load, {
-                    **base, "case_id": f"{case}-AR", "invoice_id": sinv, "shipper": s, "invoice_amount": sh_total,
-                    "paid_amount": amount, "chase": amount < sh_total, "remittance": "ACH",
-                    "bank_txn": txn["txn_id"], "deduction_reason": "rate dispute" if short else None},
-                    paid_at, "P2", [x for x in (refs.get("sinv"), f"mail:{m['mail_id']}") if x])]
+        return [_event("email.received", load, _email_payload(m), paid_at),
+                _event("bank.file_appended", load, {"file": txn["file"], "account": txn["account"]}, paid_at)]
     add(paid_at, paid)
     steps.sort(key=lambda st: st.at)
     load["planted"] = pl["planted"]

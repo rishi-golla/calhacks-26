@@ -291,6 +291,13 @@
   min-width: 0;
   flex: 1;
 }
+.wf-meta > .mascot {
+  flex: none;
+}
+.wf-c2-current strong > .mascot {
+  margin-right: 6px;
+  vertical-align: -4px;
+}
 .wf-name {
   color: #1d1d1f;
   font-size: 12.5px;

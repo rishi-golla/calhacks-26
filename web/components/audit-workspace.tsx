@@ -2,10 +2,12 @@
 import { useMemo, useState } from "react";
 import DataGrid, { type Column as GridColumn } from "react-data-grid";
 import { Download, GitCommitHorizontal, FileText } from "lucide-react";
-import { date, exportCsv, json, newest, str, type Row } from "@/lib/data";
+import { agentName, date, exportCsv, json, newest, str, type Row } from "@/lib/data";
 import { useLive } from "./live-provider";
 import { cellValue, chronologicalChanges, compareSnapshots } from "@/lib/audit";
 import {
+  AgentLabel,
+  agentColumn,
   Badge,
   DataTable,
   Detail,
@@ -230,7 +232,9 @@ export default function AuditWorkspace({ onFlag }: { onFlag: FlagHandler }) {
                 </div>
                 <h3>{str(blame.summary)}</h3>
                 <div className="detail-grid">
-                  <Detail label="Author">{str(blame.agent)}</Detail>
+                  <Detail label="Author">
+                    <AgentLabel id={blame.agent} />
+                  </Detail>
                   <Detail label="Task">{str(blame.task_id)}</Detail>
                   <Detail label="Policy">{str(blame.policy_ids)}</Detail>
                   <Detail label="Instruction version">
@@ -268,7 +272,7 @@ export default function AuditWorkspace({ onFlag }: { onFlag: FlagHandler }) {
                           {str(doc.doc_ref)}
                         </ExternalLink>
                         <p>
-                          Read by {str(doc.agent)} · page {str(doc.page)} ·{" "}
+                          Read by {agentName(doc.agent)} · page {str(doc.page)} ·{" "}
                           {str(doc.span)}
                         </p>
                         <details>
@@ -302,7 +306,7 @@ export default function AuditWorkspace({ onFlag }: { onFlag: FlagHandler }) {
             }))}
             columns={[
               { key: "change_set_id", title: "Change set" },
-              { key: "agent", title: "Author" },
+              { ...agentColumn, title: "Author" },
               { key: "before" },
               { key: "after" },
               timeColumn(),
@@ -389,7 +393,7 @@ export default function AuditWorkspace({ onFlag }: { onFlag: FlagHandler }) {
             columns={[
               { key: "id", title: "Commit" },
               { key: "case_id", title: "Case" },
-              { key: "agent", title: "Author" },
+              { ...agentColumn, title: "Author" },
               { key: "action" },
               { key: "summary" },
               { key: "parent_id", title: "Parent" },

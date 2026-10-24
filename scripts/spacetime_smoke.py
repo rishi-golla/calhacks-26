@@ -178,11 +178,15 @@ def run(admin: LocalAdmin) -> dict:
     assert len(admin.rows("memory_revision")) == 2
     denied("validator", "upsert_memory", {"id": "MEM-POLICY", "agent": "carrier_ap",
            "scope": {"policy": "override"}, "text": "Invalid scope", "source_ref": "REVIEW-TEST"})
-    for diff in ("+ Read receipts", "+ Read GPS"):
-        call("validator", "publish_instruction_version", {"agent": "carrier_ap", "diff": diff,
-             "reason": "Acceptance test", "source_ref": "REVIEW-TEST"})
+    from agents.validator.tools import instruction_proposal
+    from common.learning import reconstruct_instructions
+    original, _ = reconstruct_instructions("carrier_ap", [])
+    call("validator", "publish_instruction_version", {"agent": "carrier_ap", "diff": instruction_proposal(original),
+         "expected_version": 0, "reason": "Acceptance test", "source_ref": "REVIEW-TEST"})
+    call("human:operator", "revert_instruction_version", {"agent": "carrier_ap", "version": 0,
+         "expected_version": 1, "reason": "Acceptance test baseline rollback"})
     call("human:operator", "revert_instruction_version", {"agent": "carrier_ap", "version": 1,
-         "reason": "Acceptance test compensating version"})
+         "expected_version": 2, "reason": "Acceptance test compensating version"})
     versions = admin.rows("instruction_version")
     assert len(versions) == 3 and len([row for row in versions if row["active"]]) == 1
     assert next(row for row in versions if row["active"])["version"] == 3

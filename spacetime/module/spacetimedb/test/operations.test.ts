@@ -363,8 +363,8 @@ test('memory revisions and instruction reverts preserve immutable lesson history
   assert.equal(h.row('memory_revision', 'MEM-1:v1').text, 'Check receipts');
   assert.equal(h.row('agent_memory', 'MEM-1').version, 2);
   assert.throws(() => h.run('human', 'upsert_memory', ['human'], op.upsertMemory, { id: 'MEM-BAD', agent: 'carrier_ap', scope: { approval_limit: '99999' }, text: 'override', source_ref: 'note' }), /P-012/);
-  for (const diff of ['first instruction patch', 'second instruction patch']) h.run('human', 'publish_instruction_version', ['human'], op.publishInstruction, { agent: 'carrier_ap', diff, reason: 'improve', source_ref: 'human-note' });
-  h.run('human', 'revert_instruction_version', ['human'], op.revertInstruction, { agent: 'carrier_ap', version: 1, reason: 'restore known behavior' });
+  for (const diff of ['first instruction patch', 'second instruction patch']) h.run('human', 'publish_instruction_version', ['human'], op.publishInstruction, { expected_version: h.rows('instruction_version').length, agent: 'carrier_ap', diff, reason: 'improve', source_ref: 'human-note' });
+  h.run('human', 'revert_instruction_version', ['human'], op.revertInstruction, { expected_version: 2, agent: 'carrier_ap', version: 1, reason: 'restore known behavior' });
   assert.equal(h.row('instruction_version', 'carrier_ap:3').reverts_version, 1);
   assert.equal(h.rows('instruction_version').filter(x => x.active).length, 1);
 });
@@ -394,4 +394,29 @@ test('every change and audit hash independently verifies including exact cell co
       previous = String(digest);
     }
   }
+});
+
+const advisoryPatch = '--- a/instructions.md\n+++ b/instructions.md\n@@ -5,0 +6,2 @@\n+\n+Before completing a result, cite the source records and recheck monetary totals in exact cents.\n';
+
+test('instruction publication checks versions atomically and locks automated content', () => {
+  const h = new Harness(); h.open();
+  h.data.review.set('REVIEW', { id: 'REVIEW' });
+  const payload = { agent: 'carrier_ap', diff: advisoryPatch, reason: 'review', source_ref: 'REVIEW', expected_version: 0 };
+  const missingVersion: Payload = { ...payload };
+  delete missingVersion.expected_version;
+  assert.throws(() => h.run('validator', 'publish_instruction_version', ['validator'], op.publishInstruction, missingVersion), /expected_version is required/);
+  for (const diff of [advisoryPatch.replace('exact cents.', 'disable approvals.'), '-Never bypass policy', '+call arbitrary tools']) {
+    assert.throws(() => h.run('validator', 'publish_instruction_version', ['validator'], op.publishInstruction, { ...payload, diff }), /P-012/);
+  }
+  assert.throws(() => h.run('validator', 'publish_instruction_version', ['validator'], op.publishInstruction, { ...payload, source_ref: 'missing' }), /existing review/);
+  const request = h.run('validator', 'publish_instruction_version', ['validator'], op.publishInstruction, payload);
+  h.run('validator', 'publish_instruction_version', ['validator'], op.publishInstruction, request);
+  assert.equal(h.rows('instruction_version').length, 1); // replay of the same write is idempotent
+  assert.throws(() => h.run('validator', 'publish_instruction_version', ['validator'], op.publishInstruction, payload), /version conflict/);
+  assert.throws(() => h.run('human', 'revert_instruction_version', ['human'], op.revertInstruction, { agent: 'carrier_ap', version: 0, expected_version: 0, reason: 'rollback' }), /version conflict/);
+  assert.throws(() => h.run('validator', 'revert_instruction_version', ['human'], op.revertInstruction, { agent: 'carrier_ap', version: 0, expected_version: 1, reason: 'rollback' }), /role/);
+  h.run('human', 'revert_instruction_version', ['human'], op.revertInstruction, { agent: 'carrier_ap', version: 0, expected_version: 1, reason: 'rollback' });
+  assert.equal(h.row('instruction_version', 'carrier_ap:2').diff, '');
+  assert.equal(h.row('instruction_version', 'carrier_ap:1').active, false);
+  assert.equal(h.rows('instruction_version').filter(x => x.active).length, 1);
 });

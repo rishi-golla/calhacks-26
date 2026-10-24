@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import argparse
 
+from agents.validator.tools import instruction_proposal
+from common.learning import reconstruct_instructions
 from scripts.spacetime_admin import LocalAdmin
 
 
@@ -84,12 +86,10 @@ def seed(admin: LocalAdmin):
     write("validator", "upsert_memory", "memory-v2", id="MEM-W2-AP", agent="carrier_ap",
           scope={"claim_type": "detention"}, text="W2 fixture: retrieve rate confirmation and GPS dwell evidence together.",
           source_ref="REVIEW-W2-AP", active=True)
+    original, _ = reconstruct_instructions("carrier_ap", [])
     write("validator", "publish_instruction_version", "instruction-v1", agent="carrier_ap",
-          diff="+ Retrieve the rate confirmation before evaluating detention (W2 fixture).",
+          diff=instruction_proposal(original), expected_version=0,
           reason="Fixture missing-document friction", source_ref="REVIEW-W2-AP")
-    write("validator", "publish_instruction_version", "instruction-v2", agent="carrier_ap",
-          diff="+ Include GPS dwell evidence in the detention review (W2 fixture).",
-          reason="Fixture review improvement", source_ref="REVIEW-W2-AP")
     write("human:operator", "raise_flag", "flag", id="FLAG-W2-FORECAST", case_id=case,
           target_ref="cash_forecast:FORECAST-W2-4821:amount", kind="unclear",
           note="W2 fixture: explain why held detention is excluded from projected cash outflow.")

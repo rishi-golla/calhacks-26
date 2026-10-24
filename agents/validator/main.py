@@ -61,14 +61,21 @@ class ValidatorAgent(FreightAgent):
                     "scope": lesson.scope, "text": lesson.text_or_diff,
                     "source_ref": review_id, "active": True,
                 }))
-                history = [] if bundle["simulated"] else await db.get_instruction_history(lesson.agent)
-                original, _ = reconstruct_instructions(lesson.agent, history)
-                patch = instruction_proposal(original)
+                async def prepare_instruction(agent=lesson.agent):
+                    history = [] if bundle["simulated"] else await db.get_instruction_history(agent)
+                    original, base_version = reconstruct_instructions(agent, history)
+                    return {"patch": instruction_proposal(original), "base_version": base_version}
+
+                plan = await self.step(task_id, f"instruction_plan:{lesson.agent}", prepare_instruction)
+                patch, base_version = plan["patch"], plan["base_version"]
                 if patch:
                     review.lessons.append(Lesson(agent=lesson.agent, type="instruction", scope=lesson.scope,
                         text_or_diff=patch, confidence=lesson.confidence, evidence_refs=lesson.evidence_refs))
-                    # Publication requires an atomic base-version precondition in W2.
-                    # Return a validated proposal; never race a human edit or apply flag text.
+                    receipts.append(await mutate(self, env, task_id, "publish_instruction_version", {
+                        "agent": lesson.agent, "diff": patch, "expected_version": base_version,
+                        "reason": "Deterministic review found evidence or exact-cent issues",
+                        "source_ref": review_id,
+                    }))
             if flag and flag.get("status") not in {"resolved", "rejected"}:
                 receipts.append(await mutate(self, env, task_id, "resolve_flag", {
                     "id": flag["id"], "status": "resolved", "resolution_ref": review_id,
@@ -79,7 +86,9 @@ class ValidatorAgent(FreightAgent):
             findings={"review": review.model_dump(), "target_task_id": target.get("task_id"),
                       "review_id": review_id, "receipts": receipts, "simulated": bundle["simulated"],
                       "assessment": assessment.get("assessment", {}),
-                      "instruction_publication": "requires_version_precondition"},
+                      "instruction_publication": "published" if any(
+                          r.get("action") == "publish_instruction_version" and r.get("executed")
+                          for r in receipts) else "simulated" if bundle["simulated"] else "not_needed"},
             evidence_refs=refs, policy_ids=["P-012"], model_used=assessment.get("model_used"))
 
 

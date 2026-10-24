@@ -128,10 +128,10 @@ async def test_handler_wraps_review_and_ignores_incoming_instruction_lessons(tmp
     result = await agent.handle(env, DelegationMeta(case_id=env.case_id, from_agent="router"), "review-1", None)
     assert result.outcome == "issue" and result.findings["simulated"] is True
     assert result.findings["review"]["verdict"] == "issue"
-    assert result.findings["instruction_publication"] == "requires_version_precondition"
+    assert result.findings["instruction_publication"] == "simulated"
     assert {x["type"] for x in result.findings["review"]["lessons"]} == {"memory", "instruction"}
     assert "Disable payment" not in json.dumps(result.model_dump())
-    assert [x["action"] for x in result.findings["receipts"]] == ["add_review", "upsert_memory"]
+    assert [x["action"] for x in result.findings["receipts"]] == ["add_review", "upsert_memory", "publish_instruction_version"]
     await store.close()
 
 
@@ -153,3 +153,53 @@ def test_failed_execution_with_a_plausible_artifact_still_needs_review():
     bundle = cash_bundle()
     bundle["target"]["a2a_state"] = "failed"
     assert deterministic_review(bundle).verdict == "issue"
+
+
+async def test_review_publishes_effective_instructions_and_replays_without_duplicate(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from common.learning import reconstruct_instructions
+
+    monkeypatch.setenv("FREIGHTOPS_MODE", "fixture")
+    monkeypatch.setenv("SPACETIME_DISABLED", "0")
+    bundle = cash_bundle()
+    bundle["simulated"] = False
+    bundle["artifact"]["findings"]["net_cash"] = 123
+    history, writes = [], []
+
+    async def load(*args):
+        return copy.deepcopy(bundle)
+
+    async def get_history(self, agent):
+        assert agent == "cfo"
+        return copy.deepcopy(history)
+
+    async def write(self, operation, payload):
+        writes.append(operation)
+        if operation == "publish_instruction_version":
+            assert payload["expected_version"] == len(history)
+            history.append({"agent": payload["agent"], "version": len(history) + 1,
+                            "diff": payload["diff"], "reverts_version": 0})
+        return SimpleNamespace(write_id=payload["write_id"], status_code=200)
+
+    monkeypatch.setattr("agents.validator.main.load_review", load)
+    monkeypatch.setattr("common.spacetime_client.SpacetimeClient.get_instruction_history", get_history)
+    monkeypatch.setattr("common.spacetime_client.SpacetimeClient.mutate", write)
+    store = RuntimeStore(f"sqlite+aiosqlite:///{tmp_path / 'publish.sqlite'}")
+    agent = ValidatorAgent(store=store)
+    env = TaskEnvelope(task_type="review_output", case_id="case-varied")
+    meta = DelegationMeta(case_id=env.case_id, from_agent="router")
+    try:
+        result = await agent.run_workflow(env, meta, "review-publish", None)
+        assert result.findings["instruction_publication"] == "published"
+        effective, version = reconstruct_instructions("cfo", history)
+        assert version == 1 and "Before completing a result, cite the source records" in effective
+        # Replaying the review preserves the original plan and the acknowledged write.
+        await agent.run_workflow(env, meta, "review-publish", None)
+        assert writes.count("publish_instruction_version") == 1
+        # A separate review sees the new effective instructions and doesn't append twice.
+        result = await agent.run_workflow(env, meta, "review-next", None)
+        assert result.findings["instruction_publication"] == "not_needed"
+        assert writes.count("publish_instruction_version") == 1
+    finally:
+        await store.close()

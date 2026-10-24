@@ -441,8 +441,8 @@ export default function Workflow({
         <Background
           variant={BackgroundVariant.Dots}
           gap={20}
-          size={1}
-          color="#dedee2"
+          size={1.2}
+          color="#d4d4d8"
         />
         <Controls showInteractive={false} position="bottom-left" />
       </ReactFlow>

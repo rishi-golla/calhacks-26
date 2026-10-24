@@ -41,6 +41,15 @@ type TableHandle = {
 const database = process.env.NEXT_PUBLIC_SPACETIME_DB || "freightops";
 const uri = process.env.NEXT_PUBLIC_SPACETIME_URL || "http://localhost:3000";
 const tokenKey = `freightops.identity.v1:${uri}:${database}`;
+export function snapshotAuthorizationHeaders(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const token = window.localStorage.getItem(tokenKey);
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
 export function LiveProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<Snapshot>(emptySnapshot);
   const [state, setState] = useState<ConnectionState>("connecting");

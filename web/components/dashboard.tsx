@@ -34,6 +34,7 @@ import { Dialog, Submit, type FlagTarget } from "./ui";
 import AgentInbox from "./agent-inbox";
 import Workflow from "./workflow";
 import SidebarNav from "./sidebar-nav";
+import SearchChat from "./search-chat";
 const AuditWorkspace = dynamic(() => import("./audit-workspace"), {
   ssr: false,
   loading: () => <div className="loading">Loading audit workspace…</div>,
@@ -142,6 +143,7 @@ function DashboardBody() {
   const [mobile, setMobile] = useState(false);
   const [narrow, setNarrow] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [newChatId, setNewChatId] = useState(0);
   const menuTrigger = useRef<HTMLElement | null>(null);
   const navigation = useRef<HTMLElement | null>(null);
   const [connectionInfo, setConnectionInfo] = useState(false);
@@ -262,6 +264,7 @@ function DashboardBody() {
         onToggleCollapsed={() => setSidebarCollapsed((collapsed) => !collapsed)}
         onNewChat={() => {
           setCaseId("");
+          setNewChatId((value) => value + 1);
           navigate("home");
         }}
         onHome={() => navigate("home")}
@@ -337,13 +340,22 @@ function DashboardBody() {
           </div>
         </header>
         <main id="main-content" tabIndex={-1}>
-          {view === "home" && (
-            <Workflow
-              caseId={caseId}
-              onClearCase={() => setCaseId("")}
-              onOpenMenu={openNavigation}
-            />
-          )}
+          {view === "home" &&
+            (caseId ? (
+              <Workflow
+                caseId={caseId}
+                onClearCase={() => setCaseId("")}
+                onOpenMenu={openNavigation}
+              />
+            ) : (
+              <SearchChat
+                key={newChatId}
+                onSelectCase={(selectedCase) => {
+                  setCaseId(selectedCase);
+                  navigate("home");
+                }}
+              />
+            ))}
           {view === "agents" && (
             <AgentInbox
               openCase={openCase}

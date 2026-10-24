@@ -651,12 +651,46 @@
   flex-direction: column;
   gap: 1px;
 }
-.wf-c2-approval-details > span {
+.wf-c2-approval-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.wf-c2-approval-heading > span {
   color: #ffbd65;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.25px;
   text-transform: uppercase;
+}
+.wf-c2-approval-nav {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  color: #a7a7ad;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.wf-c2-approval-nav button {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #d7d7db;
+}
+.wf-c2-approval-nav button:hover:not(:disabled) {
+  background: #3a3a3e;
+  color: #fff;
+}
+.wf-c2-approval-nav button:disabled {
+  opacity: 0.35;
 }
 .wf-c2-approval-details strong {
   overflow: hidden;

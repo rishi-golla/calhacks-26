@@ -173,9 +173,13 @@ export default function Workflow({
   onClearCase: () => void;
   onOpenMenu: () => void;
 }) {
-  const { data, state, mutate } = useLive();
+  const { data, state, mutate, identity } = useLive();
   const now = useClock();
   const [openId, setOpenId] = useState("");
+  const [selectedApproval, setSelectedApproval] = useState<{
+    stepId: string;
+    approvalId: string;
+  } | null>(null);
   const [manual, setManual] = useState<Manual>({});
   const [palette, setPalette] = useState(false);
   const [farm, setFarm] = useState(false);
@@ -393,14 +397,37 @@ export default function Workflow({
     };
   });
   const open = stepById(openId);
-  const openApproval = open
-    ? scoped.approval.find(
+  const pendingApprovals = open
+    ? scoped.approval.filter(
         (approval) =>
           approval.decision === "pending" &&
           (open.id === "human" ||
             (Boolean(open.agent) && approval.requested_by === open.agent)),
       )
+    : [];
+  const preferredApproval = identity
+    ? pendingApprovals.find((approval) => approval.approver === identity)
     : undefined;
+  const selectedForStep =
+    open && selectedApproval?.stepId === open.id
+      ? pendingApprovals.find(
+          (approval) => approval.id === selectedApproval.approvalId,
+        )
+      : undefined;
+  const openApproval =
+    selectedForStep ?? preferredApproval ?? pendingApprovals[0];
+  const openApprovalIndex = openApproval
+    ? pendingApprovals.findIndex((approval) => approval.id === openApproval.id)
+    : -1;
+  const selectApproval = (offset: number) => {
+    if (!open) return;
+    const nextApproval = pendingApprovals[openApprovalIndex + offset];
+    if (nextApproval)
+      setSelectedApproval({
+        stepId: open.id,
+        approvalId: str(nextApproval.id),
+      });
+  };
   const approvalDecision = useApprovalDecision({
     approval: openApproval,
     approvals: data.approval,
@@ -525,8 +552,13 @@ export default function Workflow({
               <nav className="wf-c2-steps" aria-label="Steps in this case">
                 {orderedIds.map((id, index) => {
                   const step = stepById(id)!;
-                  const completed = index < openIndex;
                   const current = index === openIndex;
+                  const completed =
+                    !current &&
+                    index < openIndex &&
+                    nodeData.get(id)?.state !== "need" &&
+                    nodeData.get(id)?.state !== "working" &&
+                    feeds[id].length > 0;
                   return (
                     <button
                       key={id}
@@ -626,7 +658,38 @@ export default function Workflow({
               {openApproval && (
                 <div className="wf-c2-approval">
                   <div className="wf-c2-approval-details">
-                    <span>Approval required</span>
+                    <div className="wf-c2-approval-heading">
+                      <span>Approval required</span>
+                      {pendingApprovals.length > 1 && (
+                        <div
+                          className="wf-c2-approval-nav"
+                          role="group"
+                          aria-label="Pending approval selection"
+                        >
+                          <button
+                            type="button"
+                            aria-label="Previous approval request"
+                            disabled={openApprovalIndex <= 0}
+                            onClick={() => selectApproval(-1)}
+                          >
+                            <ChevronLeft size={13} aria-hidden="true" />
+                          </button>
+                          <span>
+                            {openApprovalIndex + 1} of {pendingApprovals.length}
+                          </span>
+                          <button
+                            type="button"
+                            aria-label="Next approval request"
+                            disabled={
+                              openApprovalIndex >= pendingApprovals.length - 1
+                            }
+                            onClick={() => selectApproval(1)}
+                          >
+                            <ChevronRight size={13} aria-hidden="true" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <strong>
                       {str(openApproval.action).replaceAll("_", " ")} ·{" "}
                       {money(openApproval.amount)}

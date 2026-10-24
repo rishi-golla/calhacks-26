@@ -19,6 +19,7 @@ from harness.ingest.vault import Vault
 from harness.pool import Pool
 
 log = logging.getLogger("harness.consumer")
+# Malformed entries go to "<stream>:dead_letter" (W3's events:dead_letter); `triage` is for people to classify.
 STREAM, GROUP, TRIAGE = "events", "router", "triage"
 CONSUMER = os.getenv("ROUTER_CONSUMER", f"asus-{socket.gethostname()}")
 # Longer than the worst-case pipeline (extract + verify budgets), so live work isn't treated as abandoned.
@@ -38,8 +39,7 @@ async def _handle(r: redis.Redis, pool: Pool, vault: Vault, dispatcher: Dispatch
     try:
         res = await handler(pool, vault, dispatcher, ev)
     except BadEvent as e:
-        await r.xadd(triage, {"json": json.dumps({"reason": f"bad event: {e}", "event": ev}, default=str)})
-        await r.xack(stream, group, entry_id)
+        await _dead_letter(r, stream, group, entry_id, f"bad event: {e}", json.dumps(ev, default=str))
         return
     if res["status"] == "triage":
         await r.xadd(triage, {"json": json.dumps({"event_id": res["event_id"], "case_id": res["case_id"],
@@ -49,6 +49,13 @@ async def _handle(r: redis.Redis, pool: Pool, vault: Vault, dispatcher: Dispatch
         await r.xack(stream, group, entry_id)
     else:
         log.warning("leaving %s pending: %s", res["event_id"], res.get("error"))
+
+
+async def _dead_letter(r: redis.Redis, stream: str, group: str, entry_id: bytes, reason: str, raw) -> None:
+    async with r.pipeline(transaction=True) as pipe:  # atomic DLQ + ack: no loss, no double handling
+        pipe.xadd(f"{stream}:dead_letter", {"entry_id": entry_id, "reason": reason, "json": raw or ""})
+        pipe.xack(stream, group, entry_id)
+        await pipe.execute()
 
 
 def _decode(entry_id: bytes, fields: dict) -> dict | None:
@@ -103,10 +110,8 @@ async def run_consumer(pool: Pool, url: str | None = None, *, stream: str = STRE
                 batch = []
                 for entry_id, fields in list(claimed) + [e for _s, es in fresh or [] for e in es]:
                     ev = _decode(entry_id, fields)
-                    if ev is None:  # poison entry: park it in triage instead of retrying forever
-                        await r.xadd(triage, {"json": json.dumps({"reason": "unparseable",
-                                                                  "id": entry_id.decode()})})
-                        await r.xack(stream, group, entry_id)
+                    if ev is None:  # poison entry: dead-letter it instead of retrying forever
+                        await _dead_letter(r, stream, group, entry_id, "unparseable", fields.get(b"json"))
                         continue
                     batch.append((entry_id, ev))
                 batch.sort(key=lambda x: P_ORDER.get(x[1].get("priority"), 2))  # P0 queues for slots first

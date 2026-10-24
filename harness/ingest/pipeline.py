@@ -49,16 +49,14 @@ class BadEvent(ValueError):
     pass
 
 
-def case_id_for(event: dict) -> str:
+def case_id_for(event: dict) -> str | None:
+    """The case must come from upstream (ingest opens it in SpacetimeDB). case_hint is not authoritative:
+    deriving or inventing a case would make agents write to a case that does not exist."""
     payload = event.get("payload") or {}
-    if isinstance(payload.get("case_id"), str):
-        return payload["case_id"]
-    hint = event.get("case_hint") or ""
-    if hint.startswith("CASE-"):
-        return hint
-    if hint.startswith("LOAD-"):
-        return "CASE-" + hint.removeprefix("LOAD-")
-    return f"CASE-{event['event_id']}"
+    for value in (event.get("case_id"), payload.get("case_id")):
+        if isinstance(value, str) and 1 <= len(value) <= 36:
+            return value
+    return None
 
 
 def document_text(payload: dict) -> str:
@@ -150,7 +148,7 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
     route: Route | None = table_route(etype, payload)
     if route and route.status == "not_routed":
         if dispatch:
-            dispatcher.record(event_id, case_id, None, None, None, "not_routed", route.reason, None)
+            dispatcher.record(event_id, case_id or "", None, None, None, "not_routed", route.reason, None)
         return {**out, "status": "not_routed", "route": route.__dict__, "timings_ms": timings}
 
     # 2. Model A: per-type extraction; it also points out names/addresses, which we tokenize ourselves.
@@ -202,16 +200,21 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
                "event_type": etype, "doc_type": doc_type, "needs_review": needs_review,
                "review_notes": notes[:12], "redacted_tokens": len(set(tokens)) + len(spans)}
     refs = [f"event:{event_id}"] + [r for r in payload.get("evidence_refs", []) if isinstance(r, str)]
-    env = TaskEnvelope(task_type=route.skill or "triage", case_id=case_id, subject=subject, evidence_refs=refs,
+    env = TaskEnvelope(task_type=route.skill or "triage", case_id=case_id or "", subject=subject,
+                       evidence_refs=refs,
                        requested_output="ResultArtifact",
                        priority=event.get("priority") if event.get("priority") in P_ORDER else "P2")
     out.update({"route": route.__dict__, "envelope": env.model_dump(), "needs_review": needs_review,
                 "extractor": extractor, "extracted": extracted, "verifier": verifier})
 
-    # 6. Dispatch (or triage).
+    # 6. Dispatch (or triage). Without an upstream case a person has to attach it, so it waits in triage.
+    if route.skill and case_id is None:
+        route = Route(None, "triage", f"no case_id upstream (would have gone to {route.skill}); case_hint is "
+                                      "not authoritative", route.classifier)
+        out["route"] = route.__dict__
     if route.status == "triage" or route.skill is None:
         if dispatch:
-            dispatcher.record(event_id, case_id, None, None, None, "triage", route.reason, env)
+            dispatcher.record(event_id, case_id or "", None, None, None, "triage", route.reason, env)
         status = "triage"
     elif not dispatch:
         status = "dry_run"

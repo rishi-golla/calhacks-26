@@ -1,6 +1,7 @@
-"""W1 first-hop router: Redis `events` (group `router`) -> Stage 1 ingest -> owning agent over A2A (PRD 7.1/7.3).
-The pipeline lives in harness/ingest/; this is the standalone entrypoint (`make router`). Run either this or
-the harness server with HARNESS_CONSUME=1, never both."""
+"""W1 first-hop router: Redis `events` (group `router`) -> Stage 1 intake -> owning agent over A2A (PRD 7.1/7.3).
+The pipeline lives in harness/ingest/ (redaction, extraction, routing, review flags, dedup); dispatch uses W3's
+common.a2a_transport with the router's A2A credential. Acknowledges Redis only after durable A2A admission.
+Run either this (`make router`) or the harness server with HARNESS_CONSUME=1, never both."""
 import asyncio
 import logging
 

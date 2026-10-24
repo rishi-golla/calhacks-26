@@ -1,0 +1,97 @@
+{
+  "synthetic": true,
+  "purpose": "Live A2A connectivity and concurrency acceptance using fictional source data. Provider inference and database writes are real; no phone call or money movement is requested.",
+  "cases": {
+    "SYN-A2A-CONCURRENCY": {
+      "case_id": "SYN-A2A-CONCURRENCY",
+      "synthetic": true,
+      "title": "[Live synthetic] Nine-agent A2A concurrency check",
+      "load_id": "SYN-LOAD-CONCURRENT",
+      "carrier_id": "SYN-CARRIER",
+      "shipper_id": "SYN-SHIPPER",
+      "invoice_id": "SYN-INVOICE",
+      "shipper_invoice_id": "SYN-RECEIVABLE",
+      "period": "2026-10",
+      "lane": "Synthetic origin -> Synthetic destination",
+      "invoice_amount": 1492.75,
+      "contract_rate": 1492.75,
+      "paid_amount": 1492.75,
+      "shipper_invoice_amount": 1848.2,
+      "shipper_paid_amount": 1848.2,
+      "deposits": [
+        {
+          "id": "SYN-DEPOSIT",
+          "invoice_id": "SYN-RECEIVABLE",
+          "shipper_id": "SYN-SHIPPER",
+          "amount": 1848.2
+        }
+      ],
+      "overdue": false,
+      "dispute": null,
+      "required_documents": [
+        "rate_confirmation",
+        "pod"
+      ],
+      "documents": [
+        {
+          "kind": "rate_confirmation",
+          "ref": "synthetic:concurrency:rate",
+          "load_id": "SYN-LOAD-CONCURRENT"
+        },
+        {
+          "kind": "pod",
+          "ref": "synthetic:concurrency:pod",
+          "load_id": "SYN-LOAD-CONCURRENT",
+          "signed": true
+        }
+      ],
+      "evidence_refs": [
+        "synthetic:concurrency:invoice",
+        "synthetic:concurrency:rate",
+        "synthetic:concurrency:pod",
+        "synthetic:concurrency:inbound"
+      ],
+      "line_items": [
+        {
+          "kind": "linehaul",
+          "amount": 1492.75
+        }
+      ],
+      "inbound_call": {
+        "source_ref": "synthetic:concurrency:inbound",
+        "transcript": [
+          {
+            "role": "caller",
+            "text": "This is a synthetic connectivity test, not a real call. The sample delivery is complete and its signed POD is included. I am not requesting a payment or a bank change."
+          },
+          {
+            "role": "agent",
+            "text": "This is an automated brokerage assistant. I will summarize this supplied test transcript for intake review."
+          }
+        ]
+      }
+    }
+  },
+  "companies": {
+    "SYN-CARRIER": {
+      "id": "SYN-CARRIER",
+      "name": "Synthetic carrier",
+      "source": "synthetic:concurrency:directory",
+      "verified": true,
+      "authority_status": "ACTIVE",
+      "insurance_verified": true,
+      "owner_operator": false
+    }
+  },
+  "contacts": {
+    "SYN-CARRIER": [
+      {
+        "id": "SYN-CONTACT",
+        "company_id": "SYN-CARRIER",
+        "name": "Synthetic dispatcher",
+        "source": "synthetic:concurrency:directory",
+        "verified": true
+      }
+    ]
+  }
+}

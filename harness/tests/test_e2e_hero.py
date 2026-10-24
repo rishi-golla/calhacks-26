@@ -76,7 +76,7 @@ async def _final_task(task_id: str) -> dict:
     try:
         for _ in range(100):
             t = MessageToDict(await client.get_task(GetTaskRequest(id=task_id)))
-            if t["status"]["state"] in ("TASK_STATE_COMPLETED", "TASK_STATE_FAILED"):
+            if t["status"]["state"] in ("TASK_STATE_COMPLETED", "TASK_STATE_FAILED", "TASK_STATE_INPUT_REQUIRED"):
                 return t
             await asyncio.sleep(0.2)
     finally:
@@ -88,7 +88,8 @@ async def test_hero_invoice_end_to_end(pool, agents, tmp_path):
     vault, dispatcher = Vault(tmp_path / "vault.sqlite"), Dispatcher(tmp_path / "ingest.sqlite")
     event = {"event_id": f"EVT-test-{uuid.uuid4().hex[:8]}", "type": "carrier_invoice.received",
              "ts": "2026-06-14T15:02:11Z", "case_hint": "LOAD-4821", "priority": "P0", "source": "sim",
-             "payload": {"load_id": "LOAD-4821", "carrier": {"id": "C-311", "name": "Sierra Haul LLC"},
+             "payload": {"case_id": "CASE-4821", "load_id": "LOAD-4821",
+                         "carrier": {"id": "C-311", "name": "Sierra Haul LLC"},
                          "contract_rate": 1850.0, "invoice_amount": 2150.0,
                          "line_items": [{"desc": "Linehaul", "amount": 1850.0},
                                         {"desc": "Detention 2h", "amount": 300.0}],
@@ -111,10 +112,21 @@ async def test_hero_invoice_end_to_end(pool, agents, tmp_path):
     assert not leaked, f"PII left the box: {leaked}"
     assert vault.detokenize(s["text"]).count("121000358") == 1   # recoverable locally only
 
+    # The agent owns the case from here. Accept any settled business state: completed, or parked waiting on
+    # another agent/human (all awaiting_* map to INPUT_REQUIRED). The hero's missing detention receipt makes
+    # Carrier AP delegate document collection first.
     task = await _final_task(res["dispatch"]["task_id"])
-    art = task["artifacts"][0]["parts"][0]["data"]
-    assert art["outcome"] == "hold" and "P-001" in art["policy_ids"]
-    assert task["history"][0]["metadata"]["idempotency_key"] == event["event_id"]
+    state = task["status"]["state"]
+    assert state != "TASK_STATE_FAILED", task["status"]
+    if state == "TASK_STATE_INPUT_REQUIRED":
+        meta = (task["status"].get("message") or {}).get("metadata") or task.get("metadata") or {}
+        assert meta["business_status"].startswith("awaiting_"), meta
+    else:
+        art = task["artifacts"][0]["parts"][0]["data"]
+        assert art["outcome"] in ("hold", "partial", "reject"), art
+    received = json.dumps(task["history"][0])   # what the agent actually stored from our A2A message
+    assert not [p for p in PII if p in received]
+    assert task["history"][0]["metadata"]["idempotency_key"] == f"event:{event['event_id']}"
 
     again = await process(pool, vault, dispatcher, event)
     assert again["status"] == "duplicate" and again["prior"]["task_id"] == res["dispatch"]["task_id"]

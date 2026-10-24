@@ -15,8 +15,9 @@ which agent owns them, and sends the first A2A task. It does not do the agents' 
 4. **Model B** (Qwen3-4B) classifies only items the table can't place (emails, unknown types).
 5. **Model C** (gpt-oss-20b) checks for leftover personal data and mismatched amounts and sets
    `subject.needs_review` when it finds a problem.
-6. Builds a `TaskEnvelope` (7.2, schema unchanged) and sends it over A2A to the owning agent, with
-   `idempotency_key = event_id`.
+6. Builds a `TaskEnvelope` (7.2, schema unchanged) and sends it over A2A to the owning agent via W3's
+   `common.a2a_transport` with the router's credential (`A2A_TOKEN_ROUTER`, required in live mode),
+   `idempotency_key = event:<event_id>` and `correlation_id = case_id`.
 
 Typical time is about 6 s per event.
 
@@ -28,7 +29,9 @@ Typical time is about 6 s per event.
   `gps.ping`, `load.delivered`, `pod.received`).
 - W1 does **not** read `raw` (raw arrivals) or `documents` (ingestion records). Those belong to the
   data side.
-- W1 writes stream `triage`: low-confidence or unknown items and malformed events.
+- W1 writes stream `triage` (items a person must classify or attach to a case: low-confidence
+  classifications, no upstream `case_id`) and `events:dead_letter` (malformed entries, written atomically
+  with the ack; fields `entry_id`, `reason`, `json`).
 - W1 ACKs an entry only after a final outcome (accepted, duplicate, not routed, triage). Entries
   whose dispatch failed stay pending and are retried after 30 s.
 
@@ -42,8 +45,9 @@ Typical time is about 6 s per event.
   each demo run.
 - `type`: required.
 - `priority`: defaults to P2. P0 is processed first within a batch.
-- `case_id` is derived in this order: `payload.case_id`, then `case_hint` `CASE-…`, then `case_hint`
-  `LOAD-####` becomes `CASE-####`, then `CASE-<event_id>`. Always set `case_hint`.
+- `case_id`: **required for anything routed**, as `event.case_id` or `payload.case_id` (1–36 chars), for
+  a case ingest has already opened in SpacetimeDB. `case_hint` is not authoritative and is never turned into a
+  case. A routable event without a case is still cleaned, then goes to `triage` for a person to attach it.
 - `payload` must be a JSON object.
 
 ## Routing

@@ -1,22 +1,17 @@
-"""First-hop A2A dispatch (PRD H3, H4, 7.1 step 3-4). Returns on acceptance (task created), not completion."""
+"""First-hop A2A dispatch (PRD H3, H4, 7.1 step 3-4). Returns on acceptance (task created), not completion.
+Transport, card/skill checks and the router's A2A credential come from W3's common.a2a_transport."""
 import json
 import logging
 import sqlite3
 import threading
 import time
 
-import httpx
-from a2a.client import ClientConfig, create_client
-from a2a.helpers import new_data_message
-from a2a.types import Role, SendMessageRequest
-from google.protobuf.json_format import MessageToDict
-
-from common.config import AGENTS, SKILL_OWNER
+from common.a2a_transport import send_task
+from common.config import SKILL_OWNER
 from common.envelope import DelegationMeta, TaskEnvelope
 from harness.ingest.vault import DATA_DIR
 
 log = logging.getLogger("harness.dispatch")
-CARD_TTL_S = 60
 
 
 class DispatchError(Exception):
@@ -33,7 +28,6 @@ class Dispatcher:
             "CREATE TABLE IF NOT EXISTS dispatch(event_id TEXT PRIMARY KEY, case_id TEXT, skill TEXT, agent TEXT,"
             " task_id TEXT, status TEXT, attempts INTEGER, reason TEXT, envelope TEXT, updated_at REAL)")
         self._db.commit()
-        self._cards: dict[str, tuple[float, set[str]]] = {}
 
     def get(self, event_id: str) -> dict | None:
         row = self._db.execute("SELECT event_id, case_id, skill, agent, task_id, status, attempts, reason"
@@ -53,18 +47,6 @@ class Dispatcher:
                  env.model_dump_json() if env else None, time.time()))
             self._db.commit()
 
-    async def _advertised(self, agent: str) -> set[str]:
-        hit = self._cards.get(agent)
-        if hit and time.time() - hit[0] < CARD_TTL_S:
-            return hit[1]
-        url = f"{AGENTS[agent].url}/.well-known/agent-card.json"
-        async with httpx.AsyncClient(timeout=3) as c:
-            r = await c.get(url)
-            r.raise_for_status()
-        skills = {s["id"] for s in r.json().get("skills", [])}
-        self._cards[agent] = (time.time(), skills)
-        return skills
-
     async def send(self, event_id: str, skill: str, env: TaskEnvelope) -> dict:
         """Idempotent on event_id. Raises DispatchError (caller leaves the Redis entry pending to retry)."""
         prior = self.get(event_id)
@@ -73,39 +55,20 @@ class Dispatcher:
         agent = SKILL_OWNER.get(skill)
         if agent is None:
             raise DispatchError(f"no owner for skill {skill}")
-        try:
-            advertised = await self._advertised(agent)
-        except httpx.HTTPError as e:
-            self.record(event_id, env.case_id, skill, agent, None, "retry", f"card: {e}", env)
-            raise DispatchError(f"{agent} card unreachable: {e}") from e
-        if skill not in advertised:
-            self.record(event_id, env.case_id, skill, agent, None, "retry", "skill not advertised", env)
-            raise DispatchError(f"{agent} card does not advertise {skill}")
-
-        msg = new_data_message(env.model_dump(), context_id=env.case_id, role=Role.ROLE_USER)
+        # Same identity conventions as W3's bridge: the agent dedupes on event:<id>; the case is the correlation.
         meta = DelegationMeta(case_id=env.case_id, from_agent="router", delegation_depth=0, visited=[],
-                              idempotency_key=event_id, correlation_id=event_id, causation_id=event_id,
-                              priority=env.priority)
-        msg.metadata.update(meta.model_dump(exclude_none=True))
-        task_id = None
+                              idempotency_key=f"event:{event_id}", correlation_id=env.case_id,
+                              causation_id=event_id, priority=env.priority)
         try:
-            # polling=True sets return_immediately: the agent answers once the task exists.
-            client = await create_client(AGENTS[agent].url, ClientConfig(streaming=False, polling=True))
-            try:
-                async for ev in client.send_message(SendMessageRequest(message=msg)):
-                    d = MessageToDict(ev) if hasattr(ev, "DESCRIPTOR") else {}
-                    task_id = (d.get("task") or {}).get("id") or (d.get("statusUpdate") or {}).get("taskId")
-                    if task_id:
-                        break
-            finally:
-                await client.close()
-        except Exception as e:
-            self.record(event_id, env.case_id, skill, agent, None, "retry", f"send: {e}", env)
-            raise DispatchError(f"send to {agent} failed: {e}") from e
-        if not task_id:
-            self.record(event_id, env.case_id, skill, agent, None, "retry", "no task in response", env)
-            raise DispatchError(f"{agent} returned no task")
-        self.record(event_id, env.case_id, skill, agent, task_id, "accepted", "ok", env)
-        log.info(json.dumps({"event_id": event_id, "skill": skill, "agent": agent, "task_id": task_id}))
-        return {"event_id": event_id, "skill": skill, "agent": agent, "task_id": task_id, "status": "accepted",
+            task = await send_task(agent, env, meta)
+        except Exception as e:  # card/skill mismatch, missing credential, transport: all retried via reclaim
+            self.record(event_id, env.case_id, skill, agent, None, "retry", f"send: {type(e).__name__}: {e}", env)
+            raise DispatchError(f"send to {agent} failed: {type(e).__name__}: {e}") from e
+        if not task.id or task.context_id != env.case_id:
+            self.record(event_id, env.case_id, skill, agent, None, "retry", "acceptance did not preserve the case",
+                        env)
+            raise DispatchError(f"{agent} acceptance did not preserve case {env.case_id}")
+        self.record(event_id, env.case_id, skill, agent, task.id, "accepted", "ok", env)
+        log.info(json.dumps({"event_id": event_id, "skill": skill, "agent": agent, "task_id": task.id}))
+        return {"event_id": event_id, "skill": skill, "agent": agent, "task_id": task.id, "status": "accepted",
                 "duplicate": False}

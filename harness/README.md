@@ -6,10 +6,10 @@ here is on their inference path.
 ## Pieces
 | Path | What |
 |---|---|
-| `infra/serve_*.sh` | vLLM containers, all on 127.0.0.1: A `nano` :8001, B `qwen4b` :8002, C `gptoss` :8003. `sg docker -c "bash infra/serve_all.sh"` starts them in order, gated on `/health`. |
-| `config.toml` | Logical names -> backend fallback chains (`small-fast`->B, `reasoning`->A, `coder-tools`->C) and the deterministic `auto` routing table. |
+| `infra/serve_*.sh` | vLLM containers, all on 127.0.0.1: A `nano` :8001, B `qwen4b` :8002, C `gptoss` :8003 (out of rotation: NaN output on GB10, see the script). `sg docker -c "bash infra/serve_all.sh"` starts them in order, gated on `/health`. |
+| `config.toml` | Logical names -> backend fallback chains (`small-fast`->B, `reasoning`->A, `coder-tools`->B while C is out of rotation) and the deterministic `auto` routing table. |
 | `server.py` | :8000 (127.0.0.1 unless `HARNESS_HOST`). `/v1/chat/completions` keeps the v1.0 7.1 shape (harness block, 503 `{"error":"unavailable"}`), `/v1/models` reports live health, `POST /v1/ingest[?dispatch=false]` runs one event through Stage 1. **W1-internal.** |
-| `ingest/` | Stage 1: regex redaction -> 7.3 table -> A extracts + flags names/addresses -> B labels only unlabeled items -> C cross-checks PII and amounts (`subject.needs_review`) -> `TaskEnvelope` -> A2A with `idempotency_key = event_id`. |
+| `ingest/` | Stage 1: regex redaction -> 7.3 table -> A extracts + flags names/addresses -> B labels only unlabeled items -> C cross-checks PII and amounts (`subject.needs_review`) -> `TaskEnvelope` -> A2A with `idempotency_key = event:<event_id>`. |
 | `data/` (gitignored) | `vault.sqlite` (token -> real value, mode 600, never leaves the box) and `ingest.sqlite` (event -> task mapping for dedup). |
 
 ## Run
@@ -22,7 +22,11 @@ make router           # Redis `events`, group `router` -> A2A (or HARNESS_CONSUM
 
 ## Behaviour worth knowing
 - ACK only after a terminal outcome (accepted / duplicate / not_routed / triage). Failed dispatches stay pending
-  and are reclaimed after 30 s (`ROUTER_RECLAIM_IDLE_MS`).
-- Unknown or low-confidence (<0.6) classifications and bad events go to Redis stream `triage`.
+  and are reclaimed after 120 s (`ROUTER_RECLAIM_IDLE_MS`); entries still running are never reclaimed.
+- Unknown or low-confidence (<0.6) classifications, and routable events with no upstream `case_id`, go to Redis
+  stream `triage`. Malformed entries go to `events:dead_letter`.
+- Dispatch uses W3's `common.a2a_transport` (`A2A_TOKEN_ROUTER` in live mode), idempotency key
+  `event:<event_id>`. Model-bound events share `ROUTER_MODEL_CONCURRENCY` (8) slots; the rest skip the queue.
+- `python -m harness.tests.batch_bench` scores a fixed batch against the W4 ground truth (see its docstring).
 - Envelope schema is unchanged: review flags ride in `subject` (`needs_review`, `review_notes`, `doc_type`).
 - Tokens look like `[[ACCOUNT_1a2b3c4d]]` and are deterministic per vault, so agents can still correlate values.

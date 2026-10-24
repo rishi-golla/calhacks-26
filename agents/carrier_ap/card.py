@@ -1,5 +1,2 @@
-DESCRIPTIONS = {
-    "process_carrier_invoice": "Three-way match a carrier invoice against rate con, POD and contract.",
-    "propose_payment": "Propose a carrier payment (never executes it).",
-    "answer_payment_status": "Answer where a carrier payment stands.",
-}
+"""Carrier Settlement Agent Card descriptions."""
+DESCRIPTIONS = {'process_carrier_invoice': 'Match a carrier invoice to its rate confirmation, signed POD, approved charges, and payment history.', 'propose_payment': 'Prepare an eligible carrier payment proposal after holds and approval requirements are checked.', 'answer_payment_status': 'Explain stored payment proposals and recorded paid amounts for a carrier invoice.'}

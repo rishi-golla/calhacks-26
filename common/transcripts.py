@@ -36,6 +36,7 @@ def counterparty_text(transcript: list[dict] | str) -> str:
 async def extract_claim_findings(transcript: list[dict] | str, claim: str, case_id: str, agent: str) -> dict:
     said = counterparty_text(transcript)
     out = {"claim": claim, "claim_confirmed": bool(CONFIRM.search(said)) and not DENY.search(said),
+           "claim_denied": bool(DENY.search(said)), "counterparty_spoke": bool(said.strip()),
            "counterparty_statements": [m.group(0) for m in DENY.finditer(said)] + [m.group(0) for m in CONFIRM.finditer(said)],
            "receipt_available": not re.search(r"(no|don't have a) receipt", said, re.IGNORECASE),
            "method": "rules", "model_used": None}

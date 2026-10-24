@@ -8,7 +8,7 @@ BusinessStatus = Literal[
     "queued", "investigating", "awaiting_other_agent", "awaiting_external_verification",
     "awaiting_call", "awaiting_human_approval", "resolved", "rejected", "failed",
 ]
-Outcome = Literal["clear", "suspicious", "verified", "unverified", "hold", "approve", "reject",
+Outcome = Literal["clear", "suspicious", "verified", "unverified", "inconclusive", "hold", "approve", "reject",
                   "partial", "pass", "issue", "short_pay", "reconciled", "failed", "info", "not_implemented"]
 
 

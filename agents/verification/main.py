@@ -36,7 +36,7 @@ class VerificationAgent(FreightAgent):
         d = check("contact_counterparty", self.name, contact)
         if d.result != "allow":
             case.log("policy_denied", policy_ids=d.policy_ids, reason=d.reason)
-            return ResultArtifact(outcome="unverified", policy_ids=d.policy_ids, findings={"error": d.reason})
+            return ResultArtifact(outcome="inconclusive", policy_ids=d.policy_ids, findings={"error": d.reason})
         if s.get("channel") == "email":
             return await self._email(case, contact)
         pc = PlaceCall(purpose="verification", counterparty_id=company.get("id", "unknown"),
@@ -75,7 +75,8 @@ class VerificationAgent(FreightAgent):
     async def _verdict(self, case: Case, contact: dict, transcript, ref: str | None = None,
                        call: dict | None = None) -> ResultArtifact:
         f = await extract_claim_findings(transcript, case.subject.get("claim", ""), case.env.case_id, self.name)
-        return ResultArtifact(outcome="verified" if f["claim_confirmed"] else "unverified", confidence=0.9,
+        outcome = "verified" if f["claim_confirmed"] else "unverified" if f["claim_denied"] else "inconclusive"
+        return ResultArtifact(outcome=outcome, confidence=0.9,
                               findings={**f, "contact": contact, "call": call or {}}, model_used=f.get("model_used"),
                               evidence_refs=[x for x in [ref] if x])
 

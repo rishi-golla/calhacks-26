@@ -22,15 +22,40 @@ ROUTES = {
 log = logging.getLogger("router")
 
 
+AMOUNT_FIELDS = ("invoice_amount", "contract_rate", "paid_amount")
+MAX_AMOUNT = 1_000_000
+
+
+def invalid(p: dict) -> str | None:
+    for f in AMOUNT_FIELDS:
+        if f in p and (isinstance(p[f], bool) or not isinstance(p[f], int | float) or not 0 <= p[f] <= MAX_AMOUNT):
+            return f"{f} must be a number in [0, {MAX_AMOUNT}]"
+    for li in p.get("line_items", []):
+        if not isinstance(li.get("amount"), int | float) or not 0 <= li["amount"] <= MAX_AMOUNT:
+            return "line_items[].amount out of range"
+    return None
+
+
+def _keys(ev: dict) -> tuple[str, str]:
+    p = ev.get("payload", {})
+    key = ev.get("idempotency_key") or f"{ev['type']}:{p.get('invoice_id') or p.get('load_id') or ev['event_id']}"
+    return f"event:{ev['event_id']}", f"case:{key}"
+
+
 def plan(ev: dict) -> tuple[str, TaskEnvelope, dict] | None:
-    """Pure routing decision: (agent, envelope, metadata) or None for unknown/duplicate events."""
+    """Routing decision: (agent, envelope, metadata) or None for unknown, invalid or already-dispatched events.
+    Dedupe keys are only recorded by `dispatch` after the first agent accepted the task."""
     skill = ROUTES.get(ev.get("type", ""))
     if not skill:
         return None
     p = ev.get("payload", {})
+    if err := invalid(p):
+        log.warning("reject %s: %s", ev.get("event_id"), err)
+        return None
     case_id = p.get("case_id") or ev.get("case_hint") or ev["event_id"]
-    key = ev.get("idempotency_key") or f"{ev['type']}:{p.get('invoice_id') or p.get('load_id') or ev['event_id']}"
-    if not store.seen_once(f"event:{ev['event_id']}") or not store.seen_once(f"case:{key}"):
+    ev_key, case_key = _keys(ev)
+    key = case_key.removeprefix("case:")
+    if store.is_seen(ev_key) or store.is_seen(case_key):
         return None
     env = TaskEnvelope(task_type=skill, case_id=case_id, display_id=p.get("load_id"), subject=p,
                        evidence_refs=ev.get("evidence_refs", [f"event:{ev['event_id']}"]),
@@ -47,9 +72,13 @@ async def dispatch(ev: dict) -> str | None:
         return None
     agent, env, meta = p
     task = await a2a_client.start_task(agent, env.model_dump(), meta, context_id=env.case_id)
-    store.log_event(env.case_id, "router", task.id if task else None, "routed", to=agent, skill=env.task_type,
+    if task is None:
+        raise RuntimeError(f"{agent} did not accept {ev['event_id']}")
+    for k in _keys(ev):
+        store.seen_once(k)
+    store.log_event(env.case_id, "router", task.id, "routed", to=agent, skill=env.task_type,
                     event_id=ev["event_id"])
-    return task.id if task else None
+    return task.id
 
 
 async def main() -> None:

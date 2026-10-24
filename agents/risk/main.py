@@ -50,9 +50,11 @@ class RiskAgent(FreightAgent):
 
     def _detention_verdict(self, base: dict, ver: dict) -> ResultArtifact:
         vf = ver.get("findings", {})
-        confirmed = bool(vf.get("claim_confirmed"))
-        return ResultArtifact(outcome="verified" if confirmed else "unverified", confidence=0.9,
-                              findings={**base, "verification": ver, "claim_confirmed": confirmed},
+        confirmed, denied = bool(vf.get("claim_confirmed")), bool(vf.get("claim_denied")) and not vf.get("claim_confirmed")
+        outcome = "verified" if confirmed else "unverified" if denied else "inconclusive"
+        return ResultArtifact(outcome=outcome, confidence=0.9,
+                              findings={**base, "verification": ver, "claim_confirmed": confirmed,
+                                        "claim_denied": denied},
                               evidence_refs=ver.get("evidence_refs", []),
                               recommended_next=[] if confirmed else ["carrier_ap.short_pay_detention"])
 

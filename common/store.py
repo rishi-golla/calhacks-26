@@ -179,7 +179,14 @@ def get_change_set(cs_id: str) -> dict | None:
 
 def sheet(name: str) -> list[dict]:
     with connect() as c:
-        return _rows(c.execute("SELECT * FROM sheet_cells WHERE sheet=? ORDER BY row, col", (name,)))
+        rows = _rows(c.execute("SELECT * FROM sheet_cells WHERE sheet=? ORDER BY row, col", (name,)))
+    for r in rows:  # cell values are always JSON-encoded, including plain strings
+        if isinstance(r.get("value"), str):
+            try:
+                r["value"] = json.loads(r["value"])
+            except ValueError:
+                pass
+    return rows
 
 
 def cell_history(sheet_name: str, row: str, col: str) -> list[dict]:
@@ -272,6 +279,17 @@ def flags(status: str | None = None) -> list[dict]:
 def set_flag_status(fid: str, status: str) -> None:
     with connect() as c:
         c.execute("UPDATE flags SET status=? WHERE id=?", (status, fid))
+
+
+def unpark(key: str) -> None:
+    """Re-open a claimed entry when delivering the resume failed, so the callback can be retried."""
+    with connect() as c:
+        c.execute("UPDATE parked SET resolved=NULL WHERE key=?", (key,))
+
+
+def is_seen(key: str) -> bool:
+    with connect() as c:
+        return c.execute("SELECT 1 FROM seen WHERE key=?", (key,)).fetchone() is not None
 
 
 def seen_once(key: str) -> bool:

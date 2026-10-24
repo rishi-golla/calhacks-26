@@ -52,12 +52,25 @@ class CarrierAPAgent(FreightAgent):
     async def _after_risk(self, case: Case, match: dict, risk: dict) -> ResultArtifact | Park:
         s = case.subject
         f = risk.get("findings", {})
-        dispute = risk.get("outcome") in ("suspicious", "unverified") and not f.get("claim_confirmed")
-        disputed = detention_amount(s) if dispute else 0.0
+        row = _row(s)
+        if f.get("claim_denied"):
+            disputed = detention_amount(s)  # counterparty affirmatively withdrew/denied the charge
+        elif f.get("claim_confirmed"):
+            disputed = 0.0  # verified exception: still needs a human to approve the over-contract variance
+        else:
+            case.commit("keep_hold", [{"sheet": SHEET, "row": row, "col": "status", "after": "on_hold"},
+                                      {"sheet": SHEET, "row": row, "col": "hold_reason",
+                                       "after": f"unresolved variance; risk {risk.get('outcome')}"}],
+                        policy_ids=match["policy_ids"])
+            return ResultArtifact(outcome="hold", confidence=0.7, policy_ids=match["policy_ids"],
+                                  evidence_refs=case.env.evidence_refs,
+                                  findings={"invoice_amount": s["invoice_amount"], "match": match, "risk": risk},
+                                  recommended_next=["controller.review_hold"])
         approved = round(s["invoice_amount"] - disputed, 2)
+        if approved > s["contract_rate"] * 1.02:
+            s = {**s, "force_human_approval": True}
         lines = [{"account": "5000 Purchased Transportation", "debit": approved, "credit": 0},
                  {"account": "2000 Accounts Payable", "debit": 0, "credit": approved}]
-        row = _row(s)
         case.commit("propose_short_pay" if disputed else "propose_payment", [
             {"sheet": SHEET, "row": row, "col": "approved", "after": approved},
             {"sheet": SHEET, "row": row, "col": "disputed", "after": disputed},

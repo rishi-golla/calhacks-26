@@ -74,6 +74,17 @@ def _run(world, scenario, seed=3):
     return g, load, [ev for st in steps for ev in st.make()]
 
 
+def test_clean_and_decoy_pick_share(world):
+    from sim.generator import SCENARIOS, pick
+
+    rng = random.Random(23)
+    picks = [pick(rng) for _ in range(2000)]
+    clean_and_decoys = {"clean", "clean_decoy", "decoy_detention_supported_small", "decoy_quickpay"}
+    share = sum(scenario in clean_and_decoys for scenario in picks) / len(picks)
+    assert all(weight > 0 for weight in SCENARIOS.values())
+    assert 0.70 <= share <= 0.80
+
+
 @pytest.mark.parametrize("scenario", sorted(__import__("sim.generator").generator.SCENARIOS))
 def test_lifecycle_emits_raw_arrivals_only(world, scenario):
     g, load, evs = _run(world, scenario)

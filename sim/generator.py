@@ -25,12 +25,15 @@ import redis.asyncio as redis
 from sim import bank, clock, docs, events, geo, mail, retention
 from sim.world import WORLD_SCHEMA, ensure, offline_world
 
-SCENARIOS = {"clean": 0.40, "decoy_detention_supported_small": 0.06, "decoy_quickpay": 0.06,
-             "detention_unsupported": 0.04, "detention_supported": 0.04, "shipper_short_pay": 0.04,
-             "bank_change": 0.04, "duplicate_invoice": 0.04, "duplicate_renumbered": 0.04,
-             "rate_mismatch": 0.04, "fsc_error": 0.04, "math_error": 0.03, "lumper_no_receipt": 0.03,
-             "factoring_unverified": 0.03, "pod_unsigned": 0.03, "double_brokering": 0.02,
-             "misapplied_payment": 0.02}
+SCENARIOS = {"clean": 0.60, "decoy_detention_supported_small": 0.06, "decoy_quickpay": 0.06,
+             "clean_decoy": 0.03, "detention_unsupported": 0.0208333333333333,
+             "detention_supported": 0.0208333333333333, "shipper_short_pay": 0.0208333333333333,
+             "bank_change": 0.0208333333333333, "duplicate_invoice": 0.0208333333333333,
+             "duplicate_renumbered": 0.0208333333333333, "rate_mismatch": 0.0208333333333333,
+             "fsc_error": 0.0208333333333333, "math_error": 0.015625, "lumper_no_receipt": 0.015625,
+             "factoring_unverified": 0.015625, "pod_unsigned": 0.015625,
+             "double_brokering": 0.0104166666666667, "misapplied_payment": 0.0104166666666667}
+assert math.isclose(sum(SCENARIOS.values()), 1.0, rel_tol=0.0, abs_tol=1e-9)
 # Scenarios that end in a parked call/email waiting on a human playing the counterparty.
 NEEDS_HUMAN = {"detention_unsupported", "shipper_short_pay", "bank_change", "factoring_unverified"}
 STREAM = "events"
@@ -218,6 +221,7 @@ def plan(load: dict, scenario: str, rnd: random.Random) -> dict:
 def expected(load: dict, scenario: str) -> dict:
     return {
         "clean": {"carrier_ap": "approve", "shipper_ar": "reconciled"},
+        "clean_decoy": {"carrier_ap": "approve", "shipper_ar": "reconciled"},
         "decoy_detention_supported_small": {"carrier_ap": "approve_with_receipt"},
         "decoy_quickpay": {"carrier_ap": "approve_quickpay"},
         "detention_unsupported": {"carrier_ap": "short_pay_detention_after_verification", "risk": "suspicious"},

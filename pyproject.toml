@@ -10,6 +10,7 @@ dependencies = [
   "uvicorn>=0.30",
   "starlette>=0.37",
   "fastapi>=0.111",
+  "fpdf2>=2.8,<3",
 ]
 
 [project.optional-dependencies]

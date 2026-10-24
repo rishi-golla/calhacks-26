@@ -7,9 +7,12 @@ import os
 import pathlib
 import random
 import re
+from email import policy as email_policy
+from email.parser import BytesParser
 
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from common import a2a_client, store
@@ -236,15 +239,40 @@ async def world():
     return directory.load()
 
 
-@app.get("/docs/{ref}", dependencies=OP)
-async def source_doc(ref: str):
-    ref = ref.removeprefix("doc:")
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", ref):
+def _sim_file(sub: str, name: str, ext: str) -> pathlib.Path:
+    name = name.split(":", 1)[-1]
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
         raise HTTPException(400)
-    p = pathlib.Path(os.getenv("SIM_DATA_DIR", "data")) / "docs" / f"{ref}.json"
+    p = pathlib.Path(os.getenv("SIM_DATA_DIR", "data")) / sub / f"{name}.{ext}"
     if not p.exists():
         raise HTTPException(404)
-    return json.loads(p.read_text())
+    return p
+
+
+@app.get("/docs/{ref}", dependencies=OP)
+async def source_doc(ref: str):
+    return json.loads(_sim_file("docs", ref, "json").read_text())
+
+
+@app.get("/docs/{ref}/pdf", dependencies=OP)
+async def source_pdf(ref: str):
+    return FileResponse(_sim_file("docs", ref, "pdf"), media_type="application/pdf")
+
+
+@app.get("/mail/{mail_id}", dependencies=OP)
+async def inbox_message(mail_id: str):
+    """Raw simulated inbox message, parsed for display (headers, body, attachment names)."""
+    m = BytesParser(policy=email_policy.default).parsebytes(_sim_file("mail", mail_id, "eml").read_bytes())
+    body = m.get_body(("plain",))
+    return {"headers": {k: str(v) for k, v in m.items()}, "body": body.get_content() if body else "",
+            "attachments": [a.get_filename() for a in m.iter_attachments()]}
+
+
+@app.get("/clock", dependencies=OP)
+async def sim_clock():
+    from sim import clock
+    c = await clock.load(_redis())
+    return {"business_time": c.now().isoformat(), "ratio": c.ratio}
 
 
 @app.get("/answer_key", dependencies=OP)

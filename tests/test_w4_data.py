@@ -1,5 +1,6 @@
 import json
 import random
+from datetime import UTC, datetime
 
 import pytest
 
@@ -35,11 +36,17 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setenv("OPS_DB", str(tmp_path / "ops.db"))
     monkeypatch.setenv("MOCK_INTEGRATIONS", "0")
     monkeypatch.delenv("APIFY_TOKEN", raising=False)
+    from sim.world import price_lane
     c, s = fmcsa.normalize(CARRIER_ROW), edgar.normalize(SEC_SUB)
-    s["directory"] = {"phone": s["phone"], "source": s["source"]}
-    w = {"carriers": [c], "shippers": [s], "lanes": [{
-        "id": "LN-1", "shipper_id": s["id"], "carrier_id": c["id"], "origin": "Atlanta, GA",
-        "destination": "South Gate, CA", "contract_rate": 1850.0, "free_time_min": 120, "detention_rate_hr": 150.0}]}
+    k = {**s, "id": "S-99", "cik": 99, "name": "CONSIGNEE DC", "lat": 34.0, "lon": -118.2}
+    c.update(lat=33.95, lon=-118.17, terms="Net 30")
+    s.update(lat=33.76, lon=-84.39, terms="Net 30", directory={"phone": s["phone"], "source": s["source"]})
+    w = {"fsc_per_mile": 0.433, "carriers": [c], "shippers": [s, k], "lanes": [{
+        "id": "LN-1", "shipper_id": s["id"], "carrier_id": c["id"], "consignee_id": k["id"],
+        "origin": "Atlanta, GA", "destination": "South Gate, CA", **price_lane(2210, random.Random(1)),
+        "equipment": "53' Reefer", "commodity": "Packaged food, palletized", "nmfc_class": 70, "temp_f": 34,
+        "free_time_min": 120, "detention_rate_hr": 75.0, "transit_hours": 64.0,
+        "accessorials": {"lumper": "at cost", "layover": 250.0, "tonu": 150.0, "stop_off": 75.0}}]}
     (tmp_path / "world.json").write_text(json.dumps(w))
     return w
 
@@ -53,29 +60,64 @@ def test_enrichment_uses_public_registration(world):
     assert "error" in tools.enrich_contact("C-0", "dispatch")
 
 
-@pytest.mark.parametrize("scenario", ["clean", "detention_unsupported", "detention_supported", "shipper_short_pay",
-                                      "bank_change", "duplicate_invoice"])
-def test_lifecycle_events_route_cleanly(world, scenario):
-    from router import main as router
+def _run(world, scenario, seed=3):
     from sim import generator as g
-    rnd = random.Random(3)
+    rnd = random.Random(seed)
     load = g.new_load(world, rnd)
-    steps = g.lifecycle(load, scenario, rnd)
-    evs = [e for _, e in steps]
+    t0 = datetime(2026, 10, 24, 8, 0, tzinfo=UTC)
+    steps = g.lifecycle(load, scenario, rnd, t0=t0)
+    assert [st.at for st in steps] == sorted(st.at for st in steps) and steps[0].at == t0
+    return g, load, [ev for st in steps for ev in st.make()]
+
+
+@pytest.mark.parametrize("scenario", sorted(__import__("sim.generator").generator.SCENARIOS))
+def test_lifecycle_paper_trail_routes_cleanly(world, scenario):
+    from router import main as router
+    g, load, evs = _run(world, scenario)
+    occurred = [e["occurred_at"] for e in evs]
+    assert occurred == sorted(occurred)
     routed = [e for e in evs if router.plan(e)]
     invoices = [e for e in evs if e["type"] == "carrier_invoice.received"]
     inv = invoices[0]["payload"]
     assert inv["carrier"]["usdot"] == "391314" and inv["shipper"]["name"] == "COCA COLA CO"
-    assert inv["invoice_amount"] == sum(li["amount"] for li in inv["line_items"])
     assert all(router.invalid(e["payload"]) is None for e in routed)
     assert {e["type"] for e in routed} >= {"carrier_invoice.received", "shipper_payment.received"}
-    assert not any(e["type"] in ("gps.ping", "pod.received", "load.tendered") for e in routed)
+    assert {e["type"] for e in evs} >= {"load.tendered", "load.status", "gps.ping", "pod.received",
+                                        "email.received", "shipper_invoice.issued", "bank.transaction"}
+    lines = round(sum(li["amount"] for li in inv["line_items"]), 2)
+    if scenario == "math_error":
+        assert inv["invoice_amount"] > lines
+    else:
+        assert inv["invoice_amount"] == lines
+    if scenario in ("clean", "duplicate_invoice", "duplicate_renumbered", "shipper_short_pay", "pod_unsigned"):
+        assert inv["invoice_amount"] == inv["contract_rate"]
+    if scenario in ("rate_mismatch", "fsc_error", "math_error", "lumper_no_receipt", "detention_unsupported"):
+        assert inv["invoice_amount"] > inv["contract_rate"] * 1.02  # must trip the AP contract-tolerance check
     if scenario == "detention_unsupported":
         assert inv["detention_hours_claimed"] == 2 and inv["gps_dwell_min"] <= inv["free_time_min"]
     if scenario == "duplicate_invoice":
         assert len(invoices) == 2 and router._keys(invoices[0])[1] == router._keys(invoices[1])[1]
+    if scenario == "duplicate_renumbered":
+        assert len(invoices) == 2 and invoices[0]["payload"]["bol"] == invoices[1]["payload"]["bol"]
+        assert router._keys(invoices[0])[1] != router._keys(invoices[1])[1]
+    if scenario == "pod_unsigned":
+        assert inv["pod_signed"] is False
+    if scenario in ("bank_change", "factoring_unverified"):
+        bc = next(e["payload"] for e in evs if e["type"] == "bank_change.requested")
+        assert (bc["from"] != bc["registered_email"]) == (scenario == "bank_change")
+    pay = next(e["payload"] for e in evs if e["type"] == "shipper_payment.received")
+    assert pay["chase"] == (scenario == "shipper_short_pay")
     for ref in invoices[0]["evidence_refs"]:
-        assert (g.data_dir() / "docs" / f"{ref.removeprefix('doc:')}.json").exists()
-    g.record_answer(load, scenario)
-    key = (g.data_dir() / "answer_key.jsonl").read_text().splitlines()
-    assert json.loads(key[-1])["scenario"] == scenario
+        kind, _, name = ref.partition(":")
+        sub, ext = ("docs", "pdf") if kind == "doc" else ("mail", "eml")
+        assert (g.data_dir() / sub / f"{name}.{ext}").stat().st_size > 500
+    g.record_answer(load, scenario, load["planted"])
+    key = json.loads((g.data_dir() / "answer_key.jsonl").read_text().splitlines()[-1])
+    assert key["scenario"] == scenario and key["expected"]
+
+
+def test_gps_breadcrumbs_follow_the_lane(world):
+    _, load, evs = _run(world, "clean")
+    pings = [e["payload"] for e in evs if e["type"] == "gps.ping"]
+    assert pings[0]["lat"] == load["shipper"]["lat"] and pings[-1]["lat"] == load["consignee"]["lat"]
+    assert pings[-1]["milestone"] == "delivery.departed" and pings[-1]["dwell_min"] > 0

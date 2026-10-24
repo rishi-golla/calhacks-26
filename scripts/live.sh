@@ -20,5 +20,6 @@ $PY -m gateway.app & pids+=($!)
 sleep 2
 $PY -m sim.generator & pids+=($!)
 trap 'kill ${pids[@]} 2>/dev/null' INT TERM EXIT
-echo "live: open http://localhost:${GATEWAY_PORT:-9000}/console#token=${GATEWAY_TOKEN}"
+TOKQ=$(python3 -c 'import os,urllib.parse;print(urllib.parse.quote(os.environ["GATEWAY_TOKEN"],safe=""))')
+echo "live: open http://localhost:${GATEWAY_PORT:-9000}/console#token=${TOKQ}"
 wait

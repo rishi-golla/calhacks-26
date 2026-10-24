@@ -11,6 +11,7 @@ planted at configurable rates; the expected outcome of each (down to the field) 
 data/answer_key.jsonl so agent decisions can be scored."""
 import asyncio
 import json
+import logging
 import math
 import os
 import pathlib
@@ -22,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 
 import redis.asyncio as redis
 
-from sim import bank, clock, docs, events, geo, mail, retention
+from sim import bank, clock, docs, events, geo, hero, mail, retention
 from sim.world import WORLD_SCHEMA, ensure, offline_world
 
 SCENARIOS = {"clean": 0.60, "decoy_detention_supported_small": 0.06, "decoy_quickpay": 0.06,
@@ -40,6 +41,9 @@ RAW_STREAM = os.getenv("RAW_STREAM", "raw")
 FIRST = ["Maria", "James", "Luis", "Ashley", "Darnell", "Priya", "Tom", "Keisha", "Raj", "Elena", "Mike", "Grace"]
 LAST = ["Garcia", "Nguyen", "Johnson", "Patel", "Kim", "Lopez", "Brown", "Singh", "Martinez", "Chen", "Davis"]
 _INVOICE_REGISTRIES: dict[pathlib.Path, dict[str, str]] = {}
+# Injected loads stream in the background; holding the task keeps it from being garbage-collected mid-stream.
+_BACKGROUND: set[asyncio.Task] = set()
+log = logging.getLogger("sim")
 
 
 def data_dir() -> pathlib.Path:
@@ -68,6 +72,8 @@ def _reserve_invoice_number(carrier: dict, rnd: random.Random, load_id: str,
     if not force_new:
         existing = next((number for number, owner in registry.items() if owner == load_id), None)
         if existing:
+            # Make the draw the first reservation made, so replaying lifecycle() for a load replays its schedule.
+            rnd.randrange(1, 1_000_000_000)
             return existing
     while True:
         number = docs.invoice_number(carrier, rnd.randrange(1, 1_000_000_000))
@@ -117,12 +123,18 @@ def new_load(world: dict, rnd: random.Random, quick: bool = False) -> dict:
     lane["fsc"] = round(lane["miles"] * fsc_rate, 2)
     lane["contract_rate"] = round(lane["linehaul"] + lane["fsc"], 2)
     lane["shipper_fsc"] = lane["fsc"]
+    return build_load(world, load_id, lane, fsc_rate, rnd)
+
+
+def build_load(world: dict, load_id: str, lane: dict, fsc_rate: float, rnd: random.Random,
+               consignee: dict | None = None) -> dict:
+    """The load record lifecycle() plays out, on a priced lane. `consignee` stands in for one outside the world."""
     n = int(load_id[-6:], 16) % 900_000
     other_carriers = [c for c in world["carriers"] if c["id"] != lane["carrier_id"]]
     return {"load_id": load_id, "case_id": f"CASE-{load_id}", "lane": lane,
             "carrier": directory_entry(world, lane["carrier_id"]), "shipper": directory_entry(world, lane["shipper_id"]),
             "alternate_carrier": directory_entry(world, rnd.choice(other_carriers)["id"]) if other_carriers else None,
-            "consignee": directory_entry(world, lane["consignee_id"]),
+            "consignee": consignee or directory_entry(world, lane["consignee_id"]),
             "contract_rate": lane["contract_rate"], "free_time_min": lane["free_time_min"],
             "shipper_rate": lane["shipper_linehaul"] + lane["shipper_fsc"], "fsc_per_mile": fsc_rate,
             "pro": f"{100000 + n}", "bol": f"BOL{rnd.randint(10**7, 10**8 - 1)}",
@@ -134,7 +146,22 @@ def new_load(world: dict, rnd: random.Random, quick: bool = False) -> dict:
 @dataclass
 class Step:
     at: datetime  # business time the step happens
+    name: str  # what happens: "tender", "dispatch", ..., "carrier_invoice", "bank_change", "paid"
     make: Callable[[], list[dict]]  # writes its documents/mail and returns the events, called when the step fires
+
+
+# Values a caller may fix instead of drawing them (the demo presets); everything else stays random.
+PINS = frozenset({"dwell", "short_amount"})
+
+
+def _check_pins(pins: dict | None) -> dict:
+    pins = dict(pins or {})
+    if unknown := pins.keys() - PINS:
+        raise ValueError(f"unknown pins: {sorted(unknown)}")
+    for key, value in pins.items():
+        if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+            raise ValueError(f"pin {key} must be a non-negative number")
+    return pins
 
 
 def _event(etype: str, load: dict, payload: dict, at: datetime, priority: str = "P3",
@@ -151,8 +178,10 @@ def _email_payload(message: dict) -> dict:
     return {key: message[key] for key in ("mail_id", "from", "to", "subject", "sent_at", "attachments")}
 
 
-def plan(load: dict, scenario: str, rnd: random.Random) -> dict:
-    """Decide every planted value up front so the answer key and documents agree."""
+def plan(load: dict, scenario: str, rnd: random.Random, pins: dict | None = None) -> dict:
+    """Decide every planted value up front so the answer key and documents agree. A pinned value replaces the
+    draw but the draw still happens, so every other value comes out the same as without the pin."""
+    pins = _check_pins(pins)
     lane, free = load["lane"], load["free_time_min"]
     receipt: bool | None = None
     if scenario == "detention_unsupported":
@@ -162,6 +191,7 @@ def plan(load: dict, scenario: str, rnd: random.Random) -> dict:
         claimed_h, receipt = math.ceil((dwell - free) / 60), True
     else:
         dwell, claimed_h = rnd.randint(25, 110), 0
+    dwell = pins.get("dwell", dwell)
     fsc_rate = round(load["fsc_per_mile"], 3)
     fsc = round(lane["miles"] * fsc_rate, 2)
     lines = [{"desc": "Linehaul", "amount": lane["linehaul"]},
@@ -253,13 +283,15 @@ def record_answer(load: dict, scenario: str, planted: dict | None = None,
 
 
 def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | None = None,
-              t0: datetime | None = None) -> list[Step]:
-    """Business-time schedule for one load. Documents are written when their step fires, never ahead of time."""
+              t0: datetime | None = None, pins: dict | None = None) -> list[Step]:
+    """Business-time schedule for one load. Documents are written when their step fires, never ahead of time.
+    `overrides` are only recorded on the tender; `pins` fix planted values (see PINS)."""
+    pins = _check_pins(pins)
     rnd = _load_rng(load)
     t0 = t0 or _now()
     lid, case, c, s, k = load["load_id"], load["case_id"], load["carrier"], load["shipper"], load["consignee"]
     lane, free, rate = load["lane"], load["free_time_min"], load["contract_rate"]
-    pl = plan(load, scenario, rnd)
+    pl = plan(load, scenario, rnd, pins)
     base = {"case_id": case, "load_id": lid, "lane": f"{lane['origin']} -> {lane['destination']}",
             "pro": load["pro"], "bol": load["bol"], "po": load["po"]}
     tms = {**base, "equipment": lane["equipment"], "commodity": lane["commodity"], "weight_lb": load["weight_lb"],
@@ -287,8 +319,8 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
     refs: dict[str, str] = {}
     steps: list[Step] = []
 
-    def add(at: datetime, fn: Callable[[], list[dict]]) -> None:
-        steps.append(Step(at, fn))
+    def add(at: datetime, name: str, fn: Callable[[], list[dict]]) -> None:
+        steps.append(Step(at, name, fn))
 
     def tender() -> list[dict]:
         refs["rc"] = docs.write(f"RC-{lid}", "rate_confirmation", {
@@ -297,14 +329,17 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
             "fsc_per_mile": load["fsc_per_mile"], "total": rate, "accessorials": lane["accessorials"],
             "free_time_min": free, "detention_rate_hr": lane["detention_rate_hr"], "terms": c.get("terms", "Net 30"),
             "temp_f": lane.get("temp_f")})
+        # A demo load's routing context rides on the tender so ingest can stamp it on the case-opening event.
+        demo = {"demo": load["demo"]} if "demo" in load else {}
         return [_event("load.tendered", load, {**tms, "carrier": c, "shipper": s, "consignee": k,
                                                 "contract_rate": rate, "free_time_min": free,
                                                 "operator_overrides": overrides or {},
                                                 "pickup_appt": pickup.isoformat(),
-                                                "delivery_appt": delivery_appt.isoformat()}, t0, refs=[refs["rc"]])]
-    add(t0, tender)
+                                                "delivery_appt": delivery_appt.isoformat(), **demo},
+                       t0, refs=[refs["rc"]])]
+    add(t0, "tender", tender)
     dispatch_at = t0 + timedelta(minutes=rnd.randint(20, 90))
-    add(dispatch_at, lambda: [_event("load.dispatched", load, {
+    add(dispatch_at, "dispatch", lambda: [_event("load.dispatched", load, {
         **base, "status": "dispatched", "driver": load["driver"], "truck": f"T{rnd.randint(100, 999)}",
         "trailer": load["trailer"]}, dispatch_at)])
 
@@ -312,7 +347,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
         pt = geo.along(s, k, frac) if "lat" in s and "lat" in k else {}
         return lambda: [_event("gps.ping", load, {**base, **pt, "milestone": milestone, "speed_mph":
                                0 if frac in (0, 1) else rnd.randint(52, 66), "dwell_min": dwell}, at)]
-    add(pickup, ping(pickup, 0, "pickup.arrived"))
+    add(pickup, "pickup", ping(pickup, 0, "pickup.arrived"))
 
     def loaded_step() -> list[dict]:
         refs["bol"] = docs.write(f"BOL-{lid}", "bill_of_lading", {
@@ -321,11 +356,11 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
             "loaded_at": _ts(loaded), "driver": load["driver"]})
         return [_event("load.status", load, {**base, "status": "loaded", "seal": load["seal"]}, loaded,
                        refs=[refs["bol"]]), *ping(loaded, 0, "pickup.departed")()]
-    add(loaded, loaded_step)
+    add(loaded, "loaded", loaded_step)
     for frac in (0.25, 0.5, 0.75):
         at = loaded + (arrive - loaded) * frac
-        add(at, ping(at, frac, "in_transit"))
-    add(arrive, ping(arrive, 1, "delivery.arrived"))
+        add(at, "in_transit", ping(at, frac, "in_transit"))
+    add(arrive, "arrived", ping(arrive, 1, "delivery.arrived"))
 
     def delivered() -> list[dict]:
         signed = scenario != "pod_unsigned"
@@ -346,7 +381,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                     "contract_rate": load["contract_rate"], "delivered_at": _ts(depart),
                     "receiver": receiver, "signed_by": receiver, "exceptions": [],
                 }, depart, refs=out)]
-    add(depart, delivered)
+    add(depart, "delivered", delivered)
 
     def invoice_payload(number: str, doc_ref: str, at: datetime) -> tuple[dict, list[str]]:
         doc = docs.write(doc_ref, "carrier_invoice", {
@@ -367,10 +402,10 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
         refs["inv_evidence"] = json.dumps(ev_refs)
         refs["invoice_email"] = json.dumps(_email_payload(out["mail"]))
         return [_event("email.received", load, _email_payload(out["mail"]), billed_at, refs=ev_refs[:1])]
-    add(billed_at, billed)
+    add(billed_at, "carrier_invoice", billed)
     if scenario == "duplicate_invoice":
         at = billed_at + timedelta(days=rnd.uniform(1, 2))
-        add(at, lambda: [_event("email.received", load, json.loads(refs["invoice_email"]), at, "P2",
+        add(at, "duplicate_invoice", lambda: [_event("email.received", load, json.loads(refs["invoice_email"]), at, "P2",
                                 json.loads(refs["inv_evidence"]))])
     if scenario == "duplicate_renumbered":
         at = billed_at + timedelta(days=rnd.uniform(2, 4))
@@ -379,7 +414,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
         def renumbered() -> list[dict]:
             out, ev_refs = invoice_payload(no2, f"INV-{lid}-2", at)
             return [_event("email.received", load, _email_payload(out["mail"]), at, refs=ev_refs[:1])]
-        add(at, renumbered)
+        add(at, "renumbered_invoice", renumbered)
     if scenario in ("bank_change", "factoring_unverified"):
         at = billed_at + timedelta(hours=rnd.uniform(2, 8))
 
@@ -395,7 +430,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                            "\n\nThank you,\nAccounting", at,
                            reply_to=sender)
             return [_event("email.received", load, _email_payload(m), at)]
-        add(at, bank_change)
+        add(at, "bank_change", bank_change)
 
     sh_lines = [{"desc": f"Linehaul {lane['origin']} -> {lane['destination']} ({lane['miles']} mi)",
                  "qty": 1, "rate": lane["shipper_linehaul"], "amount": lane["shipper_linehaul"]},
@@ -414,10 +449,12 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
             "due": _ts(sinv_at + timedelta(days=30)), "shipper": s, "line_items": sh_lines, "total": sh_total})
         return [_event("shipper_invoice.issued", load, {**base, "invoice_id": sinv, "shipper": s,
                                                         "amount": sh_total}, sinv_at, refs=[refs["sinv"]])]
-    add(sinv_at, shipper_invoice)
+    add(sinv_at, "shipper_invoice", shipper_invoice)
 
     def paid() -> list[dict]:
         short = rnd.choice([150, 225, 300, 450]) if scenario == "shipper_short_pay" else 0
+        if short:
+            short = pins.get("short_amount", short)
         amount = round(sh_total - short, 2)
         bank_reference = f"SINV-MISSING-{lid}" if scenario == "misapplied_payment" else sinv
         txn = bank.post("ach_credit", amount, s["name"], bank_reference, paid_at)
@@ -428,7 +465,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
         return [_event("email.received", load, _email_payload(m), paid_at),
                 _event("bank.event", load, {"file": txn["file"], "account": txn["account"],
                                             "record": txn["record"]}, paid_at)]
-    add(paid_at, paid)
+    add(paid_at, "paid", paid)
     steps.sort(key=lambda st: st.at)
     load["planted"] = pl["planted"]
     return steps
@@ -440,21 +477,43 @@ async def publish(r: redis.Redis | None, ev: dict) -> None:
     events.append_event(ev)
 
 
+def fast_forward(load: dict, scenario: str, rnd: random.Random, now: datetime, trigger: str,
+                 overrides: dict | None = None, pins: dict | None = None) -> tuple[datetime, list[Step]]:
+    """Backdate t0 so the `trigger` step has just happened at `now`: every step up to it fires at once and the rest
+    keep real pacing. Pickup is rounded down to the hour, so backdating by the trigger's offset can still leave it
+    up to an hour ahead; one more hour always crosses that boundary."""
+    t0 = now
+    for attempt in range(3):
+        steps = lifecycle(load, scenario, rnd, overrides, t0, pins)
+        at = next((st.at for st in steps if st.name == trigger), None)
+        if at is None:
+            raise ValueError(f"{scenario} has no {trigger!r} step")
+        if at <= now:
+            return t0, steps
+        t0 -= at - now if attempt == 0 else timedelta(hours=1)
+    raise RuntimeError(f"could not fast-forward {load['load_id']} to {trigger}")
+
+
 async def stream_load(r: redis.Redis, load: dict, scenario: str, rnd: random.Random,
                       overrides: dict | None = None, backdate: timedelta | None = None,
-                      source: str = "sim") -> None:
+                      source: str = "sim", fast_forward_to: str | None = None, pins: dict | None = None) -> None:
     load["_event_source"] = source
     clk = await clock.load(r, heartbeat=True)
-    t0 = clk.now() - backdate if backdate is not None else clk.now()
-    steps = lifecycle(load, scenario, rnd, overrides, t0)
+    if fast_forward_to:
+        t0, steps = fast_forward(load, scenario, rnd, clk.now(), fast_forward_to, overrides, pins)
+    else:
+        t0 = clk.now() - backdate if backdate is not None else clk.now()
+        steps = lifecycle(load, scenario, rnd, overrides, t0, pins)
     record_answer(load, scenario, load.get("planted"), t0)
-    for st in steps:
+    for n, st in enumerate(steps, 1):
         wait = clk.wall_delay(st.at - clk.now())
         if wait > 0:
             await asyncio.sleep(wait)
         for ev in st.make():
             ev["ts"] = events.iso_z()
             await publish(r, ev)
+        if st.name == fast_forward_to:
+            log.info("fast_forward %s: emitted %d steps through %s", load["load_id"], n, st.name)
 
 
 async def run_load(r: redis.Redis, world: dict, rnd: random.Random, scenario: str,
@@ -464,26 +523,46 @@ async def run_load(r: redis.Redis, world: dict, rnd: random.Random, scenario: st
     return load
 
 
-async def inject(scenario: str, overrides: dict | None = None, r: redis.Redis | None = None):
+async def launch(load: dict, scenario: str, r: redis.Redis | None, injection: dict, priority: str = "P1",
+                 overrides: dict | None = None, pins: dict | None = None,
+                 fast_forward_to: str | None = None) -> asyncio.Task:
+    """Announce an operator-injected load (`scenario.injected`) and stream it in the background. Returns the
+    streaming task once the announcement is in `raw`."""
     owns_redis = r is None
     client = r or redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
-    world = ensure()
-    rnd = random.Random()
-    load = new_load(world, rnd, quick=True)
     load["_event_source"] = "demo"
-    clk = await clock.load(client)
-    await publish(client, _event("scenario.injected", load, {
-        "injection_id": f"INJ-{uuid.uuid4().hex}", "load_id": load["load_id"],
-    }, clk.now(), priority="P1"))
+    try:
+        clk = await clock.load(client)
+        await publish(client, _event("scenario.injected", load, {**injection, "load_id": load["load_id"]},
+                                     clk.now(), priority=priority))
+    except BaseException:
+        if owns_redis:
+            await client.aclose()
+        raise
 
     async def run() -> None:
         try:
-            await stream_load(client, load, scenario, rnd, overrides, source="demo")
+            await stream_load(client, load, scenario, random.Random(), overrides, source="demo",
+                              fast_forward_to=fast_forward_to, pins=pins)
+        except Exception:
+            log.exception("injected %s stopped streaming", load["load_id"])  # nobody awaits this task
+            raise
         finally:
             if owns_redis:
                 await client.aclose()
 
-    return asyncio.create_task(run())
+    task = asyncio.create_task(run())
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
+    return task
+
+
+async def inject(scenario: str, overrides: dict | None = None, r: redis.Redis | None = None,
+                 fast_forward_to: str | None = None) -> asyncio.Task:
+    """A random quick lane, no demo context (sim/demo.py starts the hero presets)."""
+    load = new_load(ensure(), random.Random(), quick=True)
+    return await launch(load, scenario, r, {"injection_id": f"INJ-{uuid.uuid4().hex}"}, overrides=overrides,
+                        fast_forward_to=fast_forward_to)
 
 
 async def seed_hero(world: dict) -> None:
@@ -492,15 +571,10 @@ async def seed_hero(world: dict) -> None:
         return
     from sim.world import ensure
     world = ensure()
-    carrier = directory_entry(world, "C-311")
-    shipper = directory_entry(world, "S-07")
-    consignee = {"id": "RENO-01", "name": "Reno Cold Storage", "address": "Reno, NV"}
-    lane = {"id": "LN-HERO", "carrier_id": "C-311", "shipper_id": "S-07", "origin": "Stockton, CA",
-            "destination": "Reno, NV", "miles": 133, "linehaul": 1850.0, "fsc": 0.0, "contract_rate": 1850.0,
-            "free_time_min": 120, "detention_rate_hr": 150.0, "transit_hours": 1.0, "equipment": "Reefer",
-            "commodity": "Produce", "nmfc_class": 70,
-            "accessorials": {"lumper": "receipt required", "layover": 250.0, "tonu": 150.0,
-                             "stop_off": 75.0, "driver_assist": 100.0}}
+    carrier = directory_entry(world, hero.HERO_CARRIER)
+    shipper = directory_entry(world, hero.HERO_SHIPPER)
+    consignee = dict(hero.HERO_CONSIGNEE)
+    lane = hero.hero_lane()
     for load_id, offset in (("LOAD-4821", 0), ("LOAD-4877", 14)):
         base_time = (_now() + timedelta(days=offset)).replace(hour=13, minute=0, second=0, microsecond=0)
         case_id, bol, po = f"CASE-{load_id[5:]}", f"BOL-{load_id}", f"PO-{load_id}"

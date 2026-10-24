@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { AGENTS, date, json, newest, num, str, type Row } from "@/lib/data";
 import { useLive } from "./live-provider";
+import { Mascot } from "./mascot";
 import {
   Badge,
   DataTable,
@@ -66,7 +67,7 @@ function AgentConfig({
       onSubmit={save}
       key={`${config?.model}:${config?.enabled}`}
     >
-      <span className={`agent-icon ${agent.color}`}>{agent.short}</span>
+      <Mascot id={agent.id} size={32} />
       <div className="model-name">
         <strong>{agent.name}</strong>
         <small>{agent.role}</small>

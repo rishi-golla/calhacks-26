@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from "react";
 import {
   Activity,
@@ -17,21 +16,13 @@ import {
   ChevronDown,
   CirclePause,
   CirclePlay,
-  FileCheck2,
-  FileSearch,
-  Headphones,
   Inbox,
   Menu,
   Radio,
   RotateCcw,
   Search,
   ShieldCheck,
-  Sparkles,
-  Truck,
-  Users,
-  Wallet,
   X,
-  ChartNoAxesCombined,
   ExternalLink,
   Wrench,
   LoaderCircle,
@@ -62,6 +53,7 @@ import {
 } from "@/lib/agent-inbox";
 import { markMessagesRead, type ReadMarkers } from "@/lib/inbox-read-state";
 import { useLive } from "./live-provider";
+import { Mascot } from "./mascot";
 import "./agent-inbox.css";
 
 type AgentId = (typeof AGENTS)[number]["id"];
@@ -70,28 +62,6 @@ type Replay = {
   capturedAt: string;
   description: string;
   messages: AgentMessage[];
-};
-const ICONS = {
-  carrier_ap: Truck,
-  risk: FileSearch,
-  verification: ShieldCheck,
-  documents: FileCheck2,
-  shipper_ar: Wallet,
-  cfo: ChartNoAxesCombined,
-  controller: CheckCheck,
-  voice_desk: Headphones,
-  validator: Sparkles,
-};
-const COLORS: Record<AgentId, string> = {
-  carrier_ap: "#6ca8ff",
-  risk: "#f8b86a",
-  verification: "#b99af7",
-  documents: "#67c4b6",
-  shipper_ar: "#ed91b5",
-  cfo: "#8fc38c",
-  controller: "#89aaff",
-  voice_desk: "#e2a272",
-  validator: "#b8a2e8",
 };
 const FRONTLINE: AgentId[] = [
   "carrier_ap",
@@ -124,19 +94,18 @@ function ToolStatus({ status }: { status: ToolCallStatus }) {
 function durationLabel(ms: number) {
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
-function Avatar({ id, small = false }: { id: string; small?: boolean }) {
-  const known = id in ICONS;
-  const Icon = known ? ICONS[id as AgentId] : Users;
+function Avatar({
+  id,
+  small = false,
+  working = false,
+}: {
+  id: string;
+  small?: boolean;
+  working?: boolean;
+}) {
   return (
-    <span
-      className={`ai-avatar ${small ? "small" : ""}`}
-      style={
-        {
-          "--agent-accent": known ? COLORS[id as AgentId] : "#a5b1c4",
-        } as CSSProperties
-      }
-    >
-      <Icon size={small ? 17 : 22} strokeWidth={1.7} aria-hidden="true" />
+    <span className={`ai-avatar ${small ? "small" : ""}`}>
+      <Mascot id={id} size={small ? 31 : 41} working={working} />
     </span>
   );
 }
@@ -551,7 +520,7 @@ export default function AgentInbox({
         aria-current={selected === id ? "true" : undefined}
       >
         <span className="ai-avatar-wrap">
-          <Avatar id={id} />
+          <Avatar id={id} working={status.state === "working"} />
           <i className={`ai-presence ${status.state}`} title={status.label} />
         </span>
         <span className="ai-agent-copy">

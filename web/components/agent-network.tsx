@@ -13,6 +13,7 @@ import {
 import { Activity } from "lucide-react";
 import { AGENTS, num, str, timestamp, type Row } from "@/lib/data";
 import { useLive } from "./live-provider";
+import { Mascot } from "./mascot";
 import { Badge, useClock } from "./ui";
 import "@xyflow/react/dist/style.css";
 type AgentData = {
@@ -31,7 +32,7 @@ const AgentNode = memo(function AgentNode({
     <div className={`agent-node ${data.color}`}>
       <Handle type="target" position={Position.Left} />
       <div className="agent-top">
-        <span className={`agent-icon ${data.color}`}>{data.short}</span>
+        <Mascot id={data.id} size={32} />
         <Badge value={record?.status ?? "offline"} />
       </div>
       <strong>{data.name}</strong>

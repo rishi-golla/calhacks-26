@@ -344,7 +344,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                 _event("pod.received", load, {
                     **base, "pod_ref": refs["pod"], "signed": signed, "carrier_id": doc_carrier.get("id"),
                     "contract_rate": load["contract_rate"], "delivered_at": _ts(depart),
-                    "receiver": receiver, "signed_by": receiver,
+                    "receiver": receiver, "signed_by": receiver, "exceptions": [],
                 }, depart, refs=out)]
     add(depart, delivered)
 
@@ -566,7 +566,7 @@ async def seed_hero(world: dict) -> None:
             _event("pod.received", load, {
                 **common, "pod_ref": refs[2], "signed": True, "carrier_id": carrier["id"],
                 "contract_rate": 1850.0, "delivered_at": _ts(departed),
-                "receiver": "R. Gomez", "signed_by": "R. Gomez",
+                "receiver": "R. Gomez", "signed_by": "R. Gomez", "exceptions": [],
             }, departed, refs=refs[2:3]),
             _event("shipper_invoice.issued", load,
                    {**common, "invoice_id": sinv, "shipper": shipper, "amount": 1850.0},

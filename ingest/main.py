@@ -504,11 +504,12 @@ async def _handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
             load.setdefault("gps_dwell_min", None)
             db.execute("INSERT OR REPLACE INTO loads(load_id, json) VALUES (?,?)", (load_id, _dump(load)))
         return [ev]
-    elif event_type == "gps.ping" and payload.get("milestone") == "delivery.departed":
-        load = _load(db, payload.get("load_id"))
-        if load:
-            load["gps_dwell_min"] = payload.get("dwell_min")
-            db.execute("UPDATE loads SET json=? WHERE load_id=?", (_dump(load), load["load_id"]))
+    elif event_type == "gps.ping":
+        if payload.get("milestone") == "delivery.departed":
+            load = _load(db, payload.get("load_id"))
+            if load:
+                load["gps_dwell_min"] = payload.get("dwell_min")
+                db.execute("UPDATE loads SET json=? WHERE load_id=?", (_dump(load), load["load_id"]))
         return [ev]
     elif event_type in {"load.dispatched", "load.delivered", "pod.received"}:
         return [ev]
@@ -540,7 +541,7 @@ async def _handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
             return _bank_change(ev, message, db)
         if kind == "remittance_advice":
             return _remittance_advice(ev, message, db)
-        return [_email_needs_review(ev, message)]
+        return [_email_needs_review(ev, message), _email_event(ev, message)]
     elif event_type == "bank.event":
         return _bank_appended(ev, db)
     return []

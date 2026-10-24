@@ -518,6 +518,7 @@ def test_offline_40_loads_follow_w1_routing_contract(world, tmp_path, monkeypatc
                 assert emitted[0]["payload"]["contract_rate"] > 0
                 assert emitted[0]["payload"]["delivered_at"]
                 assert "receiver" in emitted[0]["payload"] and "signed_by" in emitted[0]["payload"]
+                assert "exceptions" in emitted[0]["payload"]
         elif raw["type"] == "shipper_invoice.issued":
             assert by_trigger[raw["event_id"]] == []
 

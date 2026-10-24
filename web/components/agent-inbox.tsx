@@ -83,15 +83,15 @@ const ICONS = {
   validator: Sparkles,
 };
 const COLORS: Record<AgentId, string> = {
-  carrier_ap: "#6ca8ff",
-  risk: "#f8b86a",
-  verification: "#b99af7",
-  documents: "#67c4b6",
-  shipper_ar: "#ed91b5",
-  cfo: "#8fc38c",
-  controller: "#89aaff",
-  voice_desk: "#e2a272",
-  validator: "#b8a2e8",
+  carrier_ap: "#3371cc",
+  risk: "#cc8733",
+  verification: "#6633cc",
+  documents: "#47b8a7",
+  shipper_ar: "#cc336f",
+  cfo: "#5ca857",
+  controller: "#335ecc",
+  voice_desk: "#cc7533",
+  validator: "#6333cc",
 };
 const FRONTLINE: AgentId[] = [
   "carrier_ap",
@@ -132,7 +132,7 @@ function Avatar({ id, small = false }: { id: string; small?: boolean }) {
       className={`ai-avatar ${small ? "small" : ""}`}
       style={
         {
-          "--agent-accent": known ? COLORS[id as AgentId] : "#a5b1c4",
+          "--agent-accent": known ? COLORS[id as AgentId] : "#8e8e93",
         } as CSSProperties
       }
     >

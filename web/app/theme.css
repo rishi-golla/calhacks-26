@@ -518,3 +518,28 @@ body {
     top: 10px;
   }
 }
+
+/* Agent inbox in the light shell */
+.app-shell.agent-mode,
+.agent-mode .main-shell {
+  background: #fff;
+}
+.agent-inbox {
+  --ai-bg: #ffffff;
+  --ai-panel: #fafafa;
+  --ai-line: #ececee;
+  --ai-muted: #6e6e73;
+  color: #1d1d1f;
+}
+.agent-inbox .ai-team-list {
+  background: #fff;
+}
+.agent-inbox .ai-bubble {
+  background: #fafafa;
+  border-color: #efeff1;
+  box-shadow: none;
+}
+.agent-inbox .ai-conversation-tools,
+.agent-inbox .ai-feed-state {
+  background: #fff;
+}

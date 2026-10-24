@@ -104,10 +104,10 @@ export default function AgentNetwork({ caseId }: { caseId?: string }) {
         target: str(edge.to_agent),
         type: "smoothstep",
         animated: lastUpdated - timestamp(edge.ts) < 30000,
-        style: { stroke: "#38a88b", strokeWidth: 1.8 },
+        style: { stroke: "#1d1d1f", strokeWidth: 1.8 },
         label: str(edge.skill, "delegation"),
-        labelStyle: { fontSize: 10, fill: "#677d77" },
-        labelBgStyle: { fill: "#fafcfc" },
+        labelStyle: { fontSize: 10, fill: "#8e8e93" },
+        labelBgStyle: { fill: "#fafafa" },
       }));
   }, [data.delegation_edge, caseId, lastUpdated]);
   return (
@@ -124,7 +124,7 @@ export default function AgentNetwork({ caseId }: { caseId?: string }) {
           proOptions={{ hideAttribution: true }}
           aria-label="Live agent delegation network"
         >
-          <Background color="#d7e2de" gap={22} />
+          <Background color="#e5e5e7" gap={22} />
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>

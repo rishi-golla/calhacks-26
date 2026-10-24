@@ -1,7 +1,7 @@
 .demo-phone {
   padding: 25px;
-  border-color: #cce2d7;
-  background: linear-gradient(125deg, #fff, #f1f8f4);
+  border-color: #d7d7d7;
+  background: linear-gradient(125deg, #fff, #f4f4f4);
 }
 .demo-phone-heading {
   display: flex;
@@ -15,22 +15,72 @@
   height: 48px;
   flex-shrink: 0;
   color: var(--dark-green);
-  background: #deeee4;
+  background: #e6e6e6;
   border-radius: 13px;
 }
-.demo-phone h2 { margin: 4px 0 7px; font-size: 21px; font-weight: 550; letter-spacing: -.5px; }
-.demo-phone p { margin: 0; color: #657e70; font-size: 12px; line-height: 1.7; }
-.demo-phone-action { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-top: 25px; padding-top: 20px; border-top: 1px solid #dceadf; }
-.demo-phone-action > div { display: grid; gap: 3px; }
-.demo-phone-label { font-size: 10px; color: #789181; }
-.demo-phone-action strong { font-size: 17px; font-variant-numeric: tabular-nums; font-weight: 550; }
-.demo-phone-action .button { min-height: 42px; padding: 10px 19px; font-size: 12px; }
-.demo-phone-status { margin-top: 12px; }
-.demo-phone-status:empty { display: none; }
-.demo-phone-progress { display: flex; align-items: center; gap: 6px; }
-.demo-phone-status .error-text { color: #a14439; }
+.demo-phone h2 {
+  margin: 4px 0 7px;
+  font-size: 21px;
+  font-weight: 550;
+  letter-spacing: -0.5px;
+}
+.demo-phone p {
+  margin: 0;
+  color: #727272;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.demo-phone-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 25px;
+  padding-top: 20px;
+  border-top: 1px solid #e3e3e3;
+}
+.demo-phone-action > div {
+  display: grid;
+  gap: 3px;
+}
+.demo-phone-label {
+  font-size: 10px;
+  color: #848484;
+}
+.demo-phone-action strong {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
+}
+.demo-phone-action .button {
+  min-height: 42px;
+  padding: 10px 19px;
+  font-size: 12px;
+}
+.demo-phone-status {
+  margin-top: 12px;
+}
+.demo-phone-status:empty {
+  display: none;
+}
+.demo-phone-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.demo-phone-status .error-text {
+  color: #a14439;
+}
 @media (max-width: 520px) {
-  .demo-phone { padding: 20px; }
-  .demo-phone-action { align-items: stretch; flex-direction: column; gap: 15px; }
-  .demo-phone h2 { font-size: 19px; }
+  .demo-phone {
+    padding: 20px;
+  }
+  .demo-phone-action {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 15px;
+  }
+  .demo-phone h2 {
+    font-size: 19px;
+  }
 }

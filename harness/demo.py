@@ -47,7 +47,8 @@ TOTAL DUE: $2,250.00"""
 EVENTS = [
     ("Hero invoice: personal data + unsupported detention", {
         "type": "carrier_invoice.received", "priority": "P0",
-        "payload": {"case_id": "CASE-4821", "load_id": "LOAD-4821", "carrier": {"id": "C-311", "name": "Sierra Haul LLC"},
+        "payload": {"case_id": "CASE-4821", "load_id": f"LOAD-4821-{RUN}", "invoice_number": f"SH-20614-{RUN}",
+                    "carrier": {"id": "C-311", "name": "Sierra Haul LLC"},
                     "contract_rate": 1850.0, "invoice_amount": 2150.0, "detention_hours_claimed": 2,
                     "gps_dwell_min": 47, "free_time_min": 120, "receipt_attached": False, "text": INVOICE_TEXT}}),
     ("Bank-change email: lookalike domain + prompt injection", {
@@ -59,6 +60,7 @@ EVENTS = [
         "type": "carrier_invoice.received", "priority": "P2",
         "payload": {"case_id": "CASE-4877", "load_id": "LOAD-4877", "carrier": {"id": "C-311", "name": "Sierra Haul LLC"},
                     "contract_rate": 1850.0, "invoice_amount": 2250.0, "text": MATH_TEXT}}),
+    ("Same invoice re-sent a day later: blocked as a duplicate (P-007)", None),
     ("GPS ping: no model, no agent", {
         "type": "gps.ping", "priority": "P3", "payload": {"load_id": "LOAD-4821", "lat": 39.53, "lon": -119.81}}),
     ("Email with no case: classified, then waits for a person", {
@@ -84,7 +86,7 @@ def wait_for(event_ids: list[str], timeout: float = 240) -> dict[str, dict]:
     while time.time() < end and len(found) < len(event_ids):
         for row in db.execute(f"SELECT {', '.join(keys)} FROM dispatch WHERE event_id IN "
                               f"({', '.join('?' * len(event_ids))})", event_ids):
-            if row[5] in ("accepted", "triage", "not_routed"):
+            if row[5] in ("accepted", "triage", "not_routed", "duplicate"):
                 found[row[0]] = dict(zip(keys, row, strict=True))
         time.sleep(1)
     return found
@@ -122,18 +124,21 @@ def main() -> None:
     r = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     ids = []
     print(line("═"))
-    print(" FreightLine W1 intake demo: 5 events through Redis -> scrub -> route -> A2A agents -> SpacetimeDB")
+    print(" FreightLine W1 intake demo: 6 events through Redis -> validate -> scrub -> route -> A2A agents -> SpacetimeDB")
     print(line("═"))
     t0 = time.time()
-    for i, (_title, ev) in enumerate(EVENTS, 1):
+    events = [(title, ev if ev is not None else EVENTS[0][1]) for title, ev in EVENTS]   # None = re-send the hero
+    for i, (title, ev) in enumerate(events, 1):
         ev = {**ev, "event_id": f"EVT-DEMO-{RUN}-{i}"}
         r.xadd("events", {"json": json.dumps(ev)})
         ids.append(ev["event_id"])
+        if i == 1:
+            time.sleep(8)   # let the original be accepted first, as a real re-send would arrive later
     print(f" published {len(ids)} events to Redis `events`; waiting for the router...\n")
     results = wait_for(ids)
     elapsed = time.time() - t0
     leaked_total = 0
-    for (title, ev), eid in zip(EVENTS, ids, strict=True):
+    for (title, ev), eid in zip(events, ids, strict=True):
         res = results.get(eid)
         print(line())
         print(f" {title}   [{ev['type']}]")

@@ -12,16 +12,18 @@ from common.envelope import TaskEnvelope
 from harness.chat import complete
 from harness.ingest.amounts import MONEY, READERS
 from harness.ingest.dispatch import Dispatcher, DispatchError
+from harness.ingest.memory import Memory, event_time
 from harness.ingest.redact import ALLOWLIST_LABEL, BUSINESS, known_spans, leftovers, redact_obj, replace_spans
 from harness.ingest.routing import Route, classify, table_route
 from harness.ingest.schemas import AMOUNT_FIELDS, DOC_TYPE, PII_ONLY, SCHEMAS, is_structured, lite_schema
+from harness.ingest.validate import validate
 from harness.ingest.vault import TOKEN_RE, Vault
 from harness.pool import Pool, Unavailable
 
 log = logging.getLogger("harness.ingest")
 TEXT_KEYS = ("text", "body", "raw_text", "document_text", "content", "transcript")
 HEADER_KEYS = ("from", "to", "subject", "date")
-TERMINAL = ("accepted", "triage", "not_routed")
+TERMINAL = ("accepted", "triage", "not_routed", "duplicate")
 P_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
 EXTRACT_SYSTEM = (
@@ -47,6 +49,15 @@ VERIFY_SCHEMA = {"type": "object", "properties": {
 
 class BadEvent(ValueError):
     pass
+
+
+_memory: Memory | None = None
+
+
+def default_memory() -> Memory:
+    global _memory
+    _memory = _memory or Memory()
+    return _memory
 
 
 def case_id_for(event: dict) -> str | None:
@@ -118,7 +129,7 @@ def _verbatim_spans(items: list[dict], text: str, vault: Vault, kinds: dict[str,
 
 
 async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict, *,
-                  dispatch: bool = True) -> dict[str, Any]:
+                  dispatch: bool = True, memory: Memory | None = None) -> dict[str, Any]:
     t0 = time.perf_counter()
     timings: dict[str, int] = {}
 
@@ -139,6 +150,26 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
     prior = dispatcher.get(event_id)
     if prior and prior["status"] in TERMINAL:
         return {**out, "status": "duplicate", "prior": prior}
+
+    # 0. Input validation and intake memory, before any model runs (synthetic or real input is never assumed right).
+    memory = memory or default_memory()
+    payload, early_notes, fatal = validate(etype, payload)
+    if fatal:
+        raise BadEvent(fatal)
+    at = event_time(event, payload)
+    if etype == "carrier_invoice.received":
+        dup = memory.find_duplicate(event_id, payload, at)
+        original = dispatcher.get(dup["event_id"]) if dup else None
+        if dup and original and original["status"] == "accepted":
+            reason = (f"duplicate of {dup['event_id']} ({dup['rule']}, {dup['days_apart']} days apart; P-007): "
+                      "not sent again")
+            if dispatch:
+                dispatcher.record(event_id, case_id or "", original["skill"], original["agent"], original["task_id"],
+                                  "duplicate", reason, None)
+            return {**out, "status": "duplicate", "prior": original, "reason": reason, "duplicate_of": dup}
+        if dup:
+            early_notes.append(f"possible duplicate of {dup['event_id']} ({dup['rule']})")
+    early_notes += memory.identity_signals(etype, payload)
 
     # 1. Regex redaction before any model sees the content.
     t = time.perf_counter()
@@ -165,7 +196,7 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
         lane = "structured"
     else:
         lane = "lite" if is_structured(doc_type, payload) else "full"
-    notes: list[str] = []
+    notes: list[str] = list(early_notes)
     extracted: dict = {}
     extractor = None
     reader = READERS.get(doc_type) if lane == "lite" else None   # exact amounts, so the model only finds PII
@@ -247,6 +278,10 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
             out["error"] = str(e)
             status = "dispatch_failed"
         lap("dispatch", t)
+    if status in ("accepted", "dry_run"):   # remember only what was actually taken on
+        if etype == "carrier_invoice.received":
+            memory.remember_invoice(event_id, case_id or "", payload, at)
+        memory.remember_identity(etype, event_id, payload, at)
     timings["total"] = int((time.perf_counter() - t0) * 1000)
     out.update({"status": status, "timings_ms": timings})
     log.info(json.dumps({k: out.get(k) for k in ("event_id", "case_id", "status", "needs_review", "timings_ms")}

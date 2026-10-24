@@ -74,6 +74,7 @@ type StepData = {
   doing: string;
   when: string;
   state: StepState;
+  working: boolean;
   farm: boolean;
   tick: number;
   leaving: boolean;
@@ -153,7 +154,7 @@ const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
       </div>
       <div className="wf-meta">
         {mascot ? (
-          <Mascot id={mascot} size={26} working={data.state === "working"} />
+          <Mascot id={mascot} size={26} working={data.working} />
         ) : (
           <i className={`wf-status-dot ${data.state}`} aria-hidden="true" />
         )}
@@ -335,6 +336,10 @@ export default function Workflow({
       if (!newest || item.ts > newest.ts) newest = item;
     const url = tabs[id]?.url || urls[id];
     const { host, path } = urlParts(url);
+    const owner = STEPS.find((s) => s.agent && s.agent === mascotOf(step));
+    const working =
+      !!owner &&
+      ["live", "online", "working", "busy"].includes(statusOf(owner));
     const nodeState: StepState = needsApproval
       ? "need"
       : ["live", "online", "working", "busy"].includes(status)
@@ -352,6 +357,7 @@ export default function Workflow({
       doing,
       when: newest ? relativeAge(newest.ts, now) : "",
       state: nodeState,
+      working,
       farm,
       tick,
       leaving: !visible.has(id),
@@ -506,7 +512,7 @@ export default function Workflow({
                       <Mascot
                         id={mascotOf(open)!}
                         size={20}
-                        working={nodeData.get(open.id)?.state === "working"}
+                        working={nodeData.get(open.id)?.working}
                       />
                     )}
                     {open.operator}

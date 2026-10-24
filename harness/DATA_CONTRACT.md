@@ -49,10 +49,11 @@ Typical time is about 6 s per event.
 ## Routing
 | type | goes to (skill → agent) |
 |---|---|
-| `carrier_invoice.received`, `pod.received`, `voice.inbound.dispute` | `process_carrier_invoice` → carrier_ap |
+| `carrier_invoice.received`, `voice.inbound.dispute` | `process_carrier_invoice` → carrier_ap |
 | `shipper_payment.received`, `bank.event` | `reconcile_customer_payment` → shipper_ar |
 | `bank_change.requested` | `screen_bank_change` → risk |
 | `gps.ping`, `load.tendered`, `load.dispatched`, `load.delivered` | not routed (recorded and acked; no model calls) |
+| `pod.received` | **temporarily not routed** until W3's Carrier AP handles a POD with no invoice (PRD 7.3 routes it to AP) |
 | `scenario.injected` | routed by `payload.generated_type`, which follows the same table. `generated_type: "load.tendered"` is therefore not routed. |
 | `email.received`, unknown types, `scenario.injected` with an unknown `generated_type` | Model B picks from `process_carrier_invoice`, `reconcile_customer_payment`, `screen_bank_change`, `answer_payment_status`, or triage. Confidence < 0.6 goes to triage. |
 
@@ -126,7 +127,7 @@ Leave off `?dispatch=false` to really dispatch.
    section 10 says Sierra Haul LLC, USDOT 3141592, Bay Produce Co. There are no fixtures yet for
    the LOAD-4877 replay or the C-77 $9,400 bank change.
 2. Carrier AP's `three_way_match` raises `KeyError` without `invoice_amount` and `contract_rate`.
-   `pod.received` and `voice.inbound.dispute` route to AP, so either those payloads include both
-   fields or W3 makes AP tolerate their absence.
+   `voice.inbound.dispute` routes to AP, so either those payloads include both fields or W3 makes AP
+   tolerate their absence. `pod.received` is parked as not routed until then.
 3. Redis has no password and is reachable on the LAN. Proposal: set `requirepass` and put it in
    `REDIS_URL`.

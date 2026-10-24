@@ -32,6 +32,11 @@ make demo      # hero smoke test: Carrier AP -> Risk over real A2A
 make test
 ```
 
+For W2's live database and dashboard, follow [spacetime/README.md](spacetime/README.md).
+Run `make spacetime-start`, then `make spacetime-publish spacetime-generate` and `make web`.
+The [integration guide](spacetime/INTEGRATION.md) and [reducer contracts](spacetime/module/CONTRACT.md)
+describe service identities, payloads and the Validator work queue for the other workstreams.
+
 ## Rules
 - `OUTREACH_MODE=demo`: calls/emails are only ever routed to `DEMO_ALLOWLIST_*`; the real contact is shown as `intended_to`.
 - Money and ledger changes go through `common/policy.py` and SpacetimeDB reducers; never through the LLM.

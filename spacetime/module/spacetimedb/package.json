@@ -1,0 +1,24 @@
+{
+  "name": "freightops",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Transactional operational state and policy controls for FreightOps",
+  "scripts": {
+    "build": "spacetime build --module-path .",
+    "publish": "spacetime publish --module-path . --server local freightops",
+    "check": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@noble/hashes": "1.8.0",
+    "spacetimedb": "2.10.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.7",
+    "tsx": "4.20.6",
+    "typescript": "~5.6.2"
+  }
+}

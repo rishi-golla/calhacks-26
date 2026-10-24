@@ -352,6 +352,38 @@ def test_bank_change_lookalike_sender_is_unverified_but_emitted(world):
     assert document["payload"]["fields"]["sender_matches_registered"] is False
 
 
+def test_registered_bank_change_for_unknown_invoice_stays_in_review(world):
+    carrier = world["carriers"][0]
+    at = datetime.now(UTC)
+    message = sim_mail.write(
+        carrier["email"], "ap@example.test", f"Remittance details - {carrier['name']}",
+        "We have changed banks effective immediately. Invoice SINV-UNKNOWN, next payment amount: $1,000.00. "
+        "Routing number: 121000358\nAccount number: 1234567890.",
+        at,
+    )
+    trigger = {
+        "event_id": "EVT-UNKNOWN-BANK-INVOICE",
+        "type": "email.received",
+        "ts": at.isoformat(),
+        "sim_ts": at.isoformat(),
+        "case_hint": "CASE-UNKNOWN-BANK-INVOICE",
+        "priority": "P2",
+        "source": "sim",
+        "payload": {"mail_id": message["mail_id"], "sent_at": message["sent_at"], "attachments": []},
+    }
+    db = connect()
+    try:
+        derived = asyncio.run(handle(trigger, db))
+    finally:
+        db.close()
+
+    documents = [event for event in derived if event["type"] == "document.extracted"]
+    routed = [event for event in derived if event["type"] == "bank_change.requested"]
+    assert len(documents) == 1
+    assert documents[0]["payload"]["status"] == "needs_review"
+    assert len(routed) == 1
+
+
 def test_unclassified_pdf_email_emits_review_event(world):
     _, load, events = _run(world, "clean")
     pod_ref = next(event["payload"]["pod_ref"] for event in events if event["type"] == "pod.received")

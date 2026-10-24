@@ -375,7 +375,7 @@ def _bank_change(trigger: dict, message: dict, db: sqlite3.Connection) -> list[d
               "requested_via": requested_via,
               "sender_matches_registered": sender_matches_registered}
     status = "extracted_unverified_sender" if not sender_matches_registered else (
-        "extracted" if carrier and account_last4 else "needs_review")
+        "extracted" if carrier and invoice and account_last4 else "needs_review")
     document = _document_event(
         trigger, "bank_change_request", status, fields,
         {key: 0.95 if value else 0.0 for key, value in fields.items()},

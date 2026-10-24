@@ -318,6 +318,7 @@ function RoutingPage({ data, caseId }: PageProps) {
     ]),
   );
   const routes = rows(data, "routing_outbox").filter((route) => {
+    if (!caseId) return true;
     const routeCase = str(route.case_id, "");
     if (routeCase) return routeCase === caseId;
     const taskId = str(route.task_id, "");

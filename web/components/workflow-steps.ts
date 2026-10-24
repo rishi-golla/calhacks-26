@@ -457,7 +457,7 @@ export function layout(visible: Set<string>, links: Link[]) {
   const pos = new Map<string, { x: number; y: number }>();
   for (const [c, ids] of columns)
     ids.forEach((id, i) =>
-      pos.set(id, { x: c * 320, y: (i - (ids.length - 1) / 2) * 260 }),
+      pos.set(id, { x: c * 360, y: (i - (ids.length - 1) / 2) * 330 }),
     );
   return { pos, level };
 }

@@ -5,16 +5,12 @@ import {
   Background,
   BackgroundVariant,
   Controls,
-  Handle,
-  MarkerType,
-  Position,
-  type Edge,
   type Node,
   type NodeChange,
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Menu, Plus, X } from "lucide-react";
+import { Lock, Menu, Plus, X } from "lucide-react";
 import { str, timestamp } from "@/lib/data";
 import { useLive } from "./live-provider";
 import { useClock } from "./ui";
@@ -30,26 +26,43 @@ import {
   scope,
   stepById,
   targetUrl,
+  type Line,
   type Step,
 } from "./workflow-steps";
 import "./workflow.css";
 
 type Tab = { node_id: string; url: string; title: string };
 
-function tabHost(url: string) {
+function urlParts(value: string) {
   try {
-    const host = new URL(url).host;
-    return host.endsWith(":3001") ? "Live tab" : host;
+    const url = new URL(value);
+    return { host: url.host, path: url.pathname };
   } catch {
-    return "Opening…";
+    return { host: "", path: "" };
   }
 }
 
+function relativeAge(ts: number, now: number) {
+  if (!ts) return "";
+  const seconds = Math.max(0, Math.floor((now - ts) / 1000));
+  if (seconds < 10) return "now";
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+type StepState = "working" | "need" | "idle";
+
 type StepData = {
   step: Step;
-  events: number;
-  status: string;
-  url: string;
+  host: string;
+  path: string;
+  doing: string;
+  when: string;
+  state: StepState;
   farm: boolean;
   tick: number;
   leaving: boolean;
@@ -87,13 +100,12 @@ function LiveFrame({ id, tick }: { id: string; tick: number }) {
 }
 
 const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
-  const { step, events, status, farm, tick } = data;
+  const { step, farm, tick } = data;
   return (
     <div
-      className={`wf-node ${data.leaving ? "leaving" : ""}`}
+      className={`wf-node ${data.state} ${data.leaving ? "leaving" : ""}`}
       onClick={data.open}
     >
-      <Handle type="target" position={Position.Left} />
       <button
         className="wf-remove nodrag"
         aria-label={`Remove ${step.title}`}
@@ -104,15 +116,21 @@ const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
       >
         <X size={12} />
       </button>
-      <div className="wf-head">
-        <div>
-          <span className="wf-agent">{step.operator}</span>
-          <strong>{step.title}</strong>
-          <small>{step.subtitle}</small>
+      <div className="wf-win">
+        <div className="wf-bar">
+          <span className="wf-dots">
+            <i />
+            <i />
+            <i />
+          </span>
+          <span className="wf-url">
+            <Lock className="wf-lock" size={9} />
+            <span className="wf-address">
+              <b>{data.host}</b>
+              {data.path}
+            </span>
+          </span>
         </div>
-      </div>
-      <div className="wf-browser">
-        <Chrome url={data.url} status={status} />
         <div className="wf-screen">
           {farm ? (
             <LiveFrame id={step.id} tick={tick} />
@@ -121,10 +139,26 @@ const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
           )}
         </div>
       </div>
-      <div className="wf-foot">
-        {tabHost(data.url)} · {events} events
+      <div className="wf-meta">
+        <i className={`wf-status-dot ${data.state}`} aria-hidden="true" />
+        <div className="wf-details">
+          <div className="wf-name">{step.operator}</div>
+          <div className="wf-doing">{data.doing}</div>
+        </div>
+        {data.state === "need" ? (
+          <button
+            className="wf-review nodrag"
+            onClick={(e) => {
+              e.stopPropagation();
+              data.open();
+            }}
+          >
+            Review
+          </button>
+        ) : (
+          <span className="wf-when">{data.when}</span>
+        )}
       </div>
-      <Handle type="source" position={Position.Right} />
     </div>
   );
 });
@@ -160,10 +194,7 @@ export default function Workflow({
     return s;
   }, [scoped, mine.add, mine.remove]);
   const links = useMemo(() => linksFor(visible, scoped), [visible, scoped]);
-  const { pos, level } = useMemo(
-    () => layout(visible, links),
-    [visible, links],
-  );
+  const { pos } = useMemo(() => layout(visible, links), [visible, links]);
   const feeds = useMemo(
     () => Object.fromEntries(STEPS.map((s) => [s.id, feedOf(s, scoped)])),
     [scoped],
@@ -273,46 +304,70 @@ export default function Workflow({
   const rendered = [...visible, ...leaving.filter((id) => !visible.has(id))];
   const lastPos = useRef(new Map<string, { x: number; y: number }>());
   for (const [id, p] of pos) lastPos.current.set(id, p);
-  const nodes: Node<StepData>[] = rendered.map((id) => {
+  const nodeData = new Map<string, StepData>();
+  for (const id of rendered) {
     const step = stepById(id)!;
+    const status = statusOf(step);
+    const needsApproval = scoped.approval.some(
+      (approval) =>
+        approval.decision === "pending" &&
+        (step.id === "human" ||
+          (Boolean(step.agent) && approval.requested_by === step.agent)),
+    );
+    let newest: Line | undefined;
+    for (const item of feeds[id])
+      if (!newest || item.ts > newest.ts) newest = item;
+    const url = tabs[id]?.url || urls[id];
+    const { host, path } = urlParts(url);
+    const nodeState: StepState = needsApproval
+      ? "need"
+      : ["live", "online", "working", "busy"].includes(status)
+        ? "working"
+        : "idle";
+    const doing = needsApproval
+      ? "Waiting for your approval"
+      : `${newest?.text || step.subtitle}${
+          status === "offline" || status === "stale" ? ` · ${status}` : ""
+        }`;
+    nodeData.set(id, {
+      step,
+      host,
+      path,
+      doing,
+      when: newest ? relativeAge(newest.ts, now) : "",
+      state: nodeState,
+      farm,
+      tick,
+      leaving: !visible.has(id),
+      open: () => setOpenId(id),
+      remove: () => edit(id, "remove"),
+    });
+  }
+  const workingAgents = [...visible].filter((id) => {
+    const step = stepById(id)!;
+    return Boolean(step.agent) && nodeData.get(id)?.state === "working";
+  }).length;
+  const allLive = farm && state === "live";
+  const statusText = allLive
+    ? `Live · ${workingAgents} agents`
+    : [!farm ? "Browsers offline" : "", state !== "live" ? `Data ${state}` : ""]
+        .filter(Boolean)
+        .join(" · ");
+  const nodes: Node<StepData>[] = rendered.map((id) => {
     return {
       id,
       type: "step",
       position: pos.get(id) ?? lastPos.current.get(id) ?? { x: 0, y: 0 },
       measured: measured.current.get(id),
-      data: {
-        step,
-        events: feeds[id].length,
-        status: statusOf(step),
-        url: tabs[id]?.url || urls[id],
-        farm,
-        tick,
-        leaving: !visible.has(id),
-        open: () => setOpenId(id),
-        remove: () => edit(id, "remove"),
-      },
-    };
-  });
-  const edges: Edge[] = links.map(({ from, to }) => {
-    const back = (level.get(to) ?? 0) <= (level.get(from) ?? 0);
-    return {
-      id: `${from}-${to}`,
-      source: from,
-      target: to,
-      animated: back || feeds[from].length > 0,
-      className: back ? "wf-edge loop" : "wf-edge",
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        width: 14,
-        height: 14,
-        color: "#b5b5ba",
-      },
+      data: nodeData.get(id)!,
     };
   });
   const open = stepById(openId);
-  const caseTitle = str(
-    data.case.find((r) => r.case_id === followed)?.title || followed,
-  ).replace(/^\[W2 fixture\]\s*/, "");
+  const caseTitle = followed
+    ? str(
+        data.case.find((r) => r.case_id === followed)?.title || followed,
+      ).replace(/^\[W2 fixture\]\s*/, "")
+    : "";
   const hidden = STEPS.filter((s) => !visible.has(s.id));
   return (
     <div className="wf">
@@ -324,27 +379,24 @@ export default function Workflow({
         >
           <Menu size={18} />
         </button>
-        <strong>Workflow</strong>
+        <strong>{caseTitle || "Workflow"}</strong>
         {followed &&
           (caseId ? (
-            <button className="wf-chip" onClick={onClearCase}>
-              {caseTitle}
+            <button
+              className="wf-chip"
+              aria-label={`Clear case ${followed}`}
+              onClick={onClearCase}
+            >
+              <span className="wf-case-id">{followed}</span>
               <X size={12} />
             </button>
           ) : (
-            <span className="wf-chip following">
-              <i /> Following latest case · {caseTitle}
-            </span>
+            <span className="wf-sub">{followed}</span>
           ))}
-        <span className="wf-sub">
-          {visible.size} of {STEPS.length} steps in this run
-        </span>
         <span className="wf-spacer" />
-        <span className={`wf-conn ${farm ? "live" : ""}`}>
-          {farm ? "Browsers live" : "Browsers offline"}
-        </span>
-        <span className={`wf-conn ${state}`}>
-          {state === "live" ? "Data live" : `Data ${state}`}
+        <span className={`wf-status-chip ${allLive ? "live" : ""}`}>
+          <i />
+          {statusText}
         </span>
         <div className="wf-add-wrap">
           <button
@@ -377,7 +429,7 @@ export default function Workflow({
       <ReactFlow
         key={followed}
         nodes={nodes}
-        edges={edges}
+        edges={[]}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         fitView
@@ -388,9 +440,9 @@ export default function Workflow({
       >
         <Background
           variant={BackgroundVariant.Dots}
-          gap={18}
-          size={1.4}
-          color="#cfcfd4"
+          gap={20}
+          size={1}
+          color="#dedee2"
         />
         <Controls showInteractive={false} position="bottom-left" />
       </ReactFlow>

@@ -144,15 +144,20 @@
   position: relative;
 }
 .wf .react-flow__handle.wf-port {
-  z-index: 1;
-  width: 8px;
-  height: 8px;
-  border: 1.5px solid #c7c7cc;
-  border-radius: 50%;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid #b5b5ba;
   background: #fff;
-  box-sizing: border-box;
-  cursor: default;
+  opacity: 0;
   pointer-events: none;
+}
+.wf .react-flow__edge-path {
+  stroke: #c7c7cc;
+  stroke-width: 1.6;
+}
+.wf .wf-edge.loop .react-flow__edge-path {
+  stroke-dasharray: 5 5;
+  stroke: #d4d4d8;
 }
 .wf-node.leaving {
   animation: wf-leave 0.45s ease-in forwards;

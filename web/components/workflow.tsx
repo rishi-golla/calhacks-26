@@ -121,14 +121,12 @@ const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
         <Handle
           type="target"
           position={Position.Left}
-          id="target"
           className="wf-port"
           isConnectable={false}
         />
         <Handle
           type="source"
           position={Position.Right}
-          id="source"
           className="wf-port"
           isConnectable={false}
         />
@@ -215,7 +213,10 @@ export default function Workflow({
     return s;
   }, [scoped, mine.add, mine.remove]);
   const links = useMemo(() => linksFor(visible, scoped), [visible, scoped]);
-  const { pos } = useMemo(() => layout(visible, links), [visible, links]);
+  const { pos, level } = useMemo(
+    () => layout(visible, links),
+    [visible, links],
+  );
   const orderedIds = useMemo(
     () =>
       [...visible].sort((left, right) => {
@@ -415,46 +416,20 @@ export default function Workflow({
       data: nodeData.get(id)!,
     };
   });
-  const recentCutoff = now - 60_000;
   const edges: Edge[] = links.map(({ from, to }) => {
-    const targetPosition = pos.get(to) ?? { x: 0, y: 0 };
-    const sourcePosition = pos.get(from) ?? { x: 0, y: 0 };
-    const targetState = nodeData.get(to)?.state;
-    const sourceHasRecentFeed = feeds[from].some(
-      (line) => line.ts >= recentCutoff && line.ts <= now,
-    );
-    const recentDelegation = scoped.delegation_edge.some(
-      (row) =>
-        row.from_agent === from &&
-        row.to_agent === to &&
-        timestamp(row.ts) >= recentCutoff &&
-        timestamp(row.ts) <= now,
-    );
-    const animated =
-      (targetState === "working" || targetState === "need") &&
-      (sourceHasRecentFeed || recentDelegation);
-    const lowerRow = targetPosition.y > sourcePosition.y;
-    const stroke = animated ? "#1d1d1f" : "#d4d4d8";
+    const back = (level.get(to) ?? 0) <= (level.get(from) ?? 0);
     return {
       id: `${from}-${to}`,
       source: from,
-      sourceHandle: "source",
       target: to,
-      targetHandle: "target",
-      type: lowerRow ? "smoothstep" : "default",
-      animated,
-      style: {
-        stroke,
-        strokeWidth: 1.25,
-        ...(animated ? { strokeDasharray: "5 5" } : {}),
-      },
+      animated: back || feeds[from].length > 0,
+      className: back ? "wf-edge loop" : "wf-edge",
       markerEnd: {
         type: MarkerType.ArrowClosed,
-        width: 10,
-        height: 10,
-        color: stroke,
+        width: 14,
+        height: 14,
+        color: "#b5b5ba",
       },
-      ...(lowerRow ? { pathOptions: { borderRadius: 16 } } : {}),
     };
   });
   const open = stepById(openId);

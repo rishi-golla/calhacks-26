@@ -1,5 +1,5 @@
 # PRD: Autonomous Back Office for Freight Brokerages
-**Cal Hacks 13.0 · Ground truth v1.11 · Sat Oct 24, 2026 PDT**
+**Cal Hacks 13.0 · Ground truth v1.12 · Sat Oct 24, 2026 PDT**
 
 > This is the one source of truth. If code, a chat message or a slide disagrees with this doc, the doc wins until someone changes it. To change it, edit this file, bump the version in the change log at the bottom, and post one line in the team chat. Section 7 (interface contracts) is frozen at **Sat 3:00 AM**. After that, contract changes need agreement from both owners on that interface.
 
@@ -26,10 +26,45 @@ existing policy-controlled workflows remain responsible for financial authorizat
 Apify carrier and company-website lookups now return real public evidence through model-selected
 tools. Cartesia account resources and the local completion poller are configured; a live phone call
 has not yet been accepted end to end. Financial/Cartesia acceptance, full source ingestion, direct operator messaging,
-sandbox/telemetry/deployment hardening, and automatic instruction
-publication remain follow-ups. The inbox observes actual messages and results; it does not fabricate
+and sandbox/telemetry/deployment hardening remain follow-ups. Version-checked automatic instruction
+publication is implemented. The inbox observes actual messages and results; it does not fabricate
 dialogue or provide arbitrary chat dispatch. This PRD describes the full target; see
 [A2A runbook](A2A-RUNBOOK.md) for current behavior and setup.
+
+**Conformance audit (v1.12, Oct 24):** a read-only audit of `main` against this document found the
+A2A spine, delegation guards, reducer money invariants, audit hash chain and outreach allowlist
+implemented as specified, and the following not yet implemented or not working end to end. Where
+the code deliberately diverged from an earlier section, that section is corrected in this version
+and listed in the change log. Where the code is simply short of the spec, the spec stands and the
+gap is listed here so that no reader mistakes it for done:
+- Human approvals: a parked approval wait is now resumed by the controller's recovery loop after
+  `decide_approval` (fix in progress at audit time). `HUMAN_APPROVER_ID` is required in live mode.
+- Learning: Validator memory lessons are now retrieved with the same carrier/lane/claim-type/skill
+  scope they are written with (fix in progress at audit time). Friction kinds other than
+  `missing_doc` and `flag` are not yet emitted by any writer; LLM-found issues and human flags do
+  not yet produce lessons or re-runs (T17); a human instruction revert is re-applied by the next
+  failing review for that agent.
+- Precedents (A8, T8): written by Settlement Approvals, never queried; no auto-resolve exists.
+- Evaluator (G6, T10): `evaluator/` is a stub; no `metric` rows are written; the answer key's
+  outcome names and case keys do not yet match agent outcomes or resolved case IDs.
+- Intake: one malformed raw entry stalls ingest permanently (dead-letter fix in progress at audit
+  time). Since `0e200ee` ingest mirrors each routed case, its carrier invoice and the counterparty
+  directory into SpacetimeDB before the event is published, so W2 knows the case when the agent's
+  task arrives. The W1 harness (`harness/ingest/`) now classifies ambiguous input against an
+  allowlist with a 0.6 confidence floor and sends the rest to triage; a triage reader and H5
+  backpressure are not yet implemented.
+- Audit: blame cannot reach the source document in live runs because only POD & Document Chase
+  records `doc_read` rows and the binding is per task (T15); the hash chain is verifiable only
+  against a throwaway test database; there is no compensating revert for financial change sets;
+  `instr_version`/`memory_ids` are not recorded on business change sets.
+- Controls: `release_hold` thresholds P-003 on each hold's own size, so two sub-$5k holds on one
+  invoice release without a human (`propose_payment` still requires approval). `policy.check()`
+  allows unrecognised actions and lacks P-004/P-007/P-009/P-010/P-011; those rules are enforced in
+  reducers and handler code instead. P-009 ensemble review is not implemented.
+- Voice: a failed transcript extraction is retried without bound and blocks the demo call slot;
+  `disclosure_given`/`claim_confirmed` are not configured as Cartesia metrics; T3 ring latency is
+  not measured; T9 phone-mismatch is not recorded by Dispatcher Outreach.
+- Simulator: each boot publishes about 132 history loads into the live mesh with no history marker.
 
 **Provider setup (v1.6):** one OpenAI key supports all nine agents. The starter configuration
 uses `gpt-6-luna` for operational assessments and `gpt-6.1-sol` for Settlement Quality Review.
@@ -112,7 +147,7 @@ operator's next call. No additional call is placed by setup or tests.
 ## 2. Goals and non-goals
 
 **Goals (must ship):**
-- G1: The hero case runs live end to end. Carrier Settlement delegates a suspicious invoice to Accessorial Audit. Missing delivery paperwork or receipts go to POD & Document Chase; identity or payment-detail questions go to Carrier Trust & Verification. Either specialist may use Dispatcher Outreach in demo mode. Results return to Carrier Settlement, which delegates the hold decision to Settlement Approvals and the financial impact through it to Load Profitability. Settlement Quality Review reviews financial outputs, and all work lands in the audit trail. A case uses only the specialists it needs; it does not require nine serial handoffs.
+- G1: A disputed carrier invoice from the live stream runs end to end. Carrier Settlement delegates a suspicious invoice to Accessorial Audit. Missing delivery paperwork or receipts go to POD & Document Chase; identity or payment-detail questions go to Carrier Trust & Verification. Either specialist may use Dispatcher Outreach in demo mode. Results return to Carrier Settlement, which delegates the hold decision to Settlement Approvals and the financial impact through it to Load Profitability. Settlement Quality Review reviews financial outputs, and all work lands in the audit trail. A case uses only the specialists it needs; it does not require nine serial handoffs.
 - G2: In the demo flow, the teammate's phone rings ≤ 15 s after the demo input.
 - G3: 20+ unrelated cases are processed concurrently while one case waits on a call.
 - G4: Kill any agent mid-case, restart it, and the case finishes with no duplicate work.
@@ -150,6 +185,12 @@ the current milestone. Prize descriptions below are planning notes, not claims o
 Check Devpost for a cap on how many tracks we can enter.
 
 ## 4. The demo (3 minutes, also the video)
+
+The demo is driven by the live simulated stream (section 6, W4 R4) plus judge input. Any case the
+stream produces can be the one on screen. The numbered walkthrough below uses the regression
+fixture values from section 10 only to make the beats concrete; the fixture is one input among
+many and no demo step depends on load 4821 specifically.
+
 1. **0:00, the moment (cold open):** the phone rings on stage. The Cartesia agent: "Hi, this is an AI assistant calling for Golden Gate Freight about load 4821. You billed two hours of detention, but our GPS shows your truck on site for 47 minutes. Can you send the receipt?" A teammate plays the carrier's dispatcher and hedges.
 2. **0:30, real-world data:** the case panel shows a *real* carrier: FMCSA authority, USDOT/MC, the registered phone, the scraped website, and the dispatcher contact from the enrichment waterfall (name, title, phone, email, source, confidence), all unmasked. A banner reads: **"Outreach: DEMO MODE. Would dial +1 775 555 0112 (FMCSA-registered, verified). Routed to the team line."**
 3. **0:50, the network (SpacetimeDB live):** delegations animate Carrier Settlement → Accessorial Audit → POD & Document Chase → Dispatcher Outreach, while unrelated cases keep flowing. Identity disputes use Carrier Trust & Verification as a sibling investigative path. Financial decisions follow a separate Carrier Settlement → Settlement Approvals → Load Profitability branch, keeping depth ≤3.
@@ -198,7 +239,7 @@ W4 evaluator: answer key -> outcome metrics
 **Where state lives (decided):**
 | Data | System of record | Why |
 |---|---|---|
-| Simulated source systems (loads, contracts, rate cons, invoices, PODs, GPS pings, emails, carrier directory) | Postgres | Plays the role of the "existing systems" the agents read |
+| Simulated source systems (loads, contracts, rate cons, invoices, PODs, GPS pings, emails, carrier directory) | SQLite `data/ingest.db` plus the atomic `data/source.json` export (v1.12; Postgres was the original plan and remains an option) | Plays the role of the "existing systems" the agents read |
 | A2A task store (task history, status, artifacts) | Postgres via the SDK's `DatabaseTaskStore` | The SDK supports it; survives restarts |
 | Operational truth: cases, task graph, agent status, **ledger, holds, approvals, payments-proposed**, audit events, call status, precedents, metrics | **SpacetimeDB** | Transactional reducers enforce invariants next to the data, and the live UI subscribes. This makes SpacetimeDB core (for its track) |
 | Event stream | Redis Streams | Ingest buffer, consumer groups, replay |
@@ -234,7 +275,7 @@ Requirements:
 - **H10 Telemetry:** record event ID, case ID, selected skill/agent, dispatch task ID, routing policy version, reason, queue wait, classification latency and acceptance/retry status. Keep intake metrics separate from downstream provider/model usage. W1 and W2 agree any additive telemetry schema before implementation.
 - **H11 Failure behavior:** if optional classification inference is unavailable, known event types still route deterministically; ambiguous work waits for triage. If ASUS stops, Redis retains incoming work while already-dispatched agents continue independently.
 
-Done when: the hero event reaches AP over real A2A; re-delivering its event ID does not create a second task; a queued event survives a router restart; and AP -> Risk -> Verification continues after the ASUS router is stopped. Measure intake-to-acceptance latency separately from full case resolution and report measured throughput.
+Done when: a `carrier_invoice.received` event from the live stream reaches Carrier Settlement over real A2A; re-delivering its event ID does not create a second task; a queued event survives a router restart; and AP -> Risk -> Verification continues after the ASUS router is stopped. Measure intake-to-acceptance latency separately from full case resolution and report measured throughput.
 
 **Routing learning / RL (proposed, not a shipped requirement):** a contextual-bandit experiment may select among pre-approved intake classification strategies or equivalent deployments of the same skill. It must preserve required role/skill ownership. Inputs may include event type, classifier confidence and destination queue depth. Evaluate delayed outcomes against the simulator answer key, with explicit penalties for latency, cost and unnecessary downstream work. W1/W4 must define reward weights, feedback attribution, allowed actions and held-out replay evaluation before claiming RL results. Begin in shadow mode against fixed routing; do not let exploration affect payment permissions. This experiment is distinct from W3's Validator memory/instruction loop and does not route downstream model calls through ASUS.
 
@@ -286,7 +327,7 @@ Done when: acceptance tests T1–T9 and T13–T17 (section 11) pass.
 ### W4: Real-world data, enrichment & demo outreach (person 4)
 **Purpose:** make the world real. Real counterparties, real contacts, realistic documents, and a safe demo path that shows we *can* call and email them.
 
-- **R1 Real counterparties:** choose a real lane cluster (for example Northern California ↔ Nevada produce). Pull about 300 real carriers from FMCSA via the Apify SAFER actor: legal name, USDOT/MC, authority status, registered phone and address, fleet size. Scrape about 40 real shippers (public company sites, maps listings) via Apify: name, address, website, the AP or logistics page. Store them in Postgres `company` with `source_url` and `scraped_at`. **Decided:** the home brokerage is fictional. We simulate a brokerage's internals under the name **Golden Gate Freight** (used in materials, the voice persona and the UI). Every counterparty is real.
+- **R1 Real counterparties:** the implemented directory (`sim/world.py`, v1.12) pulls real carriers from the FMCSA census (Socrata) and real shippers from SEC EDGAR directly, nationwide, into `data/world.json` with per-record source provenance; the Apify SAFER actor is used for case-bound live lookups (R2) rather than bulk directory building. **Decided:** the home brokerage is fictional. We simulate a brokerage's internals under the name **Golden Gate Freight** (used in materials, the voice persona and the UI). Stream counterparties are real. The section 10 regression fixture and the `DEMO-TEAM` phone-demo company are fictional records with `.example` domains and 555 numbers; they are not live-stream counterparties.
 - **R2 Contact enrichment waterfall (sponsor-first).** Every result stores `source`, `source_url`, `confidence` and `fetched_at`. Everything is cached, and the hero counterparties are pre-enriched by C1.
   1. **FMCSA via Apify:** the reviewed implementation uses `humble-echidna/fmcsa-carrier-check` build `0.1.2`, with source-bound USDOT/MC input, exact identity matching, a one-result request and a 24-hour cache. Public carrier, authority and contact fields are cited observations. They still require independent review before becoming verified directory contacts (P-008).
   2. **Apify Contact Details Scraper:** the reviewed implementation uses `vdrmota/contact-info-scraper` build `0.2.242`, restricted to the ingested public company website and one page. Public email/phone candidates remain unverified; social-profile crawling and enrichment add-ons are disabled.
@@ -295,7 +336,7 @@ Done when: acceptance tests T1–T9 and T13–T17 (section 11) pass.
   - Merge rule: prefer FMCSA, then our key, then context.dev, then website scrape. Conflicting values are kept as alternates, and the disagreement is shown (Risk uses it as a signal).
   - **Display:** the intended counterparty directory view may show approved business contact data. The current inbox sanitizes tool results and labels synthetic business context as **Demo case** and confirmed public Apify observations as **Live external evidence**. Its inspector separates case data from tool evidence. Outreach stays demo-routed (R5).
 - **R3 Realistic synthetic documents:** generate invoices, rate confirmations, BOLs and PODs as PDFs, plus email threads, all against the real counterparties (real names, MC numbers, addresses and lanes) with synthetic loads, amounts and line items. Mark them with a small "SIMULATED" footer. Planted errors (padded detention, lumper without a receipt, duplicates, rate above contract, bank-change fraud, double-brokering, short-pay, misapplied payment) go in an `answer_key`, with clean decoys mixed in.
-- **R4 Simulator and ingest:** run a continuous event stream with a 3-month fast-forward history at boot. Ingest normalizes, timestamps and dedupes events, writes Postgres, publishes to Redis and opens SpacetimeDB cases. Train an anomaly model (IsolationForest) on clean history as the `score_anomaly` tool. The evaluator joins outcomes to the answer key and writes `metric` rows.
+- **R4 Simulator and ingest:** run a continuous event stream with a 3-month fast-forward history at boot; history loads must be marked so they are not re-dispatched as live work on every restart. Ingest normalizes, timestamps and dedupes events, writes SQLite `data/ingest.db` and the `data/source.json` export (v1.12), publishes to Redis and opens SpacetimeDB cases (`ingest/mirror.py`: `open_case`, `upsert_invoice`, `upsert_company` and `upsert_contact` before the case-opening event is published, with content-hashed write IDs so replays are no-ops). Poison raw entries are retried a bounded number of times and then dead-lettered. `score_anomaly` is currently a deterministic heuristic; the IsolationForest model is deferred. The evaluator joins outcomes to the answer key and writes `metric` rows (not yet implemented; the answer key must first use resolved case IDs and agent outcome values).
 - **R5 Outreach safety (hard rule):** `OUTREACH_MODE=demo` is the only mode at the event. Real contacts are resolved and shown as `intended_to`. The actual dial and send target is replaced with `DEMO_ALLOWLIST` (team phones and team inbox). Code refuses any target not on the allowlist, even if someone flips the flag. Every call and email record stores both `intended_to` and `routed_to`.
 - **R6 Demo console (UI by W2, backend by W4):**
   1. Pick a case, or type a scenario that W4 normalizes into a case/event before ASUS first-hop routing.
@@ -330,9 +371,10 @@ Mock boundary: a seeded event reaches a stub A2A agent and produces a recorded a
 ```python
 TaskEnvelope = {task_type, case_id, display_id, subject:{load_id, invoice_id, carrier_id, amounts…},
                 evidence_refs:[…], requested_output, priority:"P0..P3", deadline_s}
-ResultArtifact = {outcome:"clear|suspicious|verified|unverified|hold|approve|reject|partial",
+ResultArtifact = {outcome:"clear|suspicious|verified|unverified|hold|approve|reject|partial|pass|issue|not_implemented",
                   confidence, findings:{…}, evidence_refs:[…], policy_ids:[…], model_used, recommended_next:[…]}
 ```
+- `pass|issue` are the Settlement Quality Review verdicts returned as its artifact outcome; `not_implemented` is a runtime guard for an unhandled skill. These three were present in code since v1.5 and are recorded here in v1.12 as the frozen set.
 - Business status in status metadata: `queued, investigating, awaiting_other_agent, awaiting_external_verification, awaiting_call, awaiting_human_approval, resolved, rejected, failed`. All `awaiting_*` statuses map to A2A `INPUT_REQUIRED`.
 - Agent Card URLs: `http://<configured-agent-host>:91xx/.well-known/agent-card.json` (or the deployed HTTPS equivalent). Configure each endpoint independently; ASUS is not the default host for the mesh.
 
@@ -343,7 +385,7 @@ Stream `events` (single stream, `type` field), consumer group `router`.
  "case_hint":"LOAD-4821","priority":"P2","payload":{…},"source":"sim|demo|judge|voice"}
 ```
 Types: `load.tendered, load.dispatched, gps.ping (not routed), load.delivered, pod.received, carrier_invoice.received, shipper_payment.received, bank.event, bank_change.requested, email.received, voice.inbound.dispute, scenario.injected`.
-Routing: carrier_invoice/pod → AP; shipper_payment/bank.event → AR; bank_change → Risk; voice.inbound.dispute → AP; email → by classifier; scenario → by its generated type.
+Routing (v1.12): carrier_invoice → AP (`process_carrier_invoice`); pod → POD & Document Chase (`receive_document`; a POD arrives before the invoice and must not open settlement, changed in commit 104f5ce); shipper_payment/bank.event → AR; bank_change → Risk; voice.inbound.dispute → AP; email → by classifier; scenario → by its generated type; gps.ping and `load.tendered/dispatched/delivered` are acknowledged without routing. Ambiguous email and scenario events go through the W1 intake classifier (`harness/ingest/routing.py`: allowlisted skills, confidence ≥ 0.6); unknown or low-confidence results become triage items in `events:dead_letter`, and a triage reader is required work, not optional.
 
 ### 7.4 SpacetimeDB schema and reducers (W2 provides; W3, W1 and W4 write; UI reads)
 Database name `freightops`. Agents call reducers over HTTP: `POST /v1/database/freightops/call/<reducer>` with a JSON array body and a bearer token (**W2 confirms this path for 2.x by C0**; Python agents have no official SDK, so HTTP it is). The dashboard uses the generated TypeScript client bindings over WebSocket.
@@ -356,7 +398,7 @@ Tables:
 - `ledger_entry(id pk, case_id, period, lines:[{account, debit, credit}], memo, requested_by, approved_by, posted_at)`
 - `hold(id pk, case_id, invoice_id, amount, reason_code, status, placed_by, released_by)`
 - `payment_proposal(id pk, case_id, carrier_id, amount, status, proposed_by)`
-- `approval(id pk, case_id, task_id, action, amount, requested_by, approver, decision, code_ok, decided_at)`
+- `approval(id pk, case_id, task_id, action, amount, requested_by, approver, approver_name, decision, code_ok, decided_at)`: since v1.10 `approver` holds the designated human's SpacetimeDB identity (the value of `HUMAN_APPROVER_ID`) and `approver_name` the display name; `decide_approval` accepts only that identity
 - `audit_event(id pk, ts, case_id, task_id, agent, kind, reason_code, summary, evidence_refs, policy_ids, model_used, prev_hash, hash)`
 - `call(id pk, case_id, task_id, persona, direction, to_masked, status, started_at, ended_at, findings_json, transcript_redacted)`
 - `precedent(id pk, carrier_id, claim_type, lane, pattern_json, outcome, as_of, source_case)`
@@ -389,7 +431,7 @@ These setup choices do not change the task, call-result, or reducer payload cont
 - The number comes from the verified directory only: the `contact` or `company` record with a source (FMCSA, our contact-data key, context.dev or website). Policy checks: P-008, P-011, quiet hours, ≤ 1 attempt per counterparty per hour.
 - **Demo routing:** the Voice Desk sets `intended_to` = the real number and `routed_to` = the demo allowlist number, and dials only `routed_to`. Both are written to `call` and shown in the UI.
 - `POST https://api.cartesia.ai/agents/calls`, headers `X-API-Key`, `Cartesia-Version: 2026-08-14`, body `{agent_id, from_number_id, ringing_timeout_seconds:25, outbound_calls:[{to_number, dynamic_variables:{case_id, task_id, call_token, …facts}}]}`.
-- In-call webhook tools hit `https://<tunnel>/voice/tools/<name>`. They are read-only: `get_load_facts, get_payment_status, get_invoice_status, get_case_summary`. The only writes allowed append evidence or events: `record_promise_to_pay, open_dispute`.
+- In-call webhook tools hit `https://<tunnel>/voice/tools/<name>` on the dedicated read-only listener (:9001). Implemented reads (v1.11): `get_load_facts, get_document_status, get_payment_status, get_invoice_status, get_case_summary`. The only writes allowed append evidence or events: `record_promise_to_pay, open_dispute`; these exist on the operator gateway (:9000), which is never tunneled, and are not attached to any persona yet.
 - System tools: `end_call`, `voicemail_detection`, `transfer_to_number`.
 - Call end: a webhook (check `x-webhook-secret`), or poll `GET /agents/calls/{id}`. Then transcript → redact PII → Voice Desk provider-adapter extraction against the persona's schema → `call_result` artifact → the parent resumes. No answer returns `{reached:false}`.
 - Every persona opens with AI disclosure plus the reason for the call. Custom metrics: `disclosure_given`, `claim_confirmed`.
@@ -452,7 +494,7 @@ Six frontline specialists and three supporting specialists; **nine independently
 | Load Profitability (`cfo`) | 9103 | assess_financial_impact, cash_forecast | Margin per load, unrecovered charges, collections timing and cash exposure | shipper_ar, carrier_ap, controller | Read-only on the ledger; writes forecasts only |
 | Accessorial Audit (`risk`) | 9104 | investigate_charge, screen_bank_change, screen_counterparty | Detention, lumper, layover and other disputed charges; duplicate/fraud signals and escalation | verification, controller, documents | Recommends holds; cannot place them |
 | Carrier Trust & Verification (`verification`) | 9106 | verify_claim, verify_bank_change, verify_dispute | Carrier identity, authority/insurance evidence, verified channels and payment-detail changes; legacy claim skills remain supported | voice_desk | No financial or bank-detail mutation; verified contact channels only |
-| POD & Document Chase (`documents`) | 9109 | collect_documents, check_document_packet | Missing signed PODs/BOLs, rate confirmations and receipts; packet completeness, follow-up and resuming dependent work | voice_desk | Evidence collection only; cannot approve charges, payment or carrier identity |
+| POD & Document Chase (`documents`) | 9109 | collect_documents, check_document_packet, receive_document | Missing signed PODs/BOLs, rate confirmations and receipts; packet completeness, follow-up and resuming dependent work | voice_desk | Evidence collection only; cannot approve charges, payment or carrier identity |
 | Settlement Approvals (`controller`) | 9105 | review_hold, check_already_paid, reconcile, approve_entry | Holds, reconciliations, exact-action approvals and balanced journal posting | cfo, verification, voice_desk, documents | Only ledger writer; requester cannot approve; threshold rules remain enforced |
 | Dispatcher Outreach (`voice_desk`) | 9107 | place_call, handle_inbound_call | Calls for documents, verification, collections and approvals; transcript-to-findings | none; inbound disputes become intake events | Directory numbers and demo allowlist only; AI disclosure; no payment approvals |
 | Settlement Quality Review (`validator`) | 9108 | review_output, review_flag | Financial checks, friction review, scoped lessons, instruction revisions and bounded corrections | none; corrective requests use review outbox | Cannot change policy, limits, permissions or allowlists; cannot touch ledger |
@@ -465,7 +507,7 @@ P-001 invoice > contract + 2% → hold the delta · P-002 no payment on a held i
 
 ## 10. Hero case data (regression fixture; W4 seeds it, everyone tests with it)
 
-These fixed values are one regression fixture, not production defaults. Agents must process arbitrary supported case IDs, carriers, invoice amounts, contract terms and evidence through the same code. No handler may branch on these IDs or return the answer key. Missing-document, clean, disputed-charge, duplicate, bank-change and short-pay cases must be covered independently.
+These fixed values are one regression fixture, not production defaults, and not the demo centerpiece (v1.12). The fixture is exercised by `make demo` and the hermetic tests; the simulator writes it only to its local event log, not to the live stream. `sim/demo.py` starts fresh demo cases on the same fictional counterparties with new load IDs and publishes those to the live stream. Agents must process arbitrary supported case IDs, carriers, invoice amounts, contract terms and evidence through the same code. No handler may branch on these IDs or return the answer key. Missing-document, clean, disputed-charge, duplicate, bank-change and short-pay cases must be covered independently.
 - `CASE-4821` / `LOAD-4821`, lane Stockton CA → Reno NV, carrier `C-311` "Sierra Haul LLC" (USDOT 3141592, owner-operator), shipper `S-07` "Bay Produce Co".
 - Contract and rate con **$1,850**. Invoice **$2,150** = $1,850 + **$300 detention (2 h)**, no receipt.
 - GPS geofence at the receiver: arrived 14:02, departed 14:49 (**47 min**). Free time 2 h, so no detention is owed.
@@ -541,6 +583,7 @@ Resolved in v1.2: the home company is fictional "Golden Gate Freight" with real 
 7. Other sponsor credits worth using for data (check the live site and Slack). — W4
 
 ## Change log
+- v1.12 (Sat Oct 24): conformance audit. Recorded the audit's open gaps in section 1 so the status text no longer overstates completion. Corrected sections where the code deliberately diverged: the demo is driven by the live stream and the hero case is a regression fixture only (§4, G1, W1 done-when, §10); pod → Documents `receive_document` and lifecycle/ping events are not routed (§7.3, §8); `Outcome` includes `pass|issue|not_implemented` (§7.2); `approval.approver` is an identity with `approver_name` added (§7.4); five hosted read tools on :9001 and unattached writes on :9000 (§7.5); source systems live in SQLite plus `source.json`, the directory comes from FMCSA census and SEC EDGAR, `score_anomaly` is a heuristic, fixture counterparties are fictional (§5, R1, R4). Marked version-checked instruction publication as implemented. Added required work to R4: bounded raw retries with dead-letter and history markers; recorded the ingest SpacetimeDB mirror (`0e200ee`) and the W1 harness classifier merged the same day. Nothing in section 9 changed.
 - v1.11 (Sat Oct 24): replaced the thin voice demo with a coherent synthetic detention case, full source-grounded Cartesia context, five scoped live lookup tools, hosted-persona updates and a dispatcher role-play guide. Tool callbacks use a dedicated read-only HTTPS surface; completion still polls locally. No envelope contract changed. Revised live speech acceptance remains for the operator's next call.
 - v1.10 (Sat Oct 24): added the local Demo Console phone control, durable authenticated admission, exact-task demo authorization, idempotent retries and visible call status. Coordinated Voice/W2 changes let explicit team demos bypass hours and hourly limits while enforcing one active call; ordinary calls retain both guards. Live phone acceptance remains pending the operator's click.
 - v1.0 (Fri 11:45 PM): initial ground truth.

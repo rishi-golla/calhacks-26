@@ -1,0 +1,867 @@
+/*
+ * Layers: .m-x (side steps) > .m-y (bob/hop) > .m-squash > .m-lean > body,
+ * face and prop. Idle runs slow sine oscillators plus a 10s expression cycle
+ * (look around, blink, happy). Working swaps in per-agent moves and a
+ * focused face that flashes happy at the end of each beat.
+ */
+.mascot {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: middle;
+  overflow: visible;
+  --mx: 2px;
+  --mx-t: 6s;
+  --bob: -2px;
+  --bob-t: 2.6s;
+  --lean: 2.5deg;
+  --lean-t: 4.4s;
+  --sq: 0.025;
+  --sq-t: 2.6s;
+  --look-x: 2px;
+  --look-y: 1px;
+}
+.mascot .m-x,
+.mascot .m-y,
+.mascot .m-squash,
+.mascot .m-lean {
+  transform-origin: 60px 100px;
+}
+.mascot .m-x {
+  animation: m-pend-x var(--mx-t) linear infinite;
+}
+.mascot .m-y {
+  animation: m-bob var(--bob-t) cubic-bezier(0.37, 0, 0.63, 1) infinite
+    alternate;
+}
+.mascot .m-squash {
+  animation: m-breathe var(--sq-t) cubic-bezier(0.37, 0, 0.63, 1) infinite
+    alternate;
+}
+.mascot .m-lean {
+  animation: m-pend-r var(--lean-t) linear infinite;
+}
+.mascot .m-x,
+.mascot .m-y,
+.mascot .m-squash,
+.mascot .m-lean,
+.mascot .m-gaze,
+.mascot .m-blink,
+.mascot .m-eyes-open,
+.mascot .m-eyes-happy,
+.mascot .m-mouth-smile {
+  animation-delay: var(--mascot-delay, 0s);
+}
+.mascot.working .m-x,
+.mascot.working .m-y,
+.mascot.working .m-squash,
+.mascot.working .m-lean,
+.mascot.working .m-gaze,
+.mascot.working .m-blink,
+.mascot.working .m-eyes-open,
+.mascot.working .m-eyes-happy,
+.mascot.working .m-mouth-smile {
+  animation-delay: 0s;
+}
+
+/* Face. */
+.mascot .m-gaze {
+  animation: m-look 10s infinite;
+}
+.mascot .m-blink {
+  transform-origin: 60px 57px;
+  animation: m-blink 10s infinite;
+}
+.mascot .m-eyes-open {
+  animation: m-show-open 10s infinite;
+}
+.mascot .m-eyes-happy,
+.mascot .m-mouth-smile {
+  opacity: 0;
+  animation: m-show-happy 10s infinite;
+}
+.mascot .m-eyes-focus,
+.mascot .m-mouth-o {
+  opacity: 0;
+}
+.mascot.working .m-gaze {
+  animation: m-look-work 3.2s infinite;
+}
+.mascot.working .m-blink {
+  animation: m-blink 3.2s infinite;
+}
+.mascot.working .m-eyes-open {
+  animation: none;
+  opacity: 0;
+}
+.mascot.working .m-eyes-focus {
+  animation: m-show-focus 3.2s infinite;
+}
+.mascot.working .m-eyes-happy,
+.mascot.working .m-mouth-smile {
+  animation: m-show-beat 3.2s infinite;
+}
+
+.mascot .m-shadow {
+  opacity: 0;
+  transform-origin: 60px 110px;
+  transition: opacity 0.35s ease;
+}
+.mascot.working .m-shadow {
+  opacity: 0.28;
+  animation: m-shadow var(--shadow-t, 0.8s) cubic-bezier(0.37, 0, 0.63, 1)
+    infinite alternate;
+}
+
+/* Idle personalities. */
+.mascot[data-mascot="all"] {
+  --mx: 2.5px;
+  --mx-t: 7s;
+  --bob: -3px;
+  --bob-t: 2.4s;
+  --sq: 0.03;
+  --sq-t: 2.4s;
+}
+.mascot[data-mascot="carrier_ap"] {
+  --mx: 3px;
+  --mx-t: 5s;
+  --bob: -1.5px;
+  --bob-t: 1.8s;
+  --lean: 3deg;
+  --lean-t: 3.2s;
+  --sq: 0.015;
+  --sq-t: 1.8s;
+  --look-x: 3px;
+  --look-y: 0px;
+}
+.mascot[data-mascot="shipper_ar"] {
+  --mx: 1.5px;
+  --bob-t: 2.2s;
+  --lean: 1.5deg;
+  --lean-t: 5s;
+  --sq: 0.035;
+  --sq-t: 1.1s;
+  --look-x: 2.5px;
+  --look-y: 2.5px;
+}
+.mascot[data-mascot="risk"] {
+  --mx: 2px;
+  --mx-t: 8s;
+  --bob: -1.5px;
+  --bob-t: 3s;
+  --lean: 4deg;
+  --lean-t: 5.2s;
+  --sq: 0.015;
+  --sq-t: 3s;
+  --look-x: 3px;
+  --look-y: 0px;
+}
+.mascot[data-mascot="verification"] {
+  --mx: 1px;
+  --bob-t: 3.4s;
+  --lean: 1deg;
+  --lean-t: 6s;
+  --sq-t: 1.7s;
+  --look-x: 0px;
+  --look-y: 3px;
+}
+.mascot[data-mascot="controller"] {
+  --mx: 1px;
+  --mx-t: 9s;
+  --bob: -1px;
+  --bob-t: 3.6s;
+  --lean: 1.5deg;
+  --lean-t: 7s;
+  --sq: 0.02;
+  --sq-t: 3.6s;
+  --look-x: 3px;
+  --look-y: 2px;
+}
+.mascot[data-mascot="voice_desk"] {
+  --mx: 2.5px;
+  --mx-t: 4.5s;
+  --bob: -2.5px;
+  --bob-t: 1.6s;
+  --lean: 3deg;
+  --lean-t: 2.8s;
+  --sq-t: 0.8s;
+  --look-x: -2px;
+  --look-y: 1px;
+}
+.mascot[data-mascot="cfo"] {
+  --mx: 2px;
+  --bob: -3.5px;
+  --bob-t: 2s;
+  --lean-t: 4s;
+  --sq: 0.03;
+  --sq-t: 2s;
+  --look-x: 3px;
+  --look-y: 2px;
+}
+.mascot[data-mascot="validator"] {
+  --mx: 1.5px;
+  --bob: -1.5px;
+  --bob-t: 3.2s;
+  --lean: 3.5deg;
+  --lean-t: 4.8s;
+  --sq: 0.02;
+  --sq-t: 3.2s;
+  --look-x: 2.5px;
+  --look-y: 2.5px;
+}
+.mascot[data-mascot="documents"] {
+  --mx: 3px;
+  --mx-t: 7.5s;
+  --bob: -4px;
+  --bob-t: 3.8s;
+  --lean-t: 5.6s;
+  --sq: 0.015;
+  --sq-t: 3.8s;
+  --look-x: 2.5px;
+  --look-y: 2px;
+}
+
+/* Idle prop motion. */
+.mascot[data-mascot="all"] .m-wave-arm {
+  transform-origin: 26px 64px;
+  animation: m-wave 10s infinite;
+  animation-delay: var(--mascot-delay, 0s);
+}
+.mascot[data-mascot="all"] .m-dot {
+  opacity: 0.55;
+}
+.mascot .m-speed,
+.mascot .m-ink,
+.mascot .m-waves {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.mascot[data-mascot="cfo"] .m-coin {
+  transform-origin: 94px 84px;
+}
+.mascot[data-mascot="cfo"] .m-hat {
+  transform-origin: 58px 32px;
+}
+.mascot[data-mascot="validator"] .m-tick {
+  opacity: 1;
+}
+
+/* Working signatures. */
+.mascot.working[data-mascot="all"] {
+  --hop: -12px;
+  --lean: 4deg;
+  --shadow-t: 0.4s;
+}
+.mascot.working[data-mascot="all"] .m-y {
+  animation: m-hop 0.8s infinite;
+}
+.mascot.working[data-mascot="all"] .m-squash {
+  animation: m-land 0.8s infinite;
+}
+.mascot.working[data-mascot="all"] .m-lean {
+  animation: m-pend-r 1.6s linear infinite;
+}
+.mascot.working[data-mascot="all"] .m-wave-arm {
+  animation: m-wave-fast 0.8s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+.mascot.working[data-mascot="all"] .m-dot {
+  opacity: 1;
+  animation: m-dot 0.9s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+}
+.mascot.working[data-mascot="all"] .m-dot2 {
+  animation-delay: 0.15s;
+}
+.mascot.working[data-mascot="all"] .m-dot3 {
+  animation-delay: 0.3s;
+}
+
+.mascot.working[data-mascot="carrier_ap"] {
+  --mx: 6px;
+  --bob: -2.5px;
+  --lean: -4deg;
+  --shadow-t: 0.3s;
+}
+.mascot.working[data-mascot="carrier_ap"] .m-x {
+  animation: m-pend-x 1.4s linear infinite;
+}
+.mascot.working[data-mascot="carrier_ap"] .m-y {
+  animation: m-bob 0.3s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+.mascot.working[data-mascot="carrier_ap"] .m-lean {
+  animation: m-pend-r 1.4s linear infinite;
+}
+.mascot.working[data-mascot="carrier_ap"] .m-speed {
+  opacity: 1;
+  animation: m-speed 0.5s linear infinite;
+}
+.mascot.working[data-mascot="carrier_ap"] .m-truck {
+  transform-origin: 90px 100px;
+  animation: m-rumble 0.24s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+
+.mascot.working[data-mascot="shipper_ar"] {
+  --sq: 0.06;
+  --bob: -3px;
+  --lean: 4deg;
+  --shadow-t: 0.42s;
+}
+.mascot.working[data-mascot="shipper_ar"] .m-squash {
+  animation: m-breathe 0.42s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+.mascot.working[data-mascot="shipper_ar"] .m-y {
+  animation: m-bob 0.84s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+.mascot.working[data-mascot="shipper_ar"] .m-lean {
+  animation: m-pend-r 1.6s linear infinite;
+}
+.mascot.working[data-mascot="shipper_ar"] .m-invoice {
+  transform-origin: 80px 96px;
+  animation: m-raise 1.6s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+
+.mascot.working[data-mascot="risk"] {
+  --lean: 6deg;
+  --mx: 4px;
+  --shadow-t: 0.9s;
+}
+.mascot.working[data-mascot="risk"] .m-lean {
+  animation: m-pend-r 1.8s linear infinite;
+}
+.mascot.working[data-mascot="risk"] .m-x {
+  animation: m-pend-x 1.8s linear infinite;
+}
+.mascot.working[data-mascot="risk"] .m-lens {
+  transform-origin: 97px 90px;
+  animation: m-scan 1.8s linear infinite;
+}
+
+.mascot.working[data-mascot="verification"] {
+  --bob: -3px;
+  --shadow-t: 0.7s;
+}
+.mascot.working[data-mascot="verification"] .m-y {
+  animation: m-bob 0.7s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+.mascot.working[data-mascot="verification"] .m-shield {
+  transform-origin: 60px 85px;
+  animation: m-pulse 0.7s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+
+.mascot.working[data-mascot="controller"] {
+  --shadow-t: 0.55s;
+}
+.mascot.working[data-mascot="controller"] .m-stamp {
+  animation: m-stamp 1.1s infinite;
+}
+.mascot.working[data-mascot="controller"] .m-squash {
+  animation: m-stamp-squash 1.1s infinite;
+}
+.mascot.working[data-mascot="controller"] .m-ink {
+  animation: m-ink 1.1s infinite;
+}
+
+.mascot.working[data-mascot="voice_desk"] {
+  --lean: 6deg;
+  --bob: -2.5px;
+  --shadow-t: 0.6s;
+}
+.mascot.working[data-mascot="voice_desk"] .m-lean {
+  animation: m-pend-r 1.2s linear infinite;
+}
+.mascot.working[data-mascot="voice_desk"] .m-y {
+  animation: m-bob 0.6s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+.mascot.working[data-mascot="voice_desk"] .m-mouth-o {
+  transform-origin: 60px 70px;
+  animation: m-talk 0.36s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+.mascot.working[data-mascot="voice_desk"] .m-mouth-smile,
+.mascot.working[data-mascot="voice_desk"] .m-eyes-happy {
+  animation: none;
+  opacity: 0;
+}
+.mascot.working[data-mascot="voice_desk"] .m-eyes-focus {
+  animation: none;
+  opacity: 0;
+}
+.mascot.working[data-mascot="voice_desk"] .m-eyes-open {
+  animation: none;
+  opacity: 1;
+}
+.mascot.working[data-mascot="voice_desk"] .m-waves {
+  opacity: 1;
+}
+.mascot.working[data-mascot="voice_desk"] .m-wave1,
+.mascot.working[data-mascot="voice_desk"] .m-wave2 {
+  animation: m-fade 0.9s ease-in-out infinite alternate;
+}
+.mascot.working[data-mascot="voice_desk"] .m-wave2 {
+  animation-delay: 0.3s;
+}
+
+.mascot.working[data-mascot="cfo"] {
+  --hop: -14px;
+  --lean: 5deg;
+  --shadow-t: 0.35s;
+}
+.mascot.working[data-mascot="cfo"] .m-y {
+  animation: m-hop 0.7s infinite;
+}
+.mascot.working[data-mascot="cfo"] .m-squash {
+  animation: m-land 0.7s infinite;
+}
+.mascot.working[data-mascot="cfo"] .m-lean {
+  animation: m-pend-r 1.4s linear infinite;
+}
+.mascot.working[data-mascot="cfo"] .m-hat {
+  animation: m-tip 0.7s infinite;
+}
+.mascot.working[data-mascot="cfo"] .m-coin {
+  animation: m-spin 0.7s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+
+.mascot.working[data-mascot="validator"] {
+  --bob: -4px;
+  --lean: 5deg;
+  --shadow-t: 0.5s;
+}
+.mascot.working[data-mascot="validator"] .m-lean {
+  animation: m-pend-r 1s linear infinite;
+}
+.mascot.working[data-mascot="validator"] .m-y {
+  animation: m-bob 0.5s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+.mascot.working[data-mascot="validator"] .m-tick {
+  animation: m-tick 3.2s infinite;
+}
+.mascot.working[data-mascot="validator"] .m-tick2 {
+  animation-name: m-tick2;
+}
+.mascot.working[data-mascot="validator"] .m-tick3 {
+  animation-name: m-tick3;
+}
+
+.mascot.working[data-mascot="documents"] {
+  --mx: 4px;
+  --bob: -3px;
+  --lean: 4deg;
+  --shadow-t: 0.6s;
+}
+.mascot.working[data-mascot="documents"] .m-x {
+  animation: m-pend-x 1.2s linear infinite;
+}
+.mascot.working[data-mascot="documents"] .m-lean {
+  animation: m-pend-r 1.2s linear 0.3s infinite;
+}
+.mascot.working[data-mascot="documents"] .m-y {
+  animation: m-bob 0.6s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+.mascot.working[data-mascot="documents"] .m-papers {
+  animation: m-shuffle 0.6s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+
+/* Oscillators: pendulums pass through rest at full speed, so motion never stops. */
+@keyframes m-pend-x {
+  0% {
+    transform: translateX(0);
+    animation-timing-function: cubic-bezier(0.61, 1, 0.88, 1);
+  }
+  25% {
+    transform: translateX(var(--mx));
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  75% {
+    transform: translateX(calc(var(--mx) * -1));
+    animation-timing-function: cubic-bezier(0.12, 0, 0.39, 0);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+@keyframes m-pend-r {
+  0% {
+    transform: rotate(0deg);
+    animation-timing-function: cubic-bezier(0.61, 1, 0.88, 1);
+  }
+  25% {
+    transform: rotate(var(--lean));
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  75% {
+    transform: rotate(calc(var(--lean) * -1));
+    animation-timing-function: cubic-bezier(0.12, 0, 0.39, 0);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+@keyframes m-bob {
+  to {
+    transform: translateY(var(--bob));
+  }
+}
+@keyframes m-breathe {
+  to {
+    transform: scale(calc(1 + var(--sq)), calc(1 - var(--sq)));
+  }
+}
+@keyframes m-shadow {
+  to {
+    transform: scaleX(0.75);
+    opacity: 0.12;
+  }
+}
+@keyframes m-hop {
+  0% {
+    transform: translateY(0);
+    animation-timing-function: cubic-bezier(0.22, 0.7, 0.4, 1);
+  }
+  42% {
+    transform: translateY(var(--hop));
+    animation-timing-function: cubic-bezier(0.6, 0, 0.78, 0.3);
+  }
+  80%,
+  100% {
+    transform: translateY(0);
+  }
+}
+@keyframes m-land {
+  0% {
+    transform: scale(1, 1);
+  }
+  14% {
+    transform: scale(0.95, 1.06);
+  }
+  42%,
+  76% {
+    transform: scale(1, 1);
+  }
+  86% {
+    transform: scale(1.1, 0.9);
+  }
+  95% {
+    transform: scale(0.98, 1.02);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+
+/* Expressions. */
+@keyframes m-look {
+  0%,
+  14% {
+    transform: translate(0, 0);
+  }
+  19%,
+  33% {
+    transform: translate(var(--look-x), var(--look-y));
+  }
+  38%,
+  50% {
+    transform: translate(calc(var(--look-x) * -1), 0);
+  }
+  55%,
+  100% {
+    transform: translate(0, 0);
+  }
+}
+@keyframes m-look-work {
+  0%,
+  10% {
+    transform: translate(0, 0);
+  }
+  16%,
+  34% {
+    transform: translate(var(--look-x), var(--look-y));
+  }
+  40%,
+  60% {
+    transform: translate(calc(var(--look-x) * 0.4), calc(var(--look-y) + 1px));
+  }
+  66%,
+  100% {
+    transform: translate(0, 0);
+  }
+}
+@keyframes m-blink {
+  0%,
+  8%,
+  11%,
+  46%,
+  49%,
+  52%,
+  55%,
+  85%,
+  88%,
+  100% {
+    transform: scaleY(1);
+  }
+  9.5%,
+  50.5%,
+  86.5% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes m-show-open {
+  0%,
+  60%,
+  72%,
+  100% {
+    opacity: 1;
+  }
+  62%,
+  70% {
+    opacity: 0;
+  }
+}
+@keyframes m-show-happy {
+  0%,
+  60%,
+  72%,
+  100% {
+    opacity: 0;
+  }
+  62%,
+  70% {
+    opacity: 1;
+  }
+}
+@keyframes m-show-focus {
+  0%,
+  70%,
+  92%,
+  100% {
+    opacity: 1;
+  }
+  74%,
+  88% {
+    opacity: 0;
+  }
+}
+@keyframes m-show-beat {
+  0%,
+  70%,
+  92%,
+  100% {
+    opacity: 0;
+  }
+  74%,
+  88% {
+    opacity: 1;
+  }
+}
+
+/* Props. */
+@keyframes m-wave {
+  0%,
+  20%,
+  34%,
+  100% {
+    transform: rotate(0deg);
+  }
+  24%,
+  30% {
+    transform: rotate(-22deg);
+  }
+  27% {
+    transform: rotate(6deg);
+  }
+}
+@keyframes m-wave-fast {
+  from {
+    transform: rotate(8deg);
+  }
+  to {
+    transform: rotate(-26deg);
+  }
+}
+@keyframes m-dot {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-3px);
+  }
+}
+@keyframes m-speed {
+  from {
+    transform: translateX(3px);
+  }
+  to {
+    transform: translateX(-3px);
+  }
+}
+@keyframes m-rumble {
+  to {
+    transform: translateY(-1.5px);
+  }
+}
+@keyframes m-raise {
+  from {
+    transform: translateY(0) rotate(0deg);
+  }
+  to {
+    transform: translateY(-5px) rotate(-6deg);
+  }
+}
+@keyframes m-scan {
+  0% {
+    transform: rotate(0deg);
+    animation-timing-function: cubic-bezier(0.61, 1, 0.88, 1);
+  }
+  25% {
+    transform: rotate(-9deg);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  75% {
+    transform: rotate(9deg);
+    animation-timing-function: cubic-bezier(0.12, 0, 0.39, 0);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+@keyframes m-pulse {
+  to {
+    transform: scale(1.1);
+  }
+}
+@keyframes m-stamp {
+  0% {
+    transform: translateY(0);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  55% {
+    transform: translateY(-12px);
+    animation-timing-function: cubic-bezier(0.7, 0, 1, 0.6);
+  }
+  66% {
+    transform: translateY(3px);
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.4, 1);
+  }
+  80%,
+  100% {
+    transform: translateY(0);
+  }
+}
+@keyframes m-stamp-squash {
+  0%,
+  62% {
+    transform: scale(1, 1);
+  }
+  68% {
+    transform: scale(1.06, 0.93);
+  }
+  80% {
+    transform: scale(0.99, 1.01);
+  }
+  90%,
+  100% {
+    transform: scale(1, 1);
+  }
+}
+@keyframes m-ink {
+  0%,
+  64% {
+    opacity: 0;
+  }
+  68% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes m-talk {
+  from {
+    transform: scale(0.5, 0.35);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1, 1);
+    opacity: 1;
+  }
+}
+@keyframes m-fade {
+  from {
+    opacity: 0.2;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes m-tip {
+  0%,
+  30%,
+  100% {
+    transform: rotate(0deg) translateY(0);
+  }
+  45% {
+    transform: rotate(-10deg) translateY(-4px);
+  }
+  80% {
+    transform: rotate(3deg) translateY(0);
+  }
+}
+@keyframes m-spin {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(-1);
+  }
+}
+@keyframes m-tick {
+  0%,
+  12% {
+    opacity: 0;
+  }
+  18%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes m-tick2 {
+  0%,
+  32% {
+    opacity: 0;
+  }
+  38%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes m-tick3 {
+  0%,
+  52% {
+    opacity: 0;
+  }
+  58%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes m-shuffle {
+  to {
+    transform: translateY(-5px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot *,
+  .mascot.working * {
+    animation: none !important;
+    transition: none !important;
+  }
+  .mascot .m-eyes-open {
+    opacity: 1 !important;
+  }
+  .mascot .m-eyes-focus,
+  .mascot .m-eyes-happy,
+  .mascot .m-mouth-smile,
+  .mascot .m-mouth-o {
+    opacity: 0 !important;
+  }
+}

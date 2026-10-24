@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { RotateCcw, ShieldCheck, Check, X, BookOpen } from "lucide-react";
+import { RotateCcw, ShieldCheck, Check, X } from "lucide-react";
 import {
   AGENTS,
   agentName,
@@ -13,6 +13,7 @@ import {
   type Row,
 } from "@/lib/data";
 import { useLive } from "./live-provider";
+import { Mascot } from "./mascot";
 import {
   approvalError,
   useApprovalDecision,
@@ -447,7 +448,7 @@ export function LearningView({
               <article className="memory-card" key={str(row.id)}>
                 <div className="panel-head">
                   <div className="inline">
-                    <BookOpen size={17} />
+                    <Mascot id={str(row.agent)} size={24} />
                     <strong>{agentName(row.agent)}</strong>
                     <span className="subtle-badge">v{str(row.version)}</span>
                     <Badge value={row.active ? "active" : "inactive"} />
@@ -499,6 +500,7 @@ export function LearningView({
               >
                 <div className="panel-head">
                   <div className="inline">
+                    <Mascot id={str(row.agent)} size={24} />
                     <strong>{agentName(row.agent)}</strong>
                     <span className="subtle-badge">v{str(row.version)}</span>
                     {row.active ? <Badge value="active" /> : null}

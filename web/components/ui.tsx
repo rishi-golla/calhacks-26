@@ -2,6 +2,7 @@
 import { Flag, ArrowUpRight, Inbox, X, LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { agentName, date, money, safeUrl, str, type Row } from "@/lib/data";
+import { MASCOT_IDS, Mascot } from "./mascot";
 export type FlagTarget = { ref: string; caseId?: string };
 export type FlagHandler = (target: FlagTarget) => void;
 export function Badge({ value }: { value: unknown }) {
@@ -214,10 +215,19 @@ export const statusColumn = (key = "status", title = "Status"): Column => ({
   title,
   format: (value) => <Badge value={value} />,
 });
+export function AgentLabel({ id, size = 18 }: { id: unknown; size?: number }) {
+  const key = str(id, "");
+  return (
+    <span className="agent-label">
+      {MASCOT_IDS.includes(key) && <Mascot id={key} size={size} />}
+      {agentName(id)}
+    </span>
+  );
+}
 export const agentColumn: Column = {
   key: "agent",
   title: "Agent",
-  format: (value) => agentName(value),
+  format: (value) => <AgentLabel id={value} />,
 };
 export function DataTable({
   rows,

@@ -142,6 +142,12 @@ strong {
   align-items: center;
   gap: 9px;
 }
+.agent-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
 .stack {
   display: flex;
   flex-direction: column;

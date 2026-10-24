@@ -31,6 +31,7 @@ import {
   type ApprovalDecision,
 } from "./approval-decision";
 import { useLive } from "./live-provider";
+import { MASCOT_IDS, Mascot } from "./mascot";
 import { useClock } from "./ui";
 import {
   FARM,
@@ -49,6 +50,16 @@ import {
 import "./workflow.css";
 
 type Tab = { node_id: string; url: string; title: string };
+
+function mascotOf(step: Step) {
+  const owner = STEPS.find(
+    (s) =>
+      s.agent && s.operator === step.operator && MASCOT_IDS.includes(s.agent),
+  );
+  return step.agent && MASCOT_IDS.includes(step.agent)
+    ? step.agent
+    : owner?.agent;
+}
 
 function urlParts(value: string) {
   try {
@@ -80,6 +91,7 @@ type StepData = {
   doing: string;
   when: string;
   state: StepState;
+  working: boolean;
   farm: boolean;
   tick: number;
   leaving: boolean;
@@ -102,6 +114,7 @@ function LiveFrame({ id, tick }: { id: string; tick: number }) {
 
 const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
   const { step, farm, tick } = data;
+  const mascot = mascotOf(step);
   return (
     <div
       className={`wf-node ${data.state} ${data.leaving ? "leaving" : ""}`}
@@ -155,7 +168,11 @@ const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
         </div>
       </div>
       <div className="wf-meta">
-        <i className={`wf-status-dot ${data.state}`} aria-hidden="true" />
+        {mascot ? (
+          <Mascot id={mascot} size={26} working={data.working} />
+        ) : (
+          <i className={`wf-status-dot ${data.state}`} aria-hidden="true" />
+        )}
         <div className="wf-details">
           <div className="wf-name">{step.operator}</div>
           <div className="wf-doing">{data.doing}</div>
@@ -373,6 +390,17 @@ export default function Workflow({
       if (!newest || item.ts > newest.ts) newest = item;
     const url = tabs[id]?.url || urls[id];
     const { host, path } = urlParts(url);
+    const owner = STEPS.find((s) => s.agent && s.agent === mascotOf(step));
+    const rec = owner && data.agent.find((r) => r.name === owner.agent);
+    const working =
+      !!rec &&
+      now - timestamp(rec.last_seen) <= 60_000 &&
+      !["offline", "error", "stopped"].includes(
+        str(rec.status).toLowerCase(),
+      ) &&
+      scoped.task.some(
+        (t) => t.agent === owner.agent && str(t.a2a_state) === "working",
+      );
     const nodeState: StepState = needsApproval
       ? "need"
       : ["live", "online", "working", "busy"].includes(status)
@@ -390,6 +418,7 @@ export default function Workflow({
       doing,
       when: newest ? relativeAge(newest.ts, now) : "",
       state: nodeState,
+      working,
       farm,
       tick,
       leaving: !visible.has(id),
@@ -534,6 +563,7 @@ export default function Workflow({
                     setPalette(false);
                   }}
                 >
+                  {mascotOf(s) && <Mascot id={mascotOf(s)!} size={24} />}
                   <span>
                     <b>{s.title}</b>
                     <small>{s.operator}</small>
@@ -582,7 +612,16 @@ export default function Workflow({
                 <ArrowLeft size={18} />
               </button>
               <div className="wf-c2-current">
-                <strong>{open.title}</strong>
+                <strong>
+                  {mascotOf(open) && (
+                    <Mascot
+                      id={mascotOf(open)!}
+                      size={18}
+                      working={nodeData.get(open.id)?.working}
+                    />
+                  )}
+                  {open.title}
+                </strong>
                 <span>{followed}</span>
               </div>
               <nav className="wf-c2-steps" aria-label="Steps in this case">

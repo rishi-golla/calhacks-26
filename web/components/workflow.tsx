@@ -215,7 +215,12 @@ export default function Workflow({
     const name = mascotOf(s);
     const rec = data.agent.find((r) => r.name === name);
     return (
-      !!rec && now - timestamp(rec.last_seen) <= 60_000 && num(rec.active) > 0
+      !!rec &&
+      now - timestamp(rec.last_seen) <= 60_000 &&
+      !["offline", "error", "stopped"].includes(
+        str(rec.status).toLowerCase(),
+      ) &&
+      num(rec.active) > 0
     );
   };
 

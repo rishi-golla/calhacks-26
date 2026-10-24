@@ -50,7 +50,7 @@ AGENTS: dict[str, AgentSpec] = {a.name: a for a in [
     AgentSpec("voice_desk", "Dispatcher Outreach", 9107, ("place_call", "handle_inbound_call"), ()),
     AgentSpec("validator", "Settlement Quality Review", 9108, ("review_output", "review_flag"), ()),
     AgentSpec("documents", "POD & Document Chase", 9109,
-              ("collect_documents", "check_document_packet"), ("voice_desk",)),
+              ("collect_documents", "check_document_packet", "receive_document"), ("voice_desk",)),
 ]}
 
 SKILL_OWNER: dict[str, str] = {s: a.name for a in AGENTS.values() for s in a.skills}

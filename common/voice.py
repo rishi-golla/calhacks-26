@@ -52,7 +52,7 @@ def voice_configuration_status(purpose: str) -> dict:
     required = ("CARTESIA_API_KEY", f"CARTESIA_AGENT_ID_{purpose.upper()}", "CARTESIA_FROM_NUMBER_ID",
                 "DEMO_ALLOWLIST_PHONES")
     if webhook_tools:
-        required += ("CARTESIA_WEBHOOK_SECRET", "PUBLIC_BASE_URL")
+        required += ("PUBLIC_BASE_URL",)
     missing = [name for name in required if not os.getenv(name, "").strip()]
     invalid = []
     for name in (f"CARTESIA_AGENT_ID_{purpose.upper()}", "CARTESIA_FROM_NUMBER_ID"):
@@ -223,6 +223,10 @@ async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> t
             routed_to=routed.routed_to,
             findings={"simulated": True, "claim_confirmed": False, "receipt_provided": False, **fixture_findings},
             transcript_ref=f"fixture://calls/{attempt_id}")
+    from common.voice_context import build_voice_context
+    # Cartesia is a separate conversational model. Explicitly pass a complete,
+    # allowlisted source brief, never arbitrary facts supplied by a task/model.
+    facts = await build_voice_context(source, sources, purpose=request.purpose)
     from common.demo_calls import authorize_demo_voice
     hours_grant = await authorize_demo_voice(env, meta, task_id, request.counterparty_id,
                                              routed.intended_to, routed.routed_to)
@@ -235,7 +239,7 @@ async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> t
     payload = {"purpose": request.purpose, "company_id": request.counterparty_id,
                "contact_id": contact.get("id", "") if contact else "",
                "intended_to": routed.intended_to, "routed_to": routed.routed_to,
-               "questions": request.questions, "facts": request.facts,
+               "questions": request.questions, "facts": facts,
                "evidence_refs": env.evidence_refs, "persona": persona,
                "team_demo_authorized": hours_grant}
     try:
@@ -244,6 +248,7 @@ async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> t
             return attempt_id, CallResult.model_validate_json(row["result"])
         if row["status"] != "prepared":
             return attempt_id, None
+        payload = json.loads(row["payload"])
         # W2 enforces company/hour, human ownership, verified directory and demo targets atomically.
         await SpacetimeClient(actor="voice_desk").mutate("upsert_call", {
             "write_id": f"call:{attempt_id}:queued", "id": attempt_id, "case_id": env.case_id,
@@ -263,7 +268,8 @@ async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> t
                     "outbound_calls": [{"to_number": routed.routed_to, "dynamic_variables": {
                         "case_id": env.case_id, "task_id": task_id, "attempt_id": attempt_id,
                         "call_token": token, "purpose": request.purpose,
-                        "questions": json.dumps(request.questions), "facts": json.dumps(request.facts),
+                        "questions": json.dumps(payload["questions"]), "facts": json.dumps(payload["facts"]),
+                        "load_reference": payload["facts"].get("load_reference") or "the assigned load",
                     }}],
                 })
                 if 400 <= response.status_code < 500 and response.status_code not in {408, 429}:

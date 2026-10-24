@@ -1,21 +1,36 @@
 from agents.documents.card import DESCRIPTIONS
 from agents.documents.tools import check_packet
 from common.agent_support import evidence, finish, identifier, mutate
-from common.envelope import DelegationMeta, TaskEnvelope
+from common.envelope import DelegationMeta, ResultArtifact, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
-from common.source_repository import SourceRepository, SourceUnavailable
+from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
 
 
 class DocumentsAgent(FreightAgent):
     name = "documents"
 
     async def handle(self, env, meta, task_id, updater):
+        if env.task_type == "receive_document":
+            return await self.receive_document(env)
         from common.providers import mode
         if mode() == "live":
             from common.tool_loop import run_tool_loop
             return await run_tool_loop(self, env, meta, task_id)
         return await self.run_workflow(env, meta, task_id, updater)
+
+    async def receive_document(self, env: TaskEnvelope) -> ResultArtifact:
+        """Deterministic plumbing, no model: wake this case's parked document chase, if any.
+
+        The reference only names the arrival. A woken chase re-reads the trusted source, so an event
+        cannot vouch for a document that ingestion has not recorded.
+        """
+        ref = env.subject.get("pod_ref")
+        if not isinstance(ref, str) or not ref:
+            raise ValueError("a document arrival needs its document reference")
+        woken = await self.notify_waiters(f"documents:{env.case_id}", f"document:{ref}", {"ingestion_ref": ref})
+        return ResultArtifact(outcome="clear", confidence=1.0, evidence_refs=[ref], model_used="deterministic",
+                              findings={"document_ref": ref, "resumed_task_ids": woken, "simulated": fixture_mode()})
 
     async def run_workflow(self, env: TaskEnvelope, meta: DelegationMeta, task_id: str, updater):
         if env.task_type not in {"collect_documents", "check_document_packet"}:

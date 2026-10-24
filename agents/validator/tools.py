@@ -187,6 +187,8 @@ def deterministic_review(bundle: dict) -> ReviewOutput:
                         check("payment_packet_complete", not missing, [], missing)
                         check("payment_not_duplicate", not source.get("duplicate_invoice"), False,
                               bool(source.get("duplicate_invoice")))
+                        check("carrier_identity_confirmed", not source.get("carrier_identity_mismatch"), False,
+                              bool(source.get("carrier_identity_mismatch")))
             elif role == "controller":
                 if skill in {"reconcile", "approve_entry"}:
                     request = source.get("journal_request", {})

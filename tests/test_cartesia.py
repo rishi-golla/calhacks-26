@@ -1,5 +1,7 @@
 """Cartesia contract and recovery checks without dialing or provider credentials."""
 import json
+import os
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import httpx
@@ -42,7 +44,7 @@ def test_polling_voice_configuration_needs_no_public_callback(configured, monkey
     monkeypatch.setenv("CARTESIA_WEBHOOK_TOOLS_ENABLED", "1")
     status = voice.voice_configuration_status("verification")
     assert not status["available"]
-    assert "CARTESIA_WEBHOOK_SECRET" in status["missing_configuration"]
+    assert "CARTESIA_WEBHOOK_SECRET" not in status["missing_configuration"]
     assert "PUBLIC_BASE_URL" in status["invalid_configuration"]
 
 
@@ -86,6 +88,40 @@ async def test_outbound_contract_uses_only_demo_target_and_never_redials(configu
     assert row["provider_id"] == "ac_test" and row["status"] == "ringing"
     assert "call_token" not in json.loads(row["payload"])
     await store.close()
+
+
+async def test_outbound_voice_receives_complete_source_brief_not_supplied_facts(configured, monkeypatch):
+    source_path = Path(os.environ["SOURCE_DATA_PATH"])
+    data = json.loads(source_path.read_text())
+    scenario = json.loads((Path(__file__).resolve().parents[1] / "sim/fixtures/team_call_source.json").read_text())
+    record = scenario["cases"]["SYN-CARTESIA-TEAM-CALL"]
+    record.update(case_id="case", carrier_id="carrier")
+    data["cases"]["case"] = record
+    source_path.write_text(json.dumps(data))
+    configured.subject["facts"] = {"load_reference": "FORGED", "invoice_amount": 999999,
+                                   "bank_account": "never-forward-this", "email": "fake@example.test"}
+    captured = {}
+
+    def response(request):
+        variables = json.loads(request.content)["outbound_calls"][0]["dynamic_variables"]
+        captured.update(variables)
+        return httpx.Response(200, json={"calls": [{"agent_call_id": "ac_context"}]})
+
+    mock_http(monkeypatch, response)
+    attempt_id, _ = await voice.start_call(configured, DelegationMeta(case_id="case", from_agent="verification"), "context-task")
+    facts = json.loads(captured["facts"])
+    assert captured["load_reference"] == facts["load_reference"] == "GG-1042"
+    assert facts["route"]["origin"]["city"] == "Oakland"
+    assert facts["route"]["destination"]["city"] == "Sacramento"
+    assert facts["cargo"]["pallets"] == 18 and facts["invoice"]["amount"] == 1225
+    assert facts["claim"]["supported_amount"] == 125 and facts["claim"]["billable_minutes"] == 75
+    assert facts["contacts"]["email"] is None and facts["synthetic"] is True
+    assert all(value not in captured["facts"] for value in ("FORGED", "never-forward-this", "fake@example.test"))
+    store = voice.CallStore()
+    try:
+        assert json.loads((await store.get(attempt_id))["payload"])["facts"] == facts
+    finally:
+        await store.close()
 
 
 @pytest.mark.parametrize("status,body", [(200, {"calls": [{"error": "private provider detail"}]}),

@@ -1,5 +1,5 @@
 # PRD: Autonomous Back Office for Freight Brokerages
-**Cal Hacks 13.0 · Ground truth v1.10 · Sat Oct 24, 2026 PDT**
+**Cal Hacks 13.0 · Ground truth v1.11 · Sat Oct 24, 2026 PDT**
 
 > This is the one source of truth. If code, a chat message or a slide disagrees with this doc, the doc wins until someone changes it. To change it, edit this file, bump the version in the change log at the bottom, and post one line in the team chat. Section 7 (interface contracts) is frozen at **Sat 3:00 AM**. After that, contract changes need agreement from both owners on that interface.
 
@@ -95,6 +95,19 @@ unconnected.
 - A Validator agent reviews every output and every bit of friction, then updates each agent's instructions and persistent memory.
 - A Git-style audit trail shown as spreadsheets: source document, which agent read it, what it did, and which cells changed.
 - Live shared state in SpacetimeDB: every agent, task, hold and audit row is visible as it happens.
+
+**Conversational load context (v1.11):** operator testing exposed an incomplete voice brief: only
+internal identifiers reached Cartesia. The team demo now uses fictional load GG-1042, Oakland to
+Sacramento, with route/stops, appointment times, cargo, parties, invoice, documents and detention
+terms. A bounded source allowlist rebuilds and freezes the call brief before provider admission;
+arbitrary task facts cannot replace it. Verification questions reference the actual $250 claim and
+provisional $125 calculation. Five hosted read-only tools retrieve current case/load/document and
+ledger status using per-call capabilities, through a dedicated HTTPS surface without demo controls
+or mutation routes. Unknown ledger status stays unknown; document delivery channels remain unavailable.
+The hosted persona answers questions before its checklist, uses readable references and does not
+invent email addresses. The Demo Console includes a dispatcher role-play guide. The first two
+operator phone calls completed with the old brief; revised speech/tool-use acceptance is for the
+operator's next call. No additional call is placed by setup or tests.
 
 ## 2. Goals and non-goals
 
@@ -528,6 +541,7 @@ Resolved in v1.2: the home company is fictional "Golden Gate Freight" with real 
 7. Other sponsor credits worth using for data (check the live site and Slack). — W4
 
 ## Change log
+- v1.11 (Sat Oct 24): replaced the thin voice demo with a coherent synthetic detention case, full source-grounded Cartesia context, five scoped live lookup tools, hosted-persona updates and a dispatcher role-play guide. Tool callbacks use a dedicated read-only HTTPS surface; completion still polls locally. No envelope contract changed. Revised live speech acceptance remains for the operator's next call.
 - v1.10 (Sat Oct 24): added the local Demo Console phone control, durable authenticated admission, exact-task demo authorization, idempotent retries and visible call status. Coordinated Voice/W2 changes let explicit team demos bypass hours and hourly limits while enforcing one active call; ordinary calls retain both guards. Live phone acceptance remains pending the operator's click.
 - v1.0 (Fri 11:45 PM): initial ground truth.
 - v1.1 (Sat 12:30 AM): dropped Fetch.ai and Coinbase. Person 4 = real-world data, enrichment and demo outreach. Demo-only outreach with intended_to and routed_to. Added the Validator agent (:9108) with memory and instruction learning, the Git-style audit with spreadsheet blame, diff and history, and human flags. Renamed the external-check agent from Validation to Verification.

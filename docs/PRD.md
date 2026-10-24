@@ -1,5 +1,5 @@
 # PRD: Autonomous Back Office for Freight Brokerages
-**Cal Hacks 13.0 · Ground truth v1.2 · Sat Oct 24, 1:00 AM PDT**
+**Cal Hacks 13.0 · Ground truth v1.3 · Sat Oct 24, 2026 PDT**
 
 > This is the one source of truth. If code, a chat message or a slide disagrees with this doc, the doc wins until someone changes it. To change it, edit this file, bump the version in the change log at the bottom, and post one line in the team chat. Section 7 (interface contracts) is frozen at **Sat 3:00 AM**. After that, contract changes need agreement from both owners on that interface.
 
@@ -7,7 +7,7 @@
 
 ## 1. Summary
 
-**One line:** an autonomous finance back office for a mid-size freight brokerage. Specialized AI agents, running on our own sandboxed multi-model harness on an ASUS AI supercomputer, pick up work as it arrives, delegate to each other over the A2A protocol, phone carriers and shippers with voice agents, and act on the books only through deterministic controls, recording every decision in an audit trail.
+**One line:** an autonomous finance back office for a mid-size freight brokerage. An intake and first-hop routing harness on an ASUS AI supercomputer dispatches incoming work to independent finance agents. Those agents use their own model providers, including OpenAI and Anthropic Claude, delegate to each other over the A2A protocol, phone carriers and shippers with voice agents, and act on the books only through deterministic controls, recording every decision in an audit trail.
 
 **Seats it fills (the line the Hyphenate judges ask for):** *"The carrier-payables clerk, payables fraud analyst and collections specialist at a 40-person freight brokerage, reporting to the controller."*
 
@@ -16,7 +16,7 @@
 **What makes it real, not a demo script:**
 - Eight independently running agent services that talk over the real A2A protocol: Agent Cards, task IDs, artifacts, and tasks that park and resume.
 - A continuous synthetic company with planted errors and an answer key, so we can prove accuracy.
-- Our own harness that routes each LLM call to the best open-source model and runs every tool in a sandbox.
+- Our own ASUS harness classifies incoming events and dispatches the first A2A task. Independent agents then execute with their own provider adapters and scoped tools; subsequent delegations go directly between agents.
 - Real counterparties: real carriers and shippers found by scraping (Apify: FMCSA, company sites), with real contacts surfaced through an enrichment waterfall (FMCSA, our own contact-data key, context.dev, website scrape), shown unmasked. Realistic synthetic invoices are written against them.
 - Cartesia voice calls run for real, but **outreach is demo-only**: the UI shows the real person it would call, and the call actually rings a teammate playing that person. Real sandbox APIs: Nessie (bank), CRS (credit).
 - A Validator agent reviews every output and every bit of friction, then updates each agent's instructions and persistent memory.
@@ -51,7 +51,7 @@
 | 1 | **Apify** ($5k pool + $400 Best Actor) | Meaningful use: real company and carrier scraping (FMCSA, websites), plus our own published "freight counterparty" actor | W4 |
 | 1 | **CRS** ($1k / $500 agent / fraud interview) | CRS central, live against the sandbox | W4 |
 | 1 | **Capital One Nessie** ($300/person) | Completeness, creativity, complexity | W4 |
-| 1 | **Armadin security** (criteria TBD) | Sandboxed harness, prompt-injection quarantine, SoD, tamper-evident audit | W1 + W3 |
+| 1 | **Armadin security** (criteria TBD) | Isolated intake processing and agent tools, prompt-injection quarantine, SoD, tamper-evident audit | W1 + W3 |
 | 2 | **Notability** | Real process notes from sketch to build | Everyone; start now |
 | auto | **Cal Hacks: Most Technically Complex** | Comes from the main build | n/a |
 | stretch | Bright Data: live public web data on the counterparties (site, news, reviews). It must be essential and public only; personal contacts come from the enrichment waterfall (section 6, W4 R2). Factory Droid also stretch. | Only if Tier 1 is done | W4 |
@@ -71,28 +71,38 @@ Check Devpost for a cap on how many tracks we can enter.
 
 ## 5. System architecture
 
+```text
+W4 simulator / demo / judge input
+              |
+              v
+Ingest -> Redis Streams (events)
+              |
+              v
+W1 ASUS: intake + first-hop routing harness
+  classify event -> select allowed skill/owner -> A2A SendMessage
+              |
+              v
+W3 independent A2A services (separate deployment hosts)
+  Carrier AP -> Risk -> Verification -> Voice Desk
+  Shipper AR / Controller / CFO / Validator
+       |                  |                  |
+       v                  v                  v
+  Provider adapters   Scoped tools       Cartesia gateway
+  OpenAI / Claude     CRS / Nessie /      (public HTTPS)
+  / other providers   Apify / email
+       |
+       +-- Agent-owned inference and tool loops; direct A2A delegation
+
+W1 dispatch records + W3 tasks / financial changes / audit
+              |
+              v
+W2 SpacetimeDB reducers -> live dashboard subscriptions
+
+Postgres: source records and durable A2A task history
+W4 evaluator: answer key -> outcome metrics
 ```
- ┌──────────── W4: World & integrations ────────────┐
- │ Simulator (TMS/ERP/invoices/PODs/GPS/email/bank) │
- │ Demo triggers · Judge scenario injector          │──► Ingest ──► Redis Streams ──► Router (first hop only)
- │ Answer key / evaluator                           │       │                              │ A2A SendMessage
- └──────────────────────────────────────────────────┘       ▼                              ▼
-                                                     Postgres (company records,   ┌──────── W3: A2A mesh ────────┐
-                                                     A2A task store)              │ Carrier AP 9101  Shipper AR 9102│
-                                                                                  │ CFO 9103   Risk 9104            │
- ┌──────── W1: ASUS harness (secure env) ────────┐   LLM calls + tool exec        │ Controller 9105 Verification 9106 │
- │ Model router ("auto" or pinned per agent)     │◄──────────────────────────────│ Voice Desk 9107                 │
- │ Model pool (open-source, vLLM/SGLang/Ollama)  │                               │ Policy engine · Audit writer    │
- │ Ensemble ("fusion") for high-stakes calls     │                               └──────────────┬─────────────────┘
- │ Tool sandbox (files, code, spreadsheets)      │                     reducers (HTTP) │        │ Cartesia / Apify /
- │ Secrets vault · telemetry                     │                                     ▼        │ CRS / Nessie / email
- └───────────────────────────────────────────────┘                  ┌──── W2: SpacetimeDB ────┐  ▼
-                                                                    │ cases, tasks, agents,  │  External world
-                                                                    │ ledger, holds, approvals│  (phones, APIs)
-                                                                    │ audit, calls, metrics   │
-                                                                    │ → Dashboard (live subs) │
-                                                                    └─────────────────────────┘
-```
+
+**Execution boundary (decided in v1.3):** ASUS is the first layer. It consumes new business events, classifies ambiguous input, and dispatches the initial task to an allowed A2A service. After handoff, each agent owns its model calls and tool loop and delegates directly over A2A. Agent inference, downstream delegation, voice processing, and financial execution do not pass through ASUS. Model providers such as OpenAI and Anthropic Claude supply inference to the independently deployed agent services; the providers themselves are not A2A services.
 
 **Where state lives (decided):**
 | Data | System of record | Why |
@@ -104,36 +114,38 @@ Check Devpost for a cap on how many tracks we can enter.
 
 **v1.1 additions to the diagram:** a **Validator :9108** in the A2A mesh (it reviews every output, owns memory and instruction updates, and receives human flags), and a **W4 enrichment pipeline** (Apify scrape → enrichment waterfall: FMCSA, own key, context.dev → `company` and `contact` directory) that feeds Verification, the Voice Desk and the UI.
 
-**Everything runs on the ASUS box** except Cartesia (cloud), external APIs, and optionally the dashboard. A tunnel (cloudflared or ngrok) exposes `gateway:9000` over public HTTPS for Cartesia webhooks.
+**Deployment:** ASUS hosts W1 intake/routing and any models used for intake classification only. W3 agent services and their tool runtimes run on separately configured hosts and call their configured model providers directly. Redis, Postgres, SpacetimeDB, the dashboard and gateway have independently configured addresses; none is assumed to live on ASUS. A tunnel (cloudflared or ngrok) exposes `gateway:9000` over public HTTPS for Cartesia webhooks. Already-dispatched A2A tasks must continue if ASUS is unavailable; new events remain durably queued.
 
 ## 6. Workstreams and owners
 
 | ID | Workstream | Owner | Owns |
 |---|---|---|---|
-| W1 | **ASUS harness** | _name_ | Model serving, model router, ensemble, tool sandbox, secrets, telemetry, harness UI panel data |
+| W1 | **ASUS intake/routing harness** | _name_ | Redis event consumer, input classification, first-hop routing, dispatch retries/deduplication, intake isolation, routing telemetry; optional routing-policy experiments |
 | W2 | **SpacetimeDB + dashboard** | _name_ | Module schema and reducers (ledger invariants), subscriptions, the Next.js dashboard (network graph, case tree, feeds, approvals inbox, scoreboard) |
-| W3 | **A2A mesh** | _name_ | 8 agent services (including the Validator), AgentRuntime, delegation and park/resume, router, policy engine, audit/change-set writer, memory store, Voice Desk logic, webhook gateway |
+| W3 | **A2A mesh** | _name_ | 8 agent services (including the Validator), AgentRuntime, per-agent provider adapters and tool isolation, delegation and park/resume, review-outbox delivery, policy engine, audit/change-set writer, memory store, Voice Desk logic, webhook gateway |
 | W4 | **Real-world data, enrichment & demo outreach** | _person 4_ | Scraping real counterparties, the contact enrichment waterfall (Apify, context.dev, own key), realistic synthetic documents, simulator and answer key, the demo console and the demo-mode call and email loop, Cartesia personas, CRS/Nessie connectors, pitch, video, Devpost |
 
-Rule: **each owner can build against mocks of the other three from hour 0.** The contracts in section 7 are what make that possible. Each owner ships a mock of their side by **Sat 3:00 AM** (a stub harness that returns canned JSON, a SpacetimeDB module with tables and no-op reducers, an agent that returns canned artifacts, a simulator that emits 10 fixed events).
+Rule: **each owner can build against mocks of the other three from hour 0.** The contracts in section 7 are what make that possible. Each owner ships a mock of their side by **Sat 3:00 AM** (a stub intake router that dispatches seeded events, a SpacetimeDB module with tables and no-op reducers, an agent that returns canned artifacts, a simulator that emits 10 fixed events).
 
-### W1: ASUS harness (sandboxed, multi-model, Fusion-style routing)
-**Purpose:** our own inference and execution environment. Every agent's LLM call and tool execution goes through it. It decides which open-source model handles each call (or the user pins one), and it isolates tool execution.
+### W1: ASUS intake and first-hop routing harness
+**Purpose:** accept incoming business events and dispatch the first task to the correct independent A2A service. ASUS is the entry layer, not the execution host or inference proxy for the A2A mesh.
 
 Requirements:
-- **H1 Model pool:** serve 3+ open-source models side by side behind one OpenAI-compatible endpoint, for example a small fast model (classification, extraction), a strong reasoning model (investigation, planning), and a coder/tool-calling model (spreadsheet and code tools). Choose by benchmarking on the ASUS box (candidates: Qwen3 family, gpt-oss, Llama, Mistral, Gemma). Serving: vLLM or SGLang preferred, with Ollama or llama.cpp as fallback. Confirm the hardware specs and what fits in memory first.
-- **H2 Router ("auto" mode):** pick a model per call from `route_hints` (agent, task_type, priority, needs_tools, json_schema, max_latency_ms, stakes) plus live load. The rules start deterministic (a table); a learned or LLM classifier is a stretch. Every response reports which model was used and why.
-- **H3 Pinning:** the dashboard can set a model per agent (`auto` or a specific model). The harness reads this from the SpacetimeDB `agent_config` table.
-- **H4 Ensemble ("fusion"):** for `stakes: "high"` calls (risk verdicts, hold or release recommendations), run 2–3 models and merge. If they disagree beyond a threshold, return `agreement: false`. The agent must then escalate to a human. This is the "knows when to ask" story.
-- **H5 Priority and fairness:** P0 (demo and voice path) has a reserved slot. Per-agent concurrency caps. Queue-depth metrics.
-- **H6 Structured output:** JSON-schema-constrained decoding (guided decoding in vLLM or SGLang), with a validate-and-repair retry.
-- **H7 Tool sandbox:** tools that touch files, run code or edit spreadsheets execute in an isolated sandbox per agent per task: a container (or nsjail or firejail), no network by default, a per-agent allowlist, a read-only mount of the case files plus a scratch dir, CPU, memory and time limits. Results are returned as JSON plus file refs.
-- **H8 Secrets:** API keys live only in the harness or gateway env. Agents get capability tokens, never raw keys. The sandbox gets nothing.
-- **H9 Injection quarantine:** untrusted text (email bodies, PDF text, call transcripts) is wrapped and marked `untrusted` before any prompt. Tools invoked in a turn that contains untrusted text must pass policy as usual. Log any detected instruction-like content as a risk signal.
-- **H10 Telemetry:** per call: model, latency, tokens, queue wait, route reason. Written to SpacetimeDB `llm_calls` (sampled) for the dashboard.
-- **H11 Fallback:** if a model is down or times out, route to the next model. If everything is down, return `{"error":"unavailable"}` so the agent takes its deterministic path.
+- **H1 Intake:** consume the Redis `events` stream using consumer group `router`. Validate the event schema, resolve source/evidence references, and use the existing `TaskEnvelope` and delegation metadata contracts without adding fields.
+- **H2 Routing:** map known event types to the skill owner in section 7.3. Classify ambiguous email or scenario input into an allowlisted skill. The initial policy is deterministic for typed events; a classifier may assist ambiguous events. Record the selected skill, destination and reason. Do not choose a different financial role merely because its model is cheaper or less busy.
+- **H3 Agent discovery:** resolve independently configured service URLs and validate their A2A Agent Cards. Check that the selected service advertises the required skill and is enabled. Provider/model configuration belongs to the destination agent, not the ASUS router.
+- **H4 Dispatch:** send the first A2A task, with the event ID as a stable idempotency key and the case context attached. Persist the event-to-task mapping and acknowledge Redis only after durable acceptance. Reclaim abandoned deliveries and retry with backoff; the receiving runtime deduplicates repeated submissions. A lost response must not create duplicate work.
+- **H5 Priority and backpressure:** reserve dispatch capacity for P0 demo events, bound in-flight submissions per destination, and expose queue depth and age. Work waiting for a destination stays queued without blocking unrelated destinations.
+- **H6 Classification output:** validate classifier output against a schema and the skill allowlist. Unknown or low-confidence classifications go to a visible triage queue. Never invent a target, authorize payment, or bypass policy based on input text.
+- **H7 Intake isolation:** any local document extraction or classification preprocessing runs with read-only source files, bounded CPU/memory/time and no network by default. Agent tool execution is owned and isolated by W3 on its execution hosts.
+- **H8 Secrets:** ASUS holds only credentials required for event intake, first-hop A2A dispatch and routing telemetry, plus an intake-classifier credential if needed. Agent provider keys belong to the corresponding service deployment. Neither prompts nor sandbox jobs receive raw keys.
+- **H9 Injection quarantine:** treat incoming document and email text as untrusted evidence. Classifiers may label the work but cannot rewrite routing permissions or financial controls. Downstream agents enforce the same boundary on their own inputs.
+- **H10 Telemetry:** record event ID, case ID, selected skill/agent, dispatch task ID, routing policy version, reason, queue wait, classification latency and acceptance/retry status. Keep intake metrics separate from downstream provider/model usage. W1 and W2 agree any additive telemetry schema before implementation.
+- **H11 Failure behavior:** if optional classification inference is unavailable, known event types still route deterministically; ambiguous work waits for triage. If ASUS stops, Redis retains incoming work while already-dispatched agents continue independently.
 
-Done when: the hero case runs on real models with p50 < 2 s per small call; the dashboard shows model per call; switching an agent's model in the UI takes effect on the next call; the sandbox blocks network access from a test tool.
+Done when: the hero event reaches AP over real A2A; re-delivering its event ID does not create a second task; a queued event survives a router restart; and AP -> Risk -> Verification continues after the ASUS router is stopped. Measure intake-to-acceptance latency separately from full case resolution and report measured throughput.
+
+**Routing learning / RL (proposed, not a shipped requirement):** a contextual-bandit experiment may select among pre-approved intake classification strategies or equivalent deployments of the same skill. It must preserve required role/skill ownership. Inputs may include event type, classifier confidence and destination queue depth. Evaluate delayed outcomes against the simulator answer key, with explicit penalties for latency, cost and unnecessary downstream work. W1/W4 must define reward weights, feedback attribution, allowed actions and held-out replay evaluation before claiming RL results. Begin in shadow mode against fixed routing; do not let exploration affect payment permissions. This experiment is distinct from W3's Validator memory/instruction loop and does not route downstream model calls through ASUS.
 
 ### W2: SpacetimeDB + dashboard
 **Purpose:** the live, transactional operational state of the company and the agents, and the UI that shows it.
@@ -143,13 +155,13 @@ Requirements:
 - **S2 Ledger invariants in reducers:** `post_journal_entry` rejects unbalanced entries, entries in locked periods, and entries where `approved_by == requested_by`. `place_hold` and `release_hold` check amounts against the invoice. `release_hold` over $5,000 requires an `approvals` row with a human approver.
 - **S3 Auth:** agents call reducers over HTTP with a service identity/token per agent. Humans use the dashboard identity. Reducers check the caller's role (for example, only `controller` may post journal entries).
 - **S4 Dashboard (Next.js + React Flow + a spreadsheet grid component) views:**
-  1. **Agent network:** 7 nodes with live status, active, queued and done counts, and an edge animation on every A2A delegation.
+  1. **Agent network:** 8 nodes with live status, active, queued and done counts, and an edge animation on every A2A delegation.
   2. **Live task feed:** newest first, filterable by agent or case.
   3. **Case drill-down:** the task tree, each task's artifacts, evidence, policy ids, model used, and call transcript and recording link.
   4. **Approvals inbox:** approve or reject with a one-time code; the decision goes to a reducer.
   5. **Ledger and holds:** journal entries, holds, cash position.
   6. **Scoreboard:** precision, recall, $ caught, false holds, median time to resolution, calls placed.
-  7. **Harness panel:** model per agent (dropdown: auto or pinned), recent LLM calls, ensemble disagreements.
+  7. **Harness panel:** ASUS intake queue, classification/dispatch latency, selected skill and routing reason, retries and accepted task IDs. Show agent provider/model configuration and inference telemetry separately, sourced from W3; provider changes take effect in the agent runtime.
   8. **Demo console:** W4 backend; see W4 R6.
   9. **Counterparty panel:** the real company, the FMCSA data, the enriched contacts with source and confidence, and the outreach-mode banner.
   10. **Audit spreadsheets (Git-style):** grid views of the AP and AR subledgers, the GL, holds and the CFO forecast. Click a cell for **blame** (change set, agent, task, source document and page, policy). The **history** tab lists every version of the cell. **Diff** compares any two change sets. **Log** is the per-case change-set list, like `git log`. Export to XLSX or CSV.
@@ -157,21 +169,21 @@ Requirements:
   12. **Flags and human inbox:** a flag button on every row, cell, task, call and decision. Shows flag status and what changed because of it. Approvals live here too.
 - **S5 Performance:** UI updates < 500 ms after a reducer call; handles 2 events/s for 30 min.
 
-Done when: all 8 views run off live subscriptions, with no polling except a fallback.
+Done when: all 12 views run off live subscriptions, with no polling except a fallback.
 
 ### W3: A2A mesh
 **Purpose:** the agents themselves and how they collaborate.
 
 Requirements:
-- **A1 Seven services**, each its own process with an Agent Card at `/.well-known/agent-card.json` and a JSON-RPC endpoint (a2a-sdk **1.2.3**). See the roster in section 8.
-- **A2 Shared `AgentRuntime`:** the LLM tool loop goes through the harness. Each agent has instructions, knowledge and an allowlist of tools. It provides `delegate(skill, envelope, mode)` with modes `await | park | fanout`, park/resume on `INPUT_REQUIRED`, and resume via follow-up messages on the same task id.
+- **A1 Eight services**, each its own process with an Agent Card at `/.well-known/agent-card.json` and a JSON-RPC endpoint (a2a-sdk **1.2.3**). See the roster in section 8.
+- **A2 Shared `AgentRuntime`:** each agent owns its LLM/tool loop and calls its configured provider directly through a provider adapter (OpenAI, Anthropic Claude, or another supported provider). Normalize structured outputs and tool-call results into the existing contracts. Each agent has instructions, knowledge and an allowlist of tools; file/code tools run in an isolated per-task sandbox on the agent execution host. Provider credentials remain in the service environment, outside prompts and tool sandboxes. High-stakes multi-model review, when configured, runs within W3 and applies P-009 on disagreement. It provides `delegate(skill, envelope, mode)` with modes `await | park | fanout`, park/resume on `INPUT_REQUIRED`, and resume via follow-up messages on the same task id.
 - **A3 Guards:** delegation depth ≤ 3, no cycles, fan-out ≤ 3, per-agent delegation allowlist, idempotency key per delegation, per-skill timeouts, retries with backoff, a reconciler loop every 5 s.
-- **A4 Router:** a Redis consumer group that maps event type to the owning agent and makes the first SendMessage only.
+- **A4 Handoff boundary:** W1 owns the Redis business-event consumer and first `SendMessage` on ASUS. W3 owns receiving-task deduplication and all subsequent delegation through `FreightAgent.delegate()`. W3 also runs the durable Validator/review-outbox delivery worker; this internal delivery worker is separate from ASUS intake routing. Shared A2A helpers remain under W3 ownership.
 - **A5 Policy engine:** a pure-Python function `check(action, actor, payload) -> allow | deny | needs_approval(rule_id)`. It is called before every state-changing tool, and the reducers enforce the same rules again (defense in depth).
 - **A6 Audit writer:** every step becomes a SpacetimeDB `audit_events` row (hash-chained per case). It records structured rationale, never chain-of-thought.
-- **A7 Voice Desk:** the `place_call` and `handle_inbound_call` skills. Cartesia API, webhook gateway, transcript → findings through the harness, `call_result` artifacts (section 7.5).
+- **A7 Voice Desk:** the `place_call` and `handle_inbound_call` skills. Cartesia API, webhook gateway, transcript → findings through the Voice Desk's provider adapter, `call_result` artifacts (section 7.5).
 - **A8 Precedents:** after a case resolves, write `precedents`. Before investigating, agents query the precedents for the same carrier and claim type. A high-confidence match resolves the case automatically and cites the precedent.
-- **A9 "Ask why":** `GET /cases/{id}/why?decision=` composes an answer from audit rows (data, rule, precedent, approver) using the harness. It never makes up facts that aren't in the audit trail.
+- **A9 "Ask why":** `GET /cases/{id}/why?decision=` composes an answer from audit rows (data, rule, precedent, approver) using the responsible agent's provider adapter. It never makes up facts that aren't in the audit trail.
 
 - **A10 Validator (:9108), the review and learning loop:** see section 7.7. It reviews every completed output from AP, AR, Controller and CFO. Deterministic re-checks: recompute totals, tie the subledger to the GL, check debits = credits, forecast rows sum. An LLM review of the case's A2A message history and tool log looks for friction: retries, rejections, policy denials, timeouts, missing documents, re-delegations, human overrides. Output: a `review` row plus `lessons`. Lessons become versioned **memory entries** (applied automatically) or **instruction patches** (applied automatically as versioned diffs; reverting is one click). The Validator also handles `review_flag` tasks from humans.
 - **A11 Memory:** each agent's runtime loads its `instructions.md@version` and its top-k relevant `agent_memory` entries (by carrier, lane, claim type and skill) into every task. The memory and instruction version used is recorded on every task and audit row.
@@ -194,7 +206,7 @@ Done when: acceptance tests T1–T9 and T13–T17 (section 11) pass.
 - **R4 Simulator and ingest:** run a continuous event stream with a 3-month fast-forward history at boot. Ingest normalizes, timestamps and dedupes events, writes Postgres, publishes to Redis and opens SpacetimeDB cases. Train an anomaly model (IsolationForest) on clean history as the `score_anomaly` tool. The evaluator joins outcomes to the answer key and writes `metric` rows.
 - **R5 Outreach safety (hard rule):** `OUTREACH_MODE=demo` is the only mode at the event. Real contacts are resolved and shown as `intended_to`. The actual dial and send target is replaced with `DEMO_ALLOWLIST` (team phones and team inbox). Code refuses any target not on the allowlist, even if someone flips the flag. Every call and email record stores both `intended_to` and `routed_to`.
 - **R6 Demo console (UI by W2, backend by W4):**
-  1. Pick a case, or type a scenario that the harness turns into a case.
+  1. Pick a case, or type a scenario that W4 normalizes into a case/event before ASUS first-hop routing.
   2. Choose the channel (call or email) and the teammate playing the counterparty.
   3. **Start**. The Voice Desk places a real Cartesia call to the teammate, using the real counterparty's context (company, load, claim) as dynamic variables.
   4. The audience hears the back-and-forth on speaker. The transcript appears in the case (live if Cartesia exposes it, otherwise right after the call). The findings resume the A2A task.
@@ -207,37 +219,18 @@ Done when: the counterparty panel shows real enriched data for every hero case. 
 
 ## 7. Interface contracts (frozen Sat 3:00 AM)
 
-### 7.1 Harness API (W1 provides, W3 and W4 consume)
-Base `http://asus:8000`. Auth: `Authorization: Bearer <agent capability token>`.
+### 7.1 ASUS intake/routing boundary (W4 -> W1 -> W3)
+The supported integration path is the existing Redis event contract (section 7.3) followed by the existing A2A task contract (section 7.2). No new shared task-envelope fields are introduced by this architecture correction.
 
-```http
-POST /v1/chat/completions          # OpenAI-compatible
-{
-  "model": "auto",                  # or a pinned model id; "auto" honours dashboard pinning
-  "messages": [...],
-  "tools": [...],                   # optional, OpenAI tool schema
-  "response_format": {"type":"json_schema","json_schema":{...}},   # optional
-  "max_tokens": 512,
-  "metadata": {
-    "agent": "risk", "case_id": "CASE-4821", "task_id": "…",
-    "task_type": "investigate_charge", "priority": "P0",
-    "stakes": "high",               # high → ensemble
-    "max_latency_ms": 4000, "untrusted_spans": [[120, 560]]
-  }
-}
-→ 200 OpenAI-shaped response plus
-  "harness": {"model_used":"…","route_reason":"…","ensemble":{"models":[…],"agreement":true,"votes":[…]},
-              "latency_ms":812,"queue_ms":40}
-→ 503 {"error":"unavailable"}       # agent uses its deterministic fallback
+1. W4 ingest publishes a normalized event to Redis.
+2. W1's consumer on ASUS selects an allowed skill/owner, resolves its configured Agent Card URL, and constructs a `TaskEnvelope` using the existing fields.
+3. W1 sends an A2A message to that service. Initial metadata uses `from_agent: "router"`, `delegation_depth: 0`, `visited: []`, a stable event-based `idempotency_key`, and the existing case/correlation fields.
+4. W3 durably creates or returns the existing task for that idempotency key. W1 stores the acceptance mapping and acknowledges the Redis event. Acceptance means the task is durably queued/created, not that the financial work has completed.
+5. The receiving agent executes using its own model provider and scoped tools. All child delegations go directly to other A2A services. W1 does not wait for the whole case, relay child tasks, or proxy provider calls.
 
-POST /v1/sandbox/exec
-{ "agent":"controller","task_id":"…","tool":"spreadsheet.apply"|"python"|"pdf.extract",
-  "input":{…}, "files":["case://CASE-4821/invoice.pdf"], "timeout_s":20, "network":false }
-→ {"ok":true,"output":{…},"files_out":["case://CASE-4821/out/recon.xlsx"],"stdout":"…","limits_hit":null}
+`harness/server.py` currently exposes mock `/v1/chat/completions`, `/v1/models` and `/v1/sandbox/exec` endpoints from the earlier design. These are implementation migration work, not the v1.3 integration contract; agents must not depend on them for inference or tools. Any internal classifier endpoint on ASUS is local to W1 intake. W1 owns the deployment of the initial event consumer currently scaffolded in `router/main.py`; W3 supplies the A2A runtime helpers.
 
-GET /v1/models                      # pool + health + current load
-```
-Mock by Sat 3 AM: return canned JSON matching the schema; `model_used: "mock"`.
+Mock boundary: a seeded event reaches a stub A2A agent and produces a recorded acceptance. W1 and W3 must exercise duplicate delivery, lost acceptance responses and restart recovery against the same unchanged envelope. Additional routing telemetry or configuration APIs require their owners' agreement before adding schemas.
 
 ### 7.2 A2A envelope (W3 internal, also shown in the UI)
 - Case → `context_id`. A delegated work item → `Task.id`. Payload → `Part.data` (use `new_data_part` / `new_data_message`). Result → a named `Artifact` with a data part.
@@ -249,9 +242,9 @@ ResultArtifact = {outcome:"clear|suspicious|verified|unverified|hold|approve|rej
                   confidence, findings:{…}, evidence_refs:[…], policy_ids:[…], model_used, recommended_next:[…]}
 ```
 - Business status in status metadata: `queued, investigating, awaiting_other_agent, awaiting_external_verification, awaiting_call, awaiting_human_approval, resolved, rejected, failed`. All `awaiting_*` statuses map to A2A `INPUT_REQUIRED`.
-- Agent Card URLs: `http://asus:91xx/.well-known/agent-card.json`.
+- Agent Card URLs: `http://<configured-agent-host>:91xx/.well-known/agent-card.json` (or the deployed HTTPS equivalent). Configure each endpoint independently; ASUS is not the default host for the mesh.
 
-### 7.3 Events: Redis Streams (W4 produces, W3 router consumes)
+### 7.3 Events: Redis Streams (W4 produces, W1 ASUS router consumes)
 Stream `events` (single stream, `type` field), consumer group `router`.
 ```json
 {"event_id":"EVT-…","type":"carrier_invoice.received","ts":"2026-06-14T15:02:11Z","sim_ts":"…",
@@ -267,7 +260,7 @@ Tables:
 - `case(case_id pk, load_id, opened_at, status, priority, title, exposure_usd, resolved_at)`
 - `task(task_id pk, case_id, parent_task_id, agent, skill, display_id, a2a_state, business_status, outcome, confidence, model_used, started_at, updated_at)`
 - `agent(name pk, status, active, queued, done, errors, p50_ms, card_url, last_seen)`
-- `agent_config(agent pk, model:"auto"|id, enabled)`
+- `agent_config(agent pk, model:"auto"|id, enabled)`: each W3 service resolves `auto` using its own provider configuration and validates supported model IDs; ASUS only uses enabled/availability information for dispatch.
 - `ledger_entry(id pk, case_id, period, lines:[{account, debit, credit}], memo, requested_by, approved_by, posted_at)`
 - `hold(id pk, case_id, invoice_id, amount, reason_code, status, placed_by, released_by)`
 - `payment_proposal(id pk, case_id, carrier_id, amount, status, proposed_by)`
@@ -290,6 +283,8 @@ Tables:
 Reducers (with the caller role that may call each):
 `open_case (ingest)`, `upsert_task (any agent)`, `agent_heartbeat (any agent)`, `record_delegation (any agent)`, `append_audit (any agent; computes the hash server-side)`, `propose_payment (carrier_ap)`, `place_hold (controller)`, `release_hold (controller; >$5k needs approval)`, `post_journal_entry (controller; balanced, period open, SoD)`, `request_approval (controller)`, `decide_approval (human)`, `upsert_call (voice_desk; stores intended_to and routed_to)`, `add_precedent (controller)`, `log_llm_call (harness)`, `set_metric (evaluator)`, `set_agent_model (human)`, `commit_change_set (any writer; must be called in the same reducer transaction as the data change)`, `record_doc_read (any agent)`, `add_review (validator)`, `upsert_memory (validator, human)`, `publish_instruction_version (validator, human)`, `revert_instruction_version (human)`, `raise_flag (human)`, `resolve_flag (validator)`. Every ledger, hold, payment or forecast reducer emits its `change_set` and `cell_change` rows **atomically**.
 
+**Telemetry ownership:** the existing `harness` writer role for `log_llm_call` is a telemetry permission, not a requirement to run inference on ASUS. A W3-side telemetry collector may use a dedicated credential with that role to publish normalized agent usage; it does not proxy inference. Preserve current reducer permissions until W2/W3 agree any role changes. W1 intake dispatch telemetry is separate from agent inference telemetry.
+
 Mock by Sat 3 AM: the tables exist, the reducers insert rows without validation, and the dashboard shows raw tables.
 
 ### 7.5 Voice Desk ↔ Cartesia (W3 code, W4 config)
@@ -299,7 +294,7 @@ Mock by Sat 3 AM: the tables exist, the reducers insert rows without validation,
 - `POST https://api.cartesia.ai/agents/calls`, headers `X-API-Key`, `Cartesia-Version: 2026-08-14`, body `{agent_id, from_number_id, ringing_timeout_seconds:25, outbound_calls:[{to_number, dynamic_variables:{case_id, task_id, call_token, …facts}}]}`.
 - In-call webhook tools hit `https://<tunnel>/voice/tools/<name>`. They are read-only: `get_load_facts, get_payment_status, get_invoice_status, get_case_summary`. The only writes allowed append evidence or events: `record_promise_to_pay, open_dispute`.
 - System tools: `end_call`, `voicemail_detection`, `transfer_to_number`.
-- Call end: a webhook (check `x-webhook-secret`), or poll `GET /agents/calls/{id}`. Then transcript → redact PII → harness extraction against the persona's schema → `call_result` artifact → the parent resumes. No answer returns `{reached:false}`.
+- Call end: a webhook (check `x-webhook-secret`), or poll `GET /agents/calls/{id}`. Then transcript → redact PII → Voice Desk provider-adapter extraction against the persona's schema → `call_result` artifact → the parent resumes. No answer returns `{reached:false}`.
 - Every persona opens with AI disclosure plus the reason for the call. Custom metrics: `disclosure_given`, `claim_confirmed`.
 
 ### 7.6 Integration tools (W4 implements as Python functions in `integrations/`, W3 calls them)
@@ -317,7 +312,7 @@ scrape_company(url|name) -> {website, address, phones, about}                 # 
 Each tool returns `{"error": …}` instead of raising, and is mockable with `MOCK_INTEGRATIONS=1`.
 
 ### 7.7 Validator loop (W3)
-Trigger: the router (or the agent's own runtime) sends `review_output` to the Validator for every terminal task from AP, AR, Controller and CFO, and `review_flag` for every new `flag`. Delivery is park mode, so it never blocks the case.
+Trigger: W3's review-outbox delivery worker (or the agent's own runtime) sends `review_output` to the Validator for every terminal task from AP, AR, Controller and CFO, and `review_flag` for every new `flag`. Delivery is park mode, so it never blocks the case.
 ```python
 ReviewInput  = {target_task_id, case_id, agent, artifact, change_set_ids, a2a_history_ref, tool_log_ref, flag?}
 ReviewOutput = {verdict:"pass|issue", checks:[{name, ok, expected, actual}],
@@ -326,7 +321,7 @@ ReviewOutput = {verdict:"pass|issue", checks:[{name, ok, expected, actual}],
                 actions:["reopen_case"|"rerun_task"|"none"]}
 ```
 Rules:
-- Deterministic checks run first. The LLM review uses the high-stakes ensemble.
+- Deterministic checks run first. The LLM review uses the Validator's configured provider adapter; any high-stakes ensemble runs in W3, not on the ASUS intake path.
 - A memory lesson is written to `agent_memory` straight away.
 - An instruction lesson becomes a new `instruction_version` with a diff. It goes live on that agent's next task, and a human can revert it.
 - Lessons can **never** change policy code, limits, tool permissions or delegation allowlists (P-012).
@@ -370,7 +365,7 @@ P-001 invoice > contract + 2% → hold the delta · P-002 no payment on a held i
 - Bank-change demo: carrier `C-77` "Rapid Ridge Transport" emails new bank details the day before a **$9,400** payment.
 
 ## 11. Acceptance tests (shared definition of done)
-- T1: All 7 Agent Cards resolve and validate.
+- T1: All 8 Agent Cards resolve and validate.
 - T2: The hero case produces ≥ 5 A2A tasks under one context_id, each with an artifact, and the audit hash chain verifies.
 - T3: Trigger to ring ≤ 15 s (measure 5 times).
 - T4: 20 concurrent cases plus 1 waiting on a call: all finish.
@@ -380,22 +375,25 @@ P-001 invoice > contract + 2% → hold the delta · P-002 no payment on a held i
 - T8: The precedent replay resolves with no call and cites the precedent.
 - T9: A payload with a different phone number still dials the directory number; the mismatch is a risk signal.
 - T10: The scoreboard shows precision and recall after 30 min of simulation.
-- T11: Pin Risk to a specific model in the UI; the next call uses it.
-- T12: A sandbox tool trying to reach the network is blocked and logged.
+- T11: Pin Risk to a supported provider/model configuration in the UI; the next call goes directly from Risk to that provider, with the selected model recorded. ASUS receives no inference request.
+- T12: An agent sandbox tool trying to reach the network is blocked and logged on its execution host; intake preprocessing isolation is tested separately on ASUS.
 - T13: Every AP, AR, Controller and CFO output gets a `review` row within 30 s.
 - T14: A seeded friction case (missing rate con, then re-request) produces an AP memory entry, and the next similar case uses it (the memory id appears on the task).
 - T15: Clicking the hold cell shows blame back to the source PDF and page, the reading agent, the change set and the policy. A diff between two change sets is correct.
 - T16: With `OUTREACH_MODE` forced to anything, a non-allowlisted number is refused, and the call record shows both `intended_to` and `routed_to`.
 - T17: A human flag on a CFO forecast row is resolved by the Validator, with a visible diff and a re-run.
+- T18: Stop ASUS after AP accepts a task: downstream AP -> Risk -> Verification and case completion continue. New events remain in Redis and dispatch after ASUS restarts.
+- T19: Re-deliver the same intake event, including after a lost acceptance response: one initial A2A task is created and one event-to-task mapping is retained.
+- T20: Dispatch to at least two independently hosted agents using different providers (e.g. OpenAI and Claude); demonstrate direct provider calls and direct A2A delegation.
 
 ## 12. Timeline (PDT; deadline **Sun 9:00 AM**; judging 10:30 AM–12:30 PM)
 
 | Time | Checkpoint | W1 Harness | W2 SpacetimeDB/UI | W3 A2A | W4 World/integrations |
 |---|---|---|---|---|---|
-| Fri 11:45 PM – Sat 3 AM | **C0: contracts frozen, mocks up** | Model serving up; mock API | Module with tables; raw UI | 7 services boot with cards; stub decisions; AP→Risk→Verification over A2A | Seeded world; 10 fixed events; Cartesia number provisioned; API keys |
-| Sat 3 AM – 9 AM | **C1: spine end to end** | Router v1, structured output, P0 lane | Reducers with invariants; network + feed views | Park/resume, joins, reconciler, policy, audit to SpacetimeDB | Continuous generator, ingest → Redis, hero triggers, Apify + Nessie tools |
-| Sat 9 AM – 3 PM | **C2: hero case live with a real call** | Ensemble, sandbox, telemetry to SpacetimeDB | Case drill-down, approvals inbox, ledger | Voice Desk + webhook gateway, precedents, "ask why" | Personas + webhook tools, CRS, email, anomaly model, answer key |
-| Sat 3 PM – 9 PM | **C3: feature freeze** | Pinning from UI, fallback, injection quarantine | Scoreboard, harness panel, injector UI, polish | Crash recovery, T1–T9 green, inbound line | Evaluator, judge injector, history replay, Apify actor published |
+| Fri 11:45 PM – Sat 3 AM | **C0: contracts frozen, mocks up** | Redis intake + mock first-hop dispatch | Module with tables; raw UI | 8 services boot with cards; provider adapters; stub decisions; AP→Risk→Verification over A2A | Seeded world; 10 fixed events; Cartesia number provisioned; API keys |
+| Sat 3 AM – 9 AM | **C1: spine end to end** | Typed routing, validated classification, P0 lane | Reducers with invariants; network + feed views | Park/resume, joins, reconciler, policy, audit to SpacetimeDB | Continuous generator, ingest → Redis, hero triggers, Apify + Nessie tools |
+| Sat 9 AM – 3 PM | **C2: hero case live with a real call** | Dispatch deduplication/recovery, intake isolation, routing telemetry | Case drill-down, approvals inbox, ledger | Voice Desk + webhook gateway, provider/tool isolation, precedents, "ask why" | Personas + webhook tools, CRS, email, anomaly model, answer key |
+| Sat 3 PM – 9 PM | **C3: feature freeze** | Classification fallback, backpressure, injection quarantine | Scoreboard, harness panel, injector UI, polish | Provider pinning, crash recovery, T1–T9 and T18–T20 green, inbound line | Evaluator, judge injector, history replay, Apify actor published |
 | Sat 9 PM – Sun 3 AM | **C4: hardening** | Load test at 2 events/s | Performance, backup polling | Bug fixes only | Record backup video; write README and Devpost |
 | Sun 3 AM – 9 AM | **C5: rehearse and submit** | All | All | All | Submit by **8:00 AM** (1 h buffer) |
 
@@ -406,7 +404,8 @@ Integration checkpoints are hard: at each one, everyone stops for 15 minutes and
 ## 13. Risks and fallbacks
 | Risk | Fallback |
 |---|---|
-| Local models are too slow under load | P0 lane, small model for the hot path, deterministic fast path, reduce background rate |
+| ASUS intake classification is too slow or unavailable | Deterministic routes for known events, bounded classification time, triage ambiguous input, retain events in Redis |
+| Agent model provider is rate-limited or unavailable | Agent-owned retry/backoff and configured provider fallback; park affected tasks, preserve direct delegation for unaffected work |
 | Venue Wi-Fi or tunnel drops (Cartesia webhooks) | Phone hotspot, poll `GET /agents/calls/{id}`, pre-recorded backup video |
 | SpacetimeDB is new to us (2.x API differs from older tutorials) | W2 keeps the mock schema working by C0; Postgres mirror for the audit as a backup |
 | Phone number or Cartesia setup delay | Provision in the first hour; email path as the backup moment |
@@ -416,21 +415,23 @@ Integration checkpoints are hard: at each one, everyone stops for 15 minutes and
 | Scope creep | Section 2 non-goals; feature freeze at C3 |
 
 ## 14. Repo and conventions
-- Monorepo `freightops/`: `harness/ (W1)`, `spacetime/ + web/ (W2)`, `agents/ common/ router/ gateway/ (W3)`, `sim/ ingest/ integrations/ eval/ (W4)`, `docs/PRD.md` (this file), `docker-compose.yml`.
-- Python 3.11+, `a2a-sdk==1.2.3`, Pydantic v2. Use `.env.example` and never commit keys (judges get the repo).
+- Monorepo `freightops/`: `harness/ + router/main.py (W1 intake)`, `spacetime/ + web/ (W2)`, `agents/ common/ gateway/ + internal review delivery (W3)`, `sim/ ingest/ integrations/ eval/ (W4)`, `docs/PRD.md` (this file), `docker-compose.yml`.
+- Python 3.12, `a2a-sdk==1.2.3`, Pydantic v2. Use `.env.example` and never commit keys (judges get the repo).
 - Branch per workstream; merge to `main` at each checkpoint; `main` must always run `make demo`.
 - Shared IDs: `CASE-####`, `LOAD-####`, `TASK-###` (display), carriers `C-###`, shippers `S-##`.
 
 ## 15. Open questions (owner to resolve, then update this doc)
 Resolved in v1.2: the home company is fictional "Golden Gate Freight" with real counterparties; contacts are shown unmasked on the live site; enrichment is sponsor-first (Apify, context.dev) plus our own key.
-1. ASUS hardware specs and which models fit; final model pool. — W1
-2. Sandbox technology (Docker vs nsjail vs firejail) on the ASUS OS. — W1
-3. Does the A2A runtime run the tool loop (current decision), or does the harness own the agent loop? — W1 + W3
-4. Email provider for the team inbox and reply resume. — W4
-5. Which FMCSA actor returns phone and email reliably; context.dev credit amount. — W4
-6. Other sponsor credits worth using for data (check the live site and Slack). — W4
+1. ASUS hardware specs and intake classifier implementation; benchmark against deterministic routing before selecting a local model. — W1
+2. Intake isolation on ASUS and separate agent tool-sandbox technology on W3 execution hosts. — W1 + W3
+3. Per-agent provider/model assignments, deployment URLs, credentials and fallback limits. Agent-owned tool loops and direct A2A delegation are decided. — W3
+4. Routing-policy RL experiment: allowed equivalent actions, reward weights, feedback attribution and held-out baseline; proposed until implemented and evaluated. — W1 + W4
+5. Email provider for the team inbox and reply resume. — W4
+6. Which FMCSA actor returns phone and email reliably; context.dev credit amount. — W4
+7. Other sponsor credits worth using for data (check the live site and Slack). — W4
 
 ## Change log
 - v1.0 (Fri 11:45 PM): initial ground truth.
 - v1.1 (Sat 12:30 AM): dropped Fetch.ai and Coinbase. Person 4 = real-world data, enrichment and demo outreach. Demo-only outreach with intended_to and routed_to. Added the Validator agent (:9108) with memory and instruction learning, the Git-style audit with spreadsheet blame, diff and history, and human flags. Renamed the external-check agent from Validation to Verification.
 - v1.2 (Sat 1:00 AM): fictional "Golden Gate Freight" with real counterparties; enrichment waterfall (FMCSA via Apify, our own key, context.dev, Apify website scrape); contacts unmasked on the live site.
+- v1.3 (Sat Oct 24): corrected ASUS to intake and first-hop routing only. Independent A2A services own provider calls (including OpenAI/Claude), tools and downstream delegation. Updated deployment diagram, W1/W3 ownership, integration boundary, telemetry, recovery tests and timeline. Existing task envelopes and reducer permissions remain unchanged. Routing RL is explicitly proposed and separate from Validator instruction/memory updates; earlier local-model harness endpoints require implementation migration.

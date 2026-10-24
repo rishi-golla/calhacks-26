@@ -7,7 +7,8 @@ from common.transcripts import scripted
 
 
 def live() -> bool:
-    return bool(os.getenv("CARTESIA_API_KEY")) and os.getenv("MOCK_INTEGRATIONS", "1") != "1"
+    """Opt-in only: a configured key alone must not route calls into the unwired live branch."""
+    return os.getenv("VOICE_PROVIDER") == "cartesia" and bool(os.getenv("CARTESIA_API_KEY"))
 
 
 async def dial(call_id: str, routed_to: str, persona: str, variables: dict) -> dict:

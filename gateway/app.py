@@ -94,7 +94,7 @@ async def lifespan(app):
         await store.close()
 
 
-app = FastAPI(title="freightops-gateway", lifespan=lifespan)
+app = FastAPI(title="freightline-gateway", lifespan=lifespan)
 
 
 async def object_body(req: Request) -> dict:

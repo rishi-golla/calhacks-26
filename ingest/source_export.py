@@ -194,7 +194,7 @@ def build_cases(db: sqlite3.Connection, brokerage: str | None = None) -> dict[st
 def _company(record: dict) -> dict:
     source = record.get("source")
     keep = ("id", "name", "legal_name", "kind", "usdot", "mc", "cik", "ticker", "industry", "address", "city", "state",
-            "phone", "email", "terms", "authority_status", "owner_operator", "power_units", "drivers",
+            "phone", "email", "website", "terms", "authority_status", "owner_operator", "power_units", "drivers",
             "mcs150_date", "source", "source_url")
     company = {key: record[key] for key in keep if record.get(key) is not None}
     fixture = source in FIXTURE_SOURCES
@@ -268,9 +268,10 @@ class Exporter:
     def changed(self) -> None:
         self.dirty = True
 
-    def flush(self, db: sqlite3.Connection) -> None:
-        if self.dirty:
-            export(db, self.target)
+    def flush(self, db: sqlite3.Connection, dataset: dict | None = None) -> None:
+        """Write `dataset` (built from the current state of `db`) or, when stale, a fresh build."""
+        if dataset is not None or self.dirty:
+            write(dataset or build(db), self.target)
             self.dirty = False
 
 

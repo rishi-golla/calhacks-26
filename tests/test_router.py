@@ -92,3 +92,66 @@ def test_route_event_is_the_deterministic_first_hop(tmp):
     assert env.subject["remit_email"].startswith("[[EMAIL_")      # rules-layer redaction still applies
     with pytest.raises(ValueError, match="resolve a case_id"):
         route_event({**value, "payload": {"invoice_amount": 1.0}, "case_hint": "LOAD-900"})
+
+
+# Dispatch telemetry (W2 record_dispatch, originally on the bridge router), against the W1 consumer.
+
+async def test_dispatch_persistence_failure_keeps_accepted_event_pending(monkeypatch):
+    client = AsyncMock()
+    handler = AsyncMock(return_value={"event_id": "event-123", "case_id": "case-900", "status": "accepted",
+                                      "route": {"reason": "7.3 table"},
+                                      "dispatch": {"agent": "carrier_ap", "skill": "process_carrier_invoice",
+                                                   "task_id": "task"}})
+    telemetry = AsyncMock(side_effect=RuntimeError("telemetry unavailable"))
+    monkeypatch.setattr(consumer, "record_dispatch", telemetry)
+    with pytest.raises(RuntimeError):
+        await consumer._handle(client, None, None, None, b"1-0", event(), stream="events", group="router",
+                               triage="triage", handler=handler)
+    client.xack.assert_not_awaited()
+    assert telemetry.call_args.args[2] == "accepted" and telemetry.call_args.kwargs["task_id"] == "task"
+
+
+async def test_gps_is_acknowledged_without_telemetry(monkeypatch):
+    client = AsyncMock()
+    telemetry = AsyncMock()
+    monkeypatch.setattr(consumer, "record_dispatch", telemetry)
+    handler = AsyncMock(return_value={"event_id": "gps-1", "case_id": None, "status": "not_routed",
+                                      "route": {"reason": "gps.ping is not routed (7.3)"}})
+    await consumer._handle(client, None, None, None, b"1-0", {"event_id": "gps-1", "type": "gps.ping"},
+                           stream="events", group="router", triage="triage", handler=handler)
+    telemetry.assert_not_awaited()
+    client.xack.assert_awaited_once()
+
+
+async def test_malformed_intake_records_triage_before_dead_letter(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from harness.ingest.pipeline import BadEvent
+    client = AsyncMock()
+    pipe = AsyncMock()
+    pipe.xadd, pipe.xack = MagicMock(), MagicMock()
+    client.pipeline = MagicMock(return_value=pipe)
+    pipe.__aenter__.return_value = pipe
+    telemetry = AsyncMock()
+    monkeypatch.setattr(consumer, "record_dispatch", telemetry)
+    handler = AsyncMock(side_effect=BadEvent("event needs event_id and type"))
+    await consumer._handle(client, None, None, None, b"1-0", {}, stream="events", group="router",
+                           triage="triage", handler=handler)
+    assert telemetry.call_args.args[2] == "triage"
+    pipe.xadd.assert_called_once()
+    pipe.execute.assert_awaited_once()
+
+
+async def test_dispatch_uses_router_identity_and_redis_queue_time(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from harness.ingest import telemetry
+    db = MagicMock(disabled=False)
+    db.mutate = AsyncMock()
+    factory = MagicMock(return_value=db)
+    monkeypatch.setattr(telemetry, "SpacetimeClient", factory)
+    await telemetry.record_dispatch(b"1000-0", {}, "triage", "missing event", received_ms=1123)
+    factory.assert_called_once_with(actor="router")
+    payload = db.mutate.call_args.args[1]
+    assert payload["write_id"] == "dispatch:1000-0:triage" and payload["event_id"] == "redis:1000-0"
+    assert payload["queue_ms"] == 123 and payload["case_id"] == ""

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import redis.asyncio as redis
 
+from ingest import mirror as spacetime_mirror
 from ingest import source_export
 from ingest.documents import (
     classify,
@@ -31,6 +32,8 @@ DOCUMENTS_STREAM = os.getenv("DOCUMENTS_STREAM", "documents")
 GROUP = "ingest"
 CONSUMER = "ingest-1"
 ACCESSORIAL_TERMS = ("detention", "lumper", "layover", "stop-off", "stop off", "tonu", "driver assist")
+# Events ingest derives that open a case for the router; a demo load's one jumps to P0 and carries its outreach target.
+CASE_EVENTS = {"carrier_invoice.received", "bank_change.requested", "shipper_payment.received"}
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS loads (load_id TEXT PRIMARY KEY, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS invoices (invoice_id TEXT PRIMARY KEY, load_id TEXT, invoice_number TEXT, json TEXT NOT NULL);
@@ -605,8 +608,30 @@ async def _handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
     return []
 
 
+def _stamp_demo(trigger: dict, derived: list[dict], db: sqlite3.Connection) -> None:
+    """Keep a demo load's origin on what ingest derives from it (the simulator already stamps its own events).
+
+    The case-opening event also gets P0 (PRD H5 reserves P0 capacity for the demo) and the routing context the
+    Voice Desk reads from its subject. That context is routing, not evidence: it is added after the records are
+    stored, so the source export never sees it. `demo_channel`, not `channel`: a bank-change payload's `channel`
+    is how the request arrived."""
+    for event in derived:
+        if event.get("event_id") == trigger.get("event_id"):
+            continue
+        payload = event.get("payload") or {}
+        demo = (_load(db, payload.get("load_id") or payload.get("matched_load_id")) or {}).get("demo")
+        if not demo:
+            continue
+        event["source"] = "demo"
+        if event.get("type") in CASE_EVENTS:
+            event["priority"] = "P0"
+            payload.update(demo_target=demo.get("demo_target"), demo_channel=demo.get("channel"),
+                           injection_id=demo.get("injection_id"))
+
+
 async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
     derived = await _handle(ev, db)
+    _stamp_demo(ev, derived, db)
     trigger_id = ev.get("event_id")
     if not trigger_id:
         trigger_id = hashlib.sha256(json.dumps(ev, sort_keys=True, default=str).encode()).hexdigest()[:16]
@@ -623,16 +648,26 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
 
 
 async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict,
-                         exporter: source_export.Exporter | None = None) -> bool:
+                         exporter: source_export.Exporter | None = None,
+                         mirror: spacetime_mirror.Mirror | None = None) -> bool:
     try:
         raw = values.get(b"json") or values.get("json")
         events = await handle(json.loads(raw), db)
         if exporter is not None:
             exporter.changed()
-            if any(event.get("type") != "document.extracted" and (event.get("payload") or {}).get("case_id")
-                   for event in events):
-                # Agents read the case from the export as soon as the router admits it, so write it first.
-                exporter.flush(db)
+        routed = mirror is not None and not mirror.disabled and spacetime_mirror.routed_case_ids(events)
+        exported = exporter is not None and any(
+            event.get("type") != "document.extracted" and (event.get("payload") or {}).get("case_id")
+            for event in events)
+        if routed or exported:
+            # Agents read the case from the export and write against its SpacetimeDB rows as soon as the router
+            # admits it, so both land first. A failed mirror write leaves the entry unacked; its retry resends
+            # the same write IDs, which the module treats as no-ops.
+            dataset = source_export.build(db)
+            if routed:
+                await mirror.cases(dataset, events)
+            if exported:
+                exporter.flush(db, dataset)
         for event in events:
             stream = DOCUMENTS_STREAM if event.get("type") == "document.extracted" else EVENTS_STREAM
             await r.xadd(stream, {"json": json.dumps(event, default=str)},
@@ -646,10 +681,41 @@ async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict,
         return False
 
 
+class DirectoryWatch:
+    """Mirror the directory at startup and again whenever `make world` rewrites world.json."""
+
+    def __init__(self, mirror: spacetime_mirror.Mirror):
+        self.mirror = mirror
+        self.seen: float | None = None
+        self.task: asyncio.Task | None = None
+
+    def check(self) -> None:
+        if self.mirror.disabled:
+            return
+        try:
+            stamp = directory.path().stat().st_mtime
+        except OSError:
+            stamp = 0.0
+        if stamp == self.seen:
+            return
+        self.seen = stamp
+        if self.task:
+            self.task.cancel()
+        self.task = asyncio.create_task(spacetime_mirror.sync_directory(self.mirror))
+
+    def stop(self) -> None:
+        if self.task:
+            self.task.cancel()
+
+
 async def main() -> None:
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     db = connect()
     exporter = source_export.Exporter()
+    mirror = spacetime_mirror.Mirror()
+    if mirror.disabled:
+        log.info("SpacetimeDB mirror off (SPACETIME_DISABLED=1)")
+    watch = DirectoryWatch(mirror)
     try:
         try:
             await r.xgroup_create(RAW_STREAM, GROUP, id="0", mkstream=True)
@@ -657,6 +723,7 @@ async def main() -> None:
             if "BUSYGROUP" not in str(exc):
                 raise
         while True:
+            watch.check()
             while True:
                 pending = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: "0"}, count=10)
                 entries = [entry for _stream, batch in pending or [] for entry in batch]
@@ -664,7 +731,7 @@ async def main() -> None:
                     break
                 failed = False
                 for entry_id, values in entries:
-                    if not await _process_entry(r, db, entry_id, values, exporter):
+                    if not await _process_entry(r, db, entry_id, values, exporter, mirror):
                         failed = True
                 if failed:
                     await asyncio.sleep(1)
@@ -673,8 +740,9 @@ async def main() -> None:
             response = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: ">"}, count=10, block=2000)
             for _stream, entries in response or []:
                 for entry_id, values in entries:
-                    await _process_entry(r, db, entry_id, values, exporter)
+                    await _process_entry(r, db, entry_id, values, exporter, mirror)
     finally:
+        watch.stop()
         db.close()
         await r.aclose()
 

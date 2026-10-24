@@ -63,7 +63,9 @@ class Mutation {
   }
   finish(): void {
     const { ctx, p, actor, action } = this;
-    const taskId = text(p, 'task_id', '');
+    // Dispatch references a remote first-hop task, which may not yet be mirrored
+    // here. Its ID lives on the dispatch row, not as a router-owned audit task.
+    const taskId = action === 'record_dispatch' ? '' : text(p, 'task_id', '');
     if (taskId) {
       const task = must(ctx.db.task.task_id.find(taskId), 'audit task does not exist');
       if (action === 'record_delegation') {
@@ -89,7 +91,7 @@ class Mutation {
     });
     const base = {
       parent_id: head?.id ?? '', parent_hash: head?.hash ?? '', sequence: (head?.sequence ?? 0) + 1,
-      case_id: caseId, task_id: text(p, 'task_id', ''), agent: actor.actor,
+      case_id: caseId, task_id: taskId, agent: actor.actor,
       actor_identity: actor.identity, action, summary: text(p, 'summary', action), policy_ids,
       instr_version: uint(p, 'instr_version'), memory_ids: list(p, 'memory_ids'), ts: now(ctx),
       write_id: text(p, 'write_id', undefined, 200),
@@ -187,15 +189,23 @@ export const grantRole: Handler = m => {
   m.capture('principal', key, previous, next);
 };
 
+// Ingest opens a case at its first routable event (often a POD, before the carrier bills) and refreshes
+// title, priority and exposure as source documents arrive. Status, timestamps and a set load are not ingest's.
 export const openCase: Handler = m => {
-  const { ctx, p } = m;
+  const { ctx, p, actor } = m;
+  const case_id = text(p, 'case_id');
+  const previous = ctx.db.case.case_id.find(case_id);
+  if (previous) caseFor(ctx, case_id, actor);
+  const load_id = text(p, 'load_id', previous?.load_id ?? '');
+  if (previous?.load_id && load_id !== previous.load_id) throw new Error('case load is immutable');
   const row = {
-    case_id: text(p, 'case_id'), load_id: text(p, 'load_id'), title: text(p, 'title'),
-    status: 'open', priority: choice(p, 'priority', ['P0', 'P1', 'P2', 'P3'], 'P2'),
-    exposure_usd: amount(p, 'exposure_usd', 0), opened_at: now(ctx), resolved_at: '',
+    case_id, load_id, title: text(p, 'title', previous?.title),
+    status: previous?.status ?? 'open', priority: choice(p, 'priority', ['P0', 'P1', 'P2', 'P3'], previous?.priority ?? 'P2'),
+    exposure_usd: amount(p, 'exposure_usd', previous?.exposure_usd ?? 0), opened_at: previous?.opened_at ?? now(ctx),
+    resolved_at: previous?.resolved_at ?? '',
   };
-  ctx.db.case.insert(row);
-  m.capture('case', row.case_id, null, row);
+  if (previous) ctx.db.case.case_id.update(row); else ctx.db.case.insert(row);
+  m.capture('case', row.case_id, previous, row);
 };
 
 export const updateCase: Handler = m => {
@@ -592,6 +602,9 @@ export const upsertCompany: Handler = m => {
   m.capture('company', id, previous, row);
 };
 
+// sec_edgar: a shipper's SEC registration. fixture: a labeled stand-in, never a real-world record.
+const CONTACT_SOURCES = ['fmcsa', 'sec_edgar', 'own_key', 'context_dev', 'website', 'fixture'];
+
 export const upsertContact: Handler = m => {
   const { ctx, p } = m;
   const id = text(p, 'id');
@@ -599,7 +612,7 @@ export const upsertContact: Handler = m => {
   const company_id = text(p, 'company_id', previous?.company_id);
   must(ctx.db.company.id.find(company_id), 'contact company does not exist');
   if (previous && previous.company_id !== company_id) throw new Error('contact company is immutable');
-  const row = { id, company_id, name: text(p, 'name', previous?.name), title: text(p, 'title', previous?.title ?? ''), phone: text(p, 'phone', previous?.phone ?? ''), email: text(p, 'email', previous?.email ?? ''), linkedin_url: text(p, 'linkedin_url', previous?.linkedin_url ?? ''), source: choice(p, 'source', ['fmcsa', 'own_key', 'context_dev', 'website'], previous?.source ?? 'website'), source_url: text(p, 'source_url', previous?.source_url ?? ''), confidence: probability(p, 'confidence', previous?.confidence ?? 0), alternates_json: p.alternates_json === undefined ? previous?.alternates_json ?? '[]' : json(p, 'alternates_json', []) };
+  const row = { id, company_id, name: text(p, 'name', previous?.name), title: text(p, 'title', previous?.title ?? ''), phone: text(p, 'phone', previous?.phone ?? ''), email: text(p, 'email', previous?.email ?? ''), linkedin_url: text(p, 'linkedin_url', previous?.linkedin_url ?? ''), source: choice(p, 'source', CONTACT_SOURCES, previous?.source ?? 'website'), source_url: text(p, 'source_url', previous?.source_url ?? ''), confidence: probability(p, 'confidence', previous?.confidence ?? 0), alternates_json: p.alternates_json === undefined ? previous?.alternates_json ?? '[]' : json(p, 'alternates_json', []) };
   if (row.phone) phone(row.phone);
   if (previous) ctx.db.contact.id.update(row); else ctx.db.contact.insert(row);
   m.capture('contact', id, previous, row);
@@ -673,9 +686,37 @@ export const addPrecedent: Handler = m => {
   p.case_id = source_case;
 };
 
+export const recordDispatch: Handler = m => {
+  const { ctx, p } = m;
+  const event_id = text(p, 'event_id');
+  const previous = ctx.db.dispatch.event_id.find(event_id);
+  const status = choice(p, 'status', ['accepted', 'triage', 'not_routed', 'duplicate']);
+  const row = {
+    event_id, case_id: text(p, 'case_id', ''), skill: text(p, 'skill', ''),
+    agent: choice(p, 'agent', ['', ...AGENTS], ''), task_id: text(p, 'task_id', ''),
+    status, reason: text(p, 'reason'), queue_ms: uint(p, 'queue_ms'),
+    policy_version: text(p, 'policy_version'), ts: now(ctx),
+  };
+  if (row.agent && !SKILLS[row.agent].includes(row.skill)) throw new Error('dispatch skill does not belong to agent');
+  if (['accepted', 'duplicate'].includes(status) && (!row.case_id || !row.agent || !row.skill || !row.task_id)) {
+    throw new Error('accepted dispatch requires case, agent, skill and task');
+  }
+  if (previous && ['accepted', 'duplicate'].includes(previous.status)) {
+    if (!['accepted', 'duplicate'].includes(status) ||
+        ['case_id', 'agent', 'skill', 'task_id'].some(key => previous[key as keyof typeof previous] !== row[key as keyof typeof row])) {
+      throw new Error('accepted dispatch route is immutable');
+    }
+    row.status = 'duplicate';
+    row.queue_ms = previous.queue_ms;
+    row.policy_version = previous.policy_version;
+  }
+  if (previous) ctx.db.dispatch.event_id.update(row); else ctx.db.dispatch.insert(row);
+  m.capture('dispatch', event_id, previous, row);
+};
+
 export const logLlmCall: Handler = m => {
   const { ctx, p } = m;
-  const row = { id: text(p, 'id'), ts: now(ctx), agent: choice(p, 'agent', AGENTS), model: text(p, 'model'), latency_ms: uint(p, 'latency_ms'), tokens: uint(p, 'tokens'), route_reason: text(p, 'route_reason', ''), ensemble_agreement: bool(p, 'ensemble_agreement') };
+  const row = { id: text(p, 'id'), ts: now(ctx), agent: choice(p, 'agent', [...AGENTS, 'router', 'ingest']), model: text(p, 'model'), latency_ms: uint(p, 'latency_ms'), tokens: uint(p, 'tokens'), route_reason: text(p, 'route_reason', ''), ensemble_agreement: bool(p, 'ensemble_agreement') };
   ctx.db.llm_call.insert(row);
   m.capture('llm_call', row.id, null, row);
 };
@@ -763,19 +804,40 @@ function writeInstruction(m: Mutation, agent: string, diff: string, reason: stri
   m.capture('instruction_version', row.id, null, row);
 }
 
+function checkInstructionVersion(m: Mutation, agent: string): void {
+  if (m.p.expected_version === undefined || m.p.expected_version === null) throw new Error('expected_version is required');
+  const latest = [...m.ctx.db.instruction_version.agent.filter(agent)]
+    .reduce((max, row) => Math.max(max, row.version), 0);
+  if (uint(m.p, 'expected_version') !== latest) throw new Error('instruction version conflict');
+}
+
+// Automated learning is append-only and uses a code-owned advisory template.
+// No source, flag or model text can remove instructions or introduce permissions.
+function validateAutomatedInstruction(diff: string): void {
+  const match = /^--- a\/instructions\.md\n\+\+\+ b\/instructions\.md\n@@ -(\d+),0 \+(\d+),2 @@\n\+\n\+Before completing a result, cite the source records and recheck monetary totals in exact cents\.\n$/.exec(diff);
+  if (!match || Number(match[2]) !== Number(match[1]) + 1) {
+    throw new Error('P-012: validator instructions must use the approved append-only template');
+  }
+}
+
 export const publishInstruction: Handler = m => {
   const { ctx, p, actor } = m;
   const source_ref = text(p, 'source_ref');
   if (actor.role === 'validator' && !ctx.db.review.id.find(source_ref) && !ctx.db.flag.id.find(source_ref)) throw new Error('validator instruction changes must cite an existing review or flag');
-  writeInstruction(m, choice(p, 'agent', AGENTS), text(p, 'diff', undefined, 32000), text(p, 'reason'), source_ref);
+  const agent = choice(p, 'agent', AGENTS);
+  checkInstructionVersion(m, agent);
+  const diff = text(p, 'diff', undefined, 32000);
+  if (actor.role === 'validator') validateAutomatedInstruction(diff);
+  writeInstruction(m, agent, diff, text(p, 'reason'), source_ref);
 };
 
 export const revertInstruction: Handler = m => {
   const { ctx, p } = m;
   const agent = choice(p, 'agent', AGENTS);
   const version = uint(p, 'version');
-  const target = must(ctx.db.instruction_version.id.find(`${agent}:${version}`), 'instruction version does not exist');
-  writeInstruction(m, agent, target.diff, text(p, 'reason'), target.id, version);
+  checkInstructionVersion(m, agent);
+  const target = version === 0 ? null : must(ctx.db.instruction_version.id.find(`${agent}:${version}`), 'instruction version does not exist');
+  writeInstruction(m, agent, target?.diff ?? '', text(p, 'reason'), target?.id ?? `${agent}:0`, version);
 };
 
 export const raiseFlag: Handler = m => {

@@ -73,7 +73,7 @@ def prepare() -> Path:
             "contract_amount": invoice["contract_rate"], "issued_at": invoice["issued_at"]})
         if target:
             admin.call("admin", "set_demo_target", {"phone": target, "enabled": True,
-                       "label": "Operator-provided FreightOps team demo"})
+                       "label": "Operator-provided FreightLine team demo"})
     finally:
         admin.client.close()
     update_env(ROOT / ".env", {"SOURCE_DATA_PATH": str(destination)})

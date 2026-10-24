@@ -1,4 +1,4 @@
-# FreightOps: Autonomous Back Office for Freight Brokerages
+# FreightLine: Autonomous Back Office for Freight Brokerages
 
 Nine brokerage-specific agents coordinate through real A2A services and SpacetimeDB: Carrier Settlement,
 Shipper Billing & Collections, Load Profitability, Accessorial Audit, Carrier Trust & Verification,
@@ -38,12 +38,17 @@ services total; each case invokes only the specialists it needs.
 ## Quick start
 ```bash
 cp .env.example .env
-set -a; source .env; set +a
 make setup && make infra
 make agents    # terminal 1: nine independent services
 make demo      # regression fixture over real A2A; not a live integration claim
 make test
 ```
+
+Service targets (`agents`, `gateway`, `router`, `ingest`, `sim`, `world`, `source`, `harness`,
+`review-worker`) load `.env` themselves; pick another profile with `ENV_FILE=path/to/file.env`.
+Variables already set in your shell take precedence. `make test`, `make lint` and `make demo` never
+load it, so a live profile in `.env` cannot reach the test suite. Don't `source` a live `.env` into
+the shell you run tests from.
 
 See [the A2A runbook](docs/A2A-RUNBOOK.md) for the implemented milestone, live credentials,
 source-data contract, recovery behavior and remaining work. Model and call results are explicitly

@@ -525,7 +525,7 @@ Integration checkpoints are hard: at each one, everyone stops for 15 minutes and
 | Scope creep | Section 2 non-goals; feature freeze at C3 |
 
 ## 14. Repo and conventions
-- Monorepo `freightops/`: `harness/ + router/main.py (W1 intake)`, `spacetime/ + web/ (W2)`, `agents/ common/ gateway/ + internal review delivery (W3)`, `sim/ ingest/ integrations/ eval/ (W4)`, `docs/PRD.md` (this file), `docker-compose.yml`.
+- Monorepo `freightline/`: `harness/ + router/main.py (W1 intake)`, `spacetime/ + web/ (W2)`, `agents/ common/ gateway/ + internal review delivery (W3)`, `sim/ ingest/ integrations/ eval/ (W4)`, `docs/PRD.md` (this file), `docker-compose.yml`.
 - Python 3.12, `a2a-sdk==1.2.3`, Pydantic v2. Use `.env.example` and never commit keys (judges get the repo).
 - Branch per workstream; merge to `main` at each checkpoint; `main` must always run `make demo`.
 - Shared IDs: `CASE-####`, `LOAD-####`, `TASK-###` (display), carriers `C-###`, shippers `S-##`.

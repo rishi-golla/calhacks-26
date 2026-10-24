@@ -2,6 +2,11 @@ PY := .venv/bin/python
 SIM_DATA_DIR ?= data
 SPACETIME_DB ?= freightops
 SPACETIME_URL ?= http://127.0.0.1:3000
+# Service targets load ENV_FILE (default .env); variables already in your shell win.
+# test, lint, demo and the live-* launchers never use it, so tests stay offline.
+ENV_FILE ?= .env
+export ENV_FILE
+RUN := $(PY) -m scripts.with_env --
 .PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest source verify-data review-worker live-agents live-demo live-gateway
 
 setup:            ## create venv + install
@@ -10,25 +15,25 @@ setup:            ## create venv + install
 infra:            ## postgres + redis
 	docker compose up -d
 harness:          ## W1 mock harness on :8000
-	$(PY) -m harness.server
+	$(RUN) $(PY) -m harness.server
 agents:           ## all 9 A2A agents on :9101-9109
-	./scripts/dev_agents.sh
+	$(RUN) ./scripts/dev_agents.sh
 gateway:          ## webhooks + demo endpoints on :9000
-	$(PY) -m gateway.app
+	$(RUN) $(PY) -m gateway.app
 router:           ## Redis -> first-hop A2A
-	$(PY) -m router.main
+	$(RUN) $(PY) -m router.main
 ingest:           ## Consume Redis raw; publish routable events and extracted documents
-	$(PY) -m ingest.main
+	$(RUN) $(PY) -m ingest.main
 source:           ## re-export the agent source dataset from data/ingest.db (ingest keeps it current)
-	$(PY) -m ingest.source_export
+	$(RUN) $(PY) -m ingest.source_export
 world:            ## refresh real carriers (FMCSA) + shippers (SEC EDGAR) -> data/world.json
-	$(PY) -m sim.world --refresh
+	$(RUN) $(PY) -m sim.world --refresh
 sim:              ## publish raw simulator arrivals to Redis `raw`
-	$(PY) -m sim.generator
+	$(RUN) $(PY) -m sim.generator
 verify-data:      ## verify generated W4 documents and event traces
 	$(PY) -m sim.verify --data "$(SIM_DATA_DIR)"
 review-worker:    ## W2 review outbox -> Settlement Quality Review
-	$(PY) -m common.review_worker
+	$(RUN) $(PY) -m common.review_worker
 web:              ## dashboard on :3001
 	cd web && npm run dev -- -p 3001
 test:

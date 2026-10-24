@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     await pool.aclose()
 
 
-app = FastAPI(title="freightops-harness", lifespan=lifespan)
+app = FastAPI(title="freightline-harness", lifespan=lifespan)
 
 
 def _unavailable() -> JSONResponse:

@@ -9,12 +9,14 @@ import json
 import logging
 import os
 import socket
+import time
 
 import redis.asyncio as redis
 
 from harness.ingest.dispatch import Dispatcher
 from harness.ingest.pipeline import P_ORDER, BadEvent, process
 from harness.ingest.routing import table_route
+from harness.ingest.telemetry import record_dispatch
 from harness.ingest.vault import Vault
 from harness.pool import Pool
 
@@ -36,11 +38,14 @@ def needs_model(ev: dict) -> bool:
 
 async def _handle(r: redis.Redis, pool: Pool, vault: Vault, dispatcher: Dispatcher, entry_id: bytes, ev: dict,
                   *, stream: str, group: str, triage: str, handler=process) -> None:
+    received_ms = int(time.time() * 1000)
     try:
         res = await handler(pool, vault, dispatcher, ev)
     except BadEvent as e:
+        await record_dispatch(entry_id, ev, "triage", f"bad event: {e}", received_ms=received_ms)
         await _dead_letter(r, stream, group, entry_id, f"bad event: {e}", json.dumps(ev, default=str))
         return
+    await _telemetry(entry_id, ev, res, received_ms)   # raises -> entry stays pending (durable acceptance)
     if res["status"] == "triage":
         await r.xadd(triage, {"json": json.dumps({"event_id": res["event_id"], "case_id": res["case_id"],
                                                   "reason": res["route"]["reason"],
@@ -49,6 +54,25 @@ async def _handle(r: redis.Redis, pool: Pool, vault: Vault, dispatcher: Dispatch
         await r.xack(stream, group, entry_id)
     else:
         log.warning("leaving %s pending: %s", res["event_id"], res.get("error"))
+
+
+async def _telemetry(entry_id, ev: dict, res: dict, received_ms: int) -> None:
+    status, reason = res["status"], (res.get("route") or {}).get("reason", "")
+    if status == "accepted":
+        d = res.get("dispatch") or {}
+        if d.get("task_id"):   # the contract requires the accepted A2A task id on an accepted row
+            await record_dispatch(entry_id, ev, "accepted", reason, agent=d.get("agent") or "",
+                                  skill=d.get("skill") or "", task_id=d["task_id"], received_ms=received_ms)
+    elif status == "duplicate":
+        prior = res.get("prior") or res.get("dispatch") or {}
+        if prior.get("task_id"):   # only an accepted event has a dispatch row to mark as duplicate
+            await record_dispatch(entry_id, ev, "duplicate", "re-delivered event", agent=prior.get("agent") or "",
+                                  skill=prior.get("skill") or "", task_id=prior["task_id"], received_ms=received_ms)
+    elif status == "triage":
+        await record_dispatch(entry_id, ev, "triage", reason, received_ms=received_ms)
+    elif status == "not_routed" and ev.get("type") != "gps.ping":
+        # GPS pings are high volume: acknowledged without a row (each row also writes audit history).
+        await record_dispatch(entry_id, ev, "not_routed", reason, received_ms=received_ms)
 
 
 async def _dead_letter(r: redis.Redis, stream: str, group: str, entry_id: bytes, reason: str, raw) -> None:
@@ -111,6 +135,7 @@ async def run_consumer(pool: Pool, url: str | None = None, *, stream: str = STRE
                 for entry_id, fields in list(claimed) + [e for _s, es in fresh or [] for e in es]:
                     ev = _decode(entry_id, fields)
                     if ev is None:  # poison entry: dead-letter it instead of retrying forever
+                        await record_dispatch(entry_id, {}, "triage", "unparseable event")
                         await _dead_letter(r, stream, group, entry_id, "unparseable", fields.get(b"json"))
                         continue
                     batch.append((entry_id, ev))

@@ -7,6 +7,7 @@ import logging
 
 from harness.ingest.consumer import main
 from harness.ingest.firsthop import route_event  # noqa: F401 -- deterministic first hop, kept as a public helper
+from harness.ingest.routing import ROUTES  # noqa: F401 -- the 7.3 table; ingest's SpacetimeDB mirror reads it
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")

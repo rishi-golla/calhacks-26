@@ -1,4 +1,4 @@
-"""Provision the three FreightOps personas and one Cartesia number; never place a call."""
+"""Provision the three FreightLine personas and one Cartesia number; never place a call."""
 from __future__ import annotations
 
 import argparse

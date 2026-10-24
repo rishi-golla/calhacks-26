@@ -31,7 +31,8 @@ Authentication comes only from the actual SpacetimeDB sender identity. The init 
 | `upsert_call` | voice_desk | `id`, `case_id`, `task_id`, `company_id`, optional `contact_id`, `routed_to`, `persona`, `direction`, `status`, `findings_json`, `transcript_redacted`, `recording_url`, `disclosure_given`, `team_demo_authorized` (default false; restricted below); intended number is resolved from directory |
 | `set_demo_target` | admin | `phone` (E.164), `label`, `enabled` |
 | `add_precedent` | controller | `id`, `carrier_id`, `claim_type`, `lane`, `pattern_json`, `outcome`, `source_case` |
-| `log_llm_call` | harness | `id`, `agent`, `model`, `latency_ms`, `tokens`, `route_reason`, `ensemble_agreement` |
+| `log_llm_call` | harness | `id`, `agent` (nine agent IDs, `router`, or `ingest`), `model`, `latency_ms`, `tokens`, `route_reason`, `ensemble_agreement` |
+| `record_dispatch` | router | `event_id`, `case_id`, `skill`, `agent`, `task_id`, `status` (`accepted`, `triage`, `not_routed`, `duplicate`), `reason`, `queue_ms`, `policy_version` |
 | `set_metric` | evaluator | `name`, `value` |
 | `set_agent_model` | human | `agent`, `model`, `enabled` (default true) |
 | `upsert_forecast` | cfo | `id`, `case_id`, `period`, `category`, `amount` (signed), `confidence`, `assumptions_json` |
@@ -81,3 +82,37 @@ with the same concurrency check. Financial policies and role/delegation permissi
 
 Deploy the updated module before restarting Validator or using the updated rollback UI. Older
 modules do not enforce the new precondition. This change adds no tables or A2A envelope fields.
+
+### Intake dispatch telemetry
+
+`dispatch` is a public table keyed by `event_id`, with the `record_dispatch` fields
+above and a server-generated `ts` for the latest observation. Only the `router`
+role can write it. Accepted/duplicate records require a case, matching agent/skill,
+and the accepted remote A2A task ID. These references need not already exist in
+SpacetimeDB; this reducer records intake evidence and grants no task ownership.
+Triage and not-routed records may leave unresolved references empty.
+
+Exact `write_id` retries are no-ops. A new observation of an accepted event becomes
+`duplicate`, retains the original queue time and policy version, and cannot change
+the accepted case/agent/skill/task or downgrade to triage. A triage record can later
+be updated after resolution. `ts` changes on each new observation; this is one row
+per event, not a retry-count table. Changes also enter the standard audit trail.
+
+The repository router writes before Redis acknowledgment when `SPACETIME_DISABLED=0`,
+using its `SPACETIME_TOKEN_ROUTER` credential (or the existing token fallback).
+Failure leaves the event pending; A2A retries retain their event idempotency key.
+`gps.ping` is acknowledged without a dispatch record (high-volume telemetry is not
+audited); unknown or invalid events go to triage/dead letter. The router's write id is
+`dispatch:<redis entry id>:<status>`, so an ambiguous retry is a reducer no-op rather
+than a `duplicate`. `queue_ms` measures Redis entry creation to processing start. Model-call telemetry
+remains separate. The dashboard's **Intake & models → Live intake** panel subscribes
+to `dispatch` and supports status filtering, including events without a case.
+
+Deployment order: the database owner republishes the additive module, then deploy
+this dashboard and router together. From the repository root, with the owner's login:
+
+```sh
+spacetime publish --module-path spacetime/module/spacetimedb --server https://maincloud.spacetimedb.com --delete-data=never at350-freightops
+```
+
+The module change does not enable telemetry on a disabled router or deploy the UI.

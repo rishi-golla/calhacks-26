@@ -235,6 +235,20 @@ export const DemoTarget = __t.object("DemoTarget", {
 });
 export type DemoTarget = __Infer<typeof DemoTarget>;
 
+export const Dispatch = __t.object("Dispatch", {
+  eventId: __t.string(),
+  caseId: __t.string(),
+  skill: __t.string(),
+  agent: __t.string(),
+  taskId: __t.string(),
+  status: __t.string(),
+  reason: __t.string(),
+  queueMs: __t.u32(),
+  policyVersion: __t.string(),
+  ts: __t.string(),
+});
+export type Dispatch = __Infer<typeof Dispatch>;
+
 export const DocRead = __t.object("DocRead", {
   id: __t.string(),
   changeSetId: __t.string(),

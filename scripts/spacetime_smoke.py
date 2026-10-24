@@ -38,10 +38,22 @@ def run(admin: LocalAdmin) -> dict:
         "case", "task", "agent", "agent_config", "ledger_entry", "hold", "payment_proposal",
         "approval", "audit_event", "call", "precedent", "llm_call", "metric", "delegation_edge",
         "change_set", "cell_change", "doc_read", "review", "agent_memory", "instruction_version",
-        "flag", "company", "contact", "routing_outbox",
+        "flag", "company", "contact", "routing_outbox", "dispatch",
     ):
         admin.rows(table)
     passed("all PRD public tables query through the real HTTP API")
+
+    dispatch = {"event_id": "EVENT-INTAKE", "case_id": "REMOTE-CASE", "skill": "process_carrier_invoice",
+                "agent": "carrier_ap", "task_id": "REMOTE-TASK", "status": "accepted",
+                "reason": "Invoice received", "queue_ms": 120, "policy_version": "first-hop-v1"}
+    denied("harness", "record_dispatch", dispatch)
+    call("router", "record_dispatch", dispatch)
+    assert admin.rows("dispatch")[0]["status"] == "accepted"
+    call("router", "record_dispatch", {**dispatch, "queue_ms": 500})
+    rows = admin.rows("dispatch")
+    assert len(rows) == 1 and rows[0]["status"] == "duplicate" and rows[0]["queue_ms"] == 120
+    denied("router", "record_dispatch", {**dispatch, "task_id": "CHANGED-TASK"})
+    passed("router dispatch accepts remote tasks, deduplicates events and freezes accepted routes")
 
     base = {"case_id": "CASE-W2-TEST", "load_id": "LOAD-W2-TEST", "title": "W2 acceptance test",
             "priority": "P0", "exposure_usd": 12000}

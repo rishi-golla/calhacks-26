@@ -100,7 +100,7 @@ async def test_hero_invoice_end_to_end(pool, agents, tmp_path):
     assert res["status"] == "accepted", res
     assert res["case_id"] == "CASE-4821"
     assert res["route"]["skill"] == "process_carrier_invoice" and res["route"]["classifier"] is None
-    assert res["extractor"] == "nano" and res["verifier"]["model_used"] == "gptoss"
+    assert res["extractor"] == "nano" and res["verifier"]["model_used"] not in (None, res["extractor"])
     env = res["envelope"]
     assert env["priority"] == "P0" and f"event:{event['event_id']}" in env["evidence_refs"]
     s = env["subject"]

@@ -32,11 +32,16 @@ def _no_constants(name: str) -> float:
 
 
 def parse_json(content: str | None) -> object:
-    """Strict JSON: NaN/Infinity (or numbers that overflow to inf) can't be re-serialized, so they count
-    as invalid output and go through the normal retry/fallback instead of a 500."""
+    """Strict JSON: NaN/Infinity, numbers that overflow to inf and lone surrogates can't be re-serialized,
+    so they count as invalid output and go through the normal retry/fallback instead of a 500."""
     if content is None:
         raise ValueError("empty content")
-    return json.loads(_FENCE.sub("", content.strip()), parse_constant=_no_constants, parse_float=_finite)
+    parsed = json.loads(_FENCE.sub("", content.strip()), parse_constant=_no_constants, parse_float=_finite)
+    try:  # lone surrogates (e.g. "\\udefa") parse fine but can't be sent back as UTF-8
+        json.dumps(parsed, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError as e:
+        raise ValueError(f"not encodable as UTF-8: {e.reason}") from e
+    return parsed
 
 
 def check_format(content: str | None, fmt: dict | None) -> tuple[object | None, str | None]:

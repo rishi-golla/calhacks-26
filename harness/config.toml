@@ -27,14 +27,23 @@ max_concurrency = 8
 reasoning_effort = "low"
 
 # Logical name -> backends in preference order. The first healthy one serves; the rest are fallbacks.
+# C (gpt-oss) is out of rotation: its MXFP4 Marlin kernel emits NaN logits on GB10 (token 0 "!" garbage,
+# corrupt Harmony headers) under load, batched or not. Re-add "C" here once a working C is serving.
 [logical]
-small-fast = ["B", "A", "C"]
-reasoning = ["A", "C", "B"]
-coder-tools = ["C", "A", "B"]
+small-fast = ["B", "A"]
+reasoning = ["A", "B"]
+coder-tools = ["B", "A"]
 
 # model="auto": the first matching rule wins. Match keys (all must hold):
 #   task_type / agent / priority: list of values; stakes: string; has_tools / has_schema: bool.
 # A rule sets either `model` (a logical name) or `ensemble` (logical names, run in parallel).
+# Intake-side extraction from the data pipeline: one model, no ensemble. P-009 ensembles are for agents'
+# high-stakes decisions; doubling every ingest call starved the GPU in the first sim run.
+[[routes]]
+match = { agent = ["ingest"] }
+model = "reasoning"
+reason = "ingest extraction -> reasoning (no ensemble)"
+
 [[routes]]
 match = { stakes = "high" }
 ensemble = ["reasoning", "coder-tools"]
@@ -53,7 +62,7 @@ reason = "extraction -> reasoning (Nano)"
 [[routes]]
 match = { task_type = ["verify_extraction", "pii_check"] }
 model = "coder-tools"
-reason = "cross-check -> coder-tools (independent model family)"
+reason = "cross-check -> coder-tools (different model family from the extractor)"
 
 [[routes]]
 match = { has_tools = true }

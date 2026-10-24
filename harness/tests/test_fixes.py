@@ -22,6 +22,19 @@ def test_non_finite_json_is_invalid(bad):
     assert err is not None
 
 
+def test_lone_surrogate_is_invalid():
+    with pytest.raises(ValueError):
+        parse_json('{"name": "\\udefa"}')
+    assert parse_json('{"name": "caf\\u00e9 \\ud83d\\ude9a"}') == {"name": "café 🚚"}
+
+
+def test_ingest_calls_do_not_ensemble():
+    from harness.pool import Pool
+    plan = Pool().plan({"model": "auto"}, {"agent": "ingest", "task_type": "extract_invoice", "stakes": "high"})
+    assert not plan.ensemble and plan.reason.startswith("ingest")
+    assert Pool().plan({"model": "auto"}, {"agent": "risk", "stakes": "high"}).ensemble
+
+
 def test_finite_json_still_parses():
     assert parse_json('```json\n{"total": 2150.5, "n": 3}\n```') == {"total": 2150.5, "n": 3}
 

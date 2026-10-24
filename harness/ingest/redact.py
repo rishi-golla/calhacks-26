@@ -53,7 +53,13 @@ SENSITIVE_KEYS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"(?i)card_?(no|num|number)|\bpan\b"), "CARD"),
     (re.compile(r"(?i)e_?mail"), "EMAIL"),
     (re.compile(r"(?i)phone|mobile|\bfax\b|\btel\b"), "PHONE"),
+    (re.compile(r"(?i)address|street"), "ADDR"),
+    (re.compile(r"(?i)^(signed_by|signer|receiver|driver|driver_name|loader|contact|contact_name|requested_by)$"),
+     "NAME"),
 ]
+# Company names are kept on purpose (agents and the directory need them); person-name keys skip these.
+BUSINESS = re.compile(r"(?i)\b(llc|inc|corp|co|company|ltd|transport|trucking|logistics|freight|haul|produce|"
+                      r"carriers?|express|lines|bank)\b\.?")
 
 
 def redact_text(text: str, vault: Vault) -> tuple[str, list[str]]:
@@ -93,6 +99,8 @@ def redact_obj(obj: Any, vault: Vault, key: str = "") -> tuple[Any, list[str]]:
             toks += t
         return out_l, toks
     kind = _key_kind(key) if key else None
+    if kind == "NAME" and isinstance(obj, str) and BUSINESS.search(obj):
+        kind = None
     if kind and isinstance(obj, (str, int)) and not isinstance(obj, bool) and str(obj).strip():
         tok = vault.tokenize(kind, str(obj))
         return tok, [tok]
@@ -102,7 +110,8 @@ def redact_obj(obj: Any, vault: Vault, key: str = "") -> tuple[Any, list[str]]:
 
 
 def replace_spans(obj: Any, spans: dict[str, str]) -> Any:
-    """Replace literal substrings (e.g. names/addresses found by model A) with their tokens everywhere."""
+    """Replace literal substrings (names/addresses from structured fields or model A) with their tokens
+    everywhere, case-insensitively and on word boundaries."""
     if not spans:
         return obj
     if isinstance(obj, dict):
@@ -111,7 +120,7 @@ def replace_spans(obj: Any, spans: dict[str, str]) -> Any:
         return [replace_spans(v, spans) for v in obj]
     if isinstance(obj, str):
         for text in sorted(spans, key=len, reverse=True):  # longest first: "Marcus Bell" before "Marcus"
-            obj = re.sub(rf"(?<!\w){re.escape(text)}(?!\w)", lambda _m, t=spans[text]: t, obj)
+            obj = re.sub(rf"(?<!\w){re.escape(text)}(?!\w)", lambda _m, t=spans[text]: t, obj, flags=re.IGNORECASE)
     return obj
 
 
@@ -129,3 +138,21 @@ def leftovers(obj: Any) -> list[str]:
             if not TOKEN_RE.search(m.group(0)) and (not valid or valid(m.group(group))):
                 hits.append(f"{kind}:{m.group(group)[:4]}…")
     return hits
+
+
+def known_spans(tokens: list[str], vault: Vault) -> dict[str, str]:
+    """Addresses and person names tokenized from structured fields, plus each address's street line, so the
+    same values can be scrubbed from free text before any model reads it."""
+    spans: dict[str, str] = {}
+    for tok in set(tokens):
+        if not tok.startswith(("[[ADDR_", "[[NAME_")):
+            continue
+        value = vault.lookup(tok)
+        if not value or len(value) < 3:
+            continue
+        spans[value] = tok
+        if tok.startswith("[[ADDR_"):
+            street = value.split(",")[0].strip()
+            if len(street) >= 6:
+                spans.setdefault(street, tok)
+    return spans

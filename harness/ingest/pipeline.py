@@ -10,7 +10,7 @@ from typing import Any
 from common.envelope import TaskEnvelope
 from harness.chat import complete
 from harness.ingest.dispatch import Dispatcher, DispatchError
-from harness.ingest.redact import leftovers, redact_obj, replace_spans
+from harness.ingest.redact import BUSINESS, known_spans, leftovers, redact_obj, replace_spans
 from harness.ingest.routing import Route, classify, table_route
 from harness.ingest.schemas import AMOUNT_FIELDS, DOC_TYPE, SCHEMAS
 from harness.ingest.vault import TOKEN_RE, Vault
@@ -19,8 +19,6 @@ from harness.pool import Pool, Unavailable
 log = logging.getLogger("harness.ingest")
 TEXT_KEYS = ("text", "body", "raw_text", "document_text", "content", "transcript")
 HEADER_KEYS = ("from", "to", "subject", "date")
-BUSINESS = re.compile(r"(?i)\b(llc|inc|corp|co|company|ltd|transport|trucking|logistics|freight|haul|produce|"
-                      r"carriers?|express|lines|bank)\b\.?")
 TERMINAL = ("accepted", "triage", "not_routed")
 P_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
@@ -145,6 +143,7 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
     # 1. Regex redaction before any model sees the content.
     t = time.perf_counter()
     payload_r, tokens = redact_obj(payload, vault)
+    payload_r = replace_spans(payload_r, known_spans(tokens, vault))  # structured address/name -> free text
     text = document_text(payload_r)
     t = lap("redact", t)
 
@@ -207,7 +206,7 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
                        requested_output="ResultArtifact",
                        priority=event.get("priority") if event.get("priority") in P_ORDER else "P2")
     out.update({"route": route.__dict__, "envelope": env.model_dump(), "needs_review": needs_review,
-                "extractor": extractor, "verifier": verifier})
+                "extractor": extractor, "extracted": extracted, "verifier": verifier})
 
     # 6. Dispatch (or triage).
     if route.status == "triage" or route.skill is None:

@@ -95,3 +95,23 @@ def test_replace_spans_and_leftovers(vault):
     assert "Dale Whitaker" not in str(replace_spans(obj, {"Dale Whitaker": tok}))
     assert replace_spans("Dale and Daleville", {"Dale": "[[NAME_00000000]]"}) == "[[NAME_00000000]] and Daleville"
     assert leftovers({"x": "mail me: bob@example.com"}) != []
+
+
+def test_structured_address_and_person_keys(vault):
+    payload = {"shipper": {"name": "Bay Produce Co", "address": "2200 SECAUCUS RD, NORTH BERGEN, NJ, 07047"},
+               "signed_by": "R. Gomez", "receiver": "Bay Produce Co", "requested_by": "Marcus Bell"}
+    out, toks = redact_obj(payload, vault)
+    assert out["shipper"]["address"].startswith("[[ADDR_") and out["shipper"]["name"] == "Bay Produce Co"
+    assert out["signed_by"].startswith("[[NAME_") and out["requested_by"].startswith("[[NAME_")
+    assert out["receiver"] == "Bay Produce Co"          # company names stay
+    assert len(toks) == 3
+
+
+def test_known_spans_scrub_free_text(vault):
+    from harness.ingest.redact import known_spans
+    payload = {"carrier": {"address": "2200 SECAUCUS RD, NORTH BERGEN, NJ, 07047"},
+               "text": "REMIT TO\n2200 Secaucus Rd, North Bergen NJ 07047\nSigned: R. Gomez", "signed_by": "R. Gomez"}
+    out, toks = redact_obj(payload, vault)
+    out = replace_spans(out, known_spans(toks, vault))
+    assert "Secaucus" not in out["text"] and "Gomez" not in out["text"]
+    assert out["text"].count("[[ADDR_") == 1 and out["text"].count("[[NAME_") == 1

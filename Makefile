@@ -22,6 +22,8 @@ world:            ## refresh real carriers (FMCSA) + shippers (SEC EDGAR) -> dat
 	$(PY) -m sim.world --refresh
 sim:              ## real-time event stream -> Redis `events`
 	$(PY) -m sim.generator
+verify-data:      ## verify generated W4 documents and event traces
+	$(PY) -m sim.verify --data data
 web:              ## dashboard on :3001
 	cd web && npm run dev -- -p 3001
 test:

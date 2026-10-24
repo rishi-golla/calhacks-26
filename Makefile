@@ -1,4 +1,5 @@
 PY := .venv/bin/python
+SIM_DATA_DIR ?= data
 SPACETIME_DB ?= freightops
 SPACETIME_URL ?= http://127.0.0.1:3000
 .PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest verify-data
@@ -23,7 +24,7 @@ world:            ## refresh real carriers (FMCSA) + shippers (SEC EDGAR) -> dat
 sim:              ## real-time event stream -> Redis `events`
 	$(PY) -m sim.generator
 verify-data:      ## verify generated W4 documents and event traces
-	$(PY) -m sim.verify --data data
+	$(PY) -m sim.verify --data "$(SIM_DATA_DIR)"
 web:              ## dashboard on :3001
 	cd web && npm run dev -- -p 3001
 test:

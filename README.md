@@ -37,6 +37,23 @@ Run `make spacetime-start`, then `make spacetime-publish spacetime-generate` and
 The [integration guide](spacetime/INTEGRATION.md) and [reducer contracts](spacetime/module/CONTRACT.md)
 describe service identities, payloads and the Validator work queue for the other workstreams.
 
+## Live data (W4)
+`make sim` first backfills completed history and warm-starts in-flight loads, then starts new loads about every
+8 seconds. It writes synthetic PDFs/JSON, raw `.eml` messages, and BAI2 bank records under `data/`, publishing
+arrival metadata rather than extracted answers. The `ingest` consumer reads those raw files, combines them with
+the structured TMS feed, and publishes case-opening events to Redis `events` (also appended to
+`data/events.jsonl`). Its transactional load, invoice, remittance, and bank-offset state lives in
+`data/ingest.db`. Use `make world` to refresh the public counterparty directory and `make ingest` to run the
+consumer. Simulator retention is configurable with `SIM_DATA_MAX_MB` and `SIM_KEEP_LOADS`; hero fixtures and
+event/answer-key history are preserved.
+
+For a Redis-free dataset and formal checks:
+```bash
+.venv/bin/python -m sim.generator --offline --loads 40 --data /tmp/w4-data
+make verify-data SIM_DATA_DIR=/tmp/w4-data
+```
+`make verify-data` defaults to `data/` and writes `verify_report.json` there.
+
 ## Rules
 - `OUTREACH_MODE=demo`: calls/emails are only ever routed to `DEMO_ALLOWLIST_*`; the real contact is shown as `intended_to`.
 - Money and ledger changes go through `common/policy.py` and SpacetimeDB reducers; never through the LLM.

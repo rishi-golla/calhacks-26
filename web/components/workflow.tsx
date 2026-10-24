@@ -38,7 +38,6 @@ import {
   STEPS,
   activeSteps,
   feedOf,
-  latestCase,
   layout,
   linksFor,
   scope,
@@ -219,10 +218,13 @@ export default function Workflow({
   const [farm, setFarm] = useState(false);
   const [tick, setTick] = useState(0);
   const [tabs, setTabs] = useState<Record<string, Tab>>({});
-  const [leaving, setLeaving] = useState<string[]>([]);
-  const followed = caseId || latestCase(data);
+  const [leaving, setLeaving] = useState<{ caseId: string; ids: string[] }>({
+    caseId,
+    ids: [],
+  });
+  const manualKey = caseId || "__all__";
   const scoped = useMemo(() => scope(data, caseId), [data, caseId]);
-  const mine = manual[followed] ?? { add: [], remove: [] };
+  const mine = manual[manualKey] ?? { add: [], remove: [] };
   const visible = useMemo(() => {
     const s = activeSteps(scoped);
     for (const id of mine.add) s.add(id);
@@ -255,17 +257,17 @@ export default function Workflow({
   const urls = useMemo(
     () =>
       Object.fromEntries(
-        STEPS.map((s) => [s.id, targetUrl(s.id, scoped, data, followed)]),
+        STEPS.map((s) => [s.id, targetUrl(s.id, scoped, data, caseId)]),
       ),
-    [scoped, data, followed],
+    [scoped, data, caseId],
   );
   const edit = (id: string, op: "add" | "remove") =>
     setManual((m) => {
-      const cur = m[followed] ?? { add: [], remove: [] };
+      const cur = m[manualKey] ?? { add: [], remove: [] };
       const other = op === "add" ? "remove" : "add";
       return {
         ...m,
-        [followed]: {
+        [manualKey]: {
           ...cur,
           [op]: [...cur[op].filter((x) => x !== id), id],
           [other]: cur[other].filter((x) => x !== id),
@@ -327,18 +329,23 @@ export default function Workflow({
     return () => clearInterval(timer);
   }, [farm]);
 
-  const shown = useRef(new Set<string>());
+  const shown = useRef({ caseId, ids: new Set<string>() });
   useEffect(() => {
-    const gone = [...shown.current].filter((id) => !visible.has(id));
-    shown.current = new Set(visible);
+    if (shown.current.caseId !== caseId) {
+      shown.current = { caseId, ids: new Set(visible) };
+      setLeaving({ caseId, ids: [] });
+      return;
+    }
+    const gone = [...shown.current.ids].filter((id) => !visible.has(id));
+    shown.current = { caseId, ids: new Set(visible) };
     if (!gone.length) return;
-    const start = setTimeout(() => setLeaving(gone), 0);
-    const end = setTimeout(() => setLeaving([]), 450);
+    const start = setTimeout(() => setLeaving({ caseId, ids: gone }), 0);
+    const end = setTimeout(() => setLeaving({ caseId, ids: [] }), 450);
     return () => {
       clearTimeout(start);
       clearTimeout(end);
     };
-  }, [visible]);
+  }, [caseId, visible]);
 
   useEffect(() => {
     if (!openId) return;
@@ -372,7 +379,8 @@ export default function Workflow({
         measured.current.set(c.id, c.dimensions);
   }, []);
 
-  const rendered = [...visible, ...leaving.filter((id) => !visible.has(id))];
+  const leavingIds = leaving.caseId === caseId ? leaving.ids : [];
+  const rendered = [...visible, ...leavingIds.filter((id) => !visible.has(id))];
   const lastPos = useRef(new Map<string, { x: number; y: number }>());
   for (const [id, p] of pos) lastPos.current.set(id, p);
   const nodeData = new Map<string, StepData>();
@@ -575,7 +583,7 @@ export default function Workflow({
         </div>
       </header>
       <ReactFlow
-        key={followed}
+        key={manualKey}
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
@@ -622,7 +630,7 @@ export default function Workflow({
                   )}
                   {open.title}
                 </strong>
-                <span>{followed}</span>
+                <span>{caseId || "All cases"}</span>
               </div>
               <nav className="wf-c2-steps" aria-label="Steps in this case">
                 {orderedIds.map((id, index) => {

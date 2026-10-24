@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import "./agent-screen.css";
 
@@ -36,11 +36,17 @@ function StreamImage({
   alt?: string;
 }) {
   const [ready, setReady] = useState(false);
+  const imageRef = useRef<HTMLImageElement>(null);
+  useEffect(() => {
+    const image = imageRef.current;
+    if (image?.complete && image.naturalWidth > 0) setReady(true);
+  }, [src]);
   return (
     <>
       {src && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
+          ref={imageRef}
           src={src}
           alt={alt}
           className={className}

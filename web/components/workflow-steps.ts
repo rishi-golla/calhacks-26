@@ -485,7 +485,8 @@ export function targetUrl(
   if (id === "contacts" && shipper)
     return `https://www.sec.gov/cgi-bin/browse-edgar?company=${encodeURIComponent(str(shipper.name))}&action=getcompany`;
   if (id === "contacts" && safer) return safer;
-  return `${INTERNAL}/node/${id}?case=${encodeURIComponent(caseId)}`;
+  const nodeUrl = `${INTERNAL}/node/${id}`;
+  return caseId ? `${nodeUrl}?case=${encodeURIComponent(caseId)}` : nodeUrl;
 }
 
 export const displayUrl = (url: string) =>

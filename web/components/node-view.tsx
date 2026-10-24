@@ -310,8 +310,19 @@ function InboxPage({ data }: PageProps) {
   );
 }
 
-function RoutingPage({ data }: PageProps) {
-  const routes = rows(data, "routing_outbox");
+function RoutingPage({ data, caseId }: PageProps) {
+  const taskCases = new Map(
+    rows(data, "task").map((task) => [
+      str(task.task_id, ""),
+      str(task.case_id, ""),
+    ]),
+  );
+  const routes = rows(data, "routing_outbox").filter((route) => {
+    const routeCase = str(route.case_id, "");
+    if (routeCase) return routeCase === caseId;
+    const taskId = str(route.task_id, "");
+    return Boolean(taskId) && taskCases.get(taskId) === caseId;
+  });
   const events = newest(rows(data, "audit_event"), "ts").filter((event) => {
     const description = [event.kind, event.reason_code, event.summary]
       .map((value) => str(value, ""))
@@ -323,53 +334,103 @@ function RoutingPage({ data }: PageProps) {
     );
     return hasRoute || /route|redact|dispatch/i.test(description);
   });
-  if (!events.length) return <Empty>No routed events for this case yet</Empty>;
+  if (!events.length && !routes.length)
+    return <Empty>No routed events for this case yet</Empty>;
   return (
     <div className="nv-panel nv-scroll">
-      <Section title="Routed events" count={events.length}>
-        <div className="nv-route-list">
-          {events.map((event) => {
-            const route = routes.find(
-              (item) =>
-                Boolean(event.task_id) &&
-                str(item.task_id, "") === str(event.task_id, ""),
-            );
-            const targetAgent = route?.target_agent;
-            const description = [event.kind, event.reason_code, event.summary]
-              .map((value) => str(value, ""))
-              .join(" ");
-            const redacted = /redact/i.test(description);
-            return (
-              <article className="nv-route-item" key={field(event.id)}>
-                <div className="nv-route-top">
-                  <div>
-                    <span className="nv-eyebrow">{field(event.kind)}</span>
-                    <time>{stamp(event.ts)}</time>
+      {events.length > 0 && (
+        <Section title="Routed events" count={events.length}>
+          <div className="nv-route-list">
+            {events.map((event) => {
+              const route = routes.find(
+                (item) =>
+                  Boolean(event.task_id) &&
+                  str(item.task_id, "") === str(event.task_id, ""),
+              );
+              const targetAgent = route?.target_agent;
+              const description = [event.kind, event.reason_code, event.summary]
+                .map((value) => str(value, ""))
+                .join(" ");
+              const redacted = /redact/i.test(description);
+              return (
+                <article className="nv-route-item" key={field(event.id)}>
+                  <div className="nv-route-top">
+                    <div>
+                      <span className="nv-eyebrow">{field(event.kind)}</span>
+                      <time>{stamp(event.ts)}</time>
+                    </div>
+                    <div className="nv-tags">
+                      {redacted && <span className="nv-tag">Redacted</span>}
+                      {targetAgent !== undefined &&
+                        targetAgent !== null &&
+                        targetAgent !== "" && (
+                          <span className="nv-tag">
+                            Routed to {field(targetAgent)}
+                          </span>
+                        )}
+                    </div>
                   </div>
-                  <div className="nv-tags">
-                    {redacted && <span className="nv-tag">Redacted</span>}
-                    {targetAgent !== undefined &&
-                      targetAgent !== null &&
-                      targetAgent !== "" && (
-                        <span className="nv-tag">
-                          Routed to {field(targetAgent)}
-                        </span>
+                  <h3>
+                    {field(event.summary || event.reason_code || event.kind)}
+                  </h3>
+                  <p>{field(event.reason_code)}</p>
+                  <div className="nv-route-meta">
+                    <span>Agent · {field(event.agent)}</span>
+                    <span>Task · {field(event.task_id)}</span>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+      {routes.length > 0 && (
+        <Section title="Routing outbox" count={routes.length}>
+          <div className="nv-route-list">
+            {routes.map((route) => {
+              const targetAgent = route.target_agent;
+              const description = [route.kind, route.payload_json]
+                .map((value) => str(value, ""))
+                .join(" ");
+              return (
+                <article
+                  className="nv-route-item"
+                  key={`outbox:${field(route.id)}`}
+                >
+                  <div className="nv-route-top">
+                    <div>
+                      <span className="nv-eyebrow">Routing outbox</span>
+                      <time>{stamp(route.created_at || route.updated_at)}</time>
+                    </div>
+                    <div className="nv-tags">
+                      {/redact/i.test(description) && (
+                        <span className="nv-tag">Redacted</span>
                       )}
+                      {targetAgent !== undefined &&
+                        targetAgent !== null &&
+                        targetAgent !== "" && (
+                          <span className="nv-tag">
+                            Routed to {field(targetAgent)}
+                          </span>
+                        )}
+                      <Status value={route.status} />
+                    </div>
                   </div>
-                </div>
-                <h3>
-                  {field(event.summary || event.reason_code || event.kind)}
-                </h3>
-                <p>{field(event.reason_code)}</p>
-                <div className="nv-route-meta">
-                  <span>Agent · {field(event.agent)}</span>
-                  <span>Task · {field(event.task_id)}</span>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      </Section>
+                  <h3>{field(route.kind)}</h3>
+                  <div className="nv-route-meta">
+                    <span>Route · {field(route.id)}</span>
+                    <span>Task · {field(route.task_id)}</span>
+                    <span>Attempts · {field(route.attempts)}</span>
+                  </div>
+                  {Boolean(route.last_error) && (
+                    <p>{field(route.last_error)}</p>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </Section>
+      )}
     </div>
   );
 }
@@ -377,7 +438,16 @@ function RoutingPage({ data }: PageProps) {
 function RiskPage({ data }: PageProps) {
   const flags = newest(rows(data, "flag"), "ts");
   const holds = newest(rows(data, "hold"), "placed_at");
-  if (!flags.length && !holds.length)
+  const tasks = rows(data, "task").filter(
+    (task) => str(task.agent, "") === "risk",
+  );
+  const events = newest(
+    rows(data, "audit_event").filter(
+      (event) => str(event.agent, "") === "risk",
+    ),
+    "ts",
+  );
+  if (!flags.length && !holds.length && !tasks.length && !events.length)
     return <Empty>No risk flags or holds for this case yet</Empty>;
   return (
     <div className="nv-panel nv-scroll">
@@ -442,6 +512,54 @@ function RiskPage({ data }: PageProps) {
                   <span>Raised by · {field(flag.raised_by)}</span>
                   <time>{stamp(flag.ts)}</time>
                 </div>
+              </article>
+            ))}
+          </div>
+        </Section>
+      )}
+      {(tasks.length > 0 || events.length > 0) && (
+        <Section title="Risk activity" count={tasks.length + events.length}>
+          <div className="nv-risk-list">
+            {tasks.map((task) => (
+              <article
+                className="nv-risk-card"
+                key={`task:${field(task.task_id)}`}
+              >
+                <div className="nv-card-head">
+                  <div>
+                    <span className="nv-eyebrow">Risk task</span>
+                    <h3>
+                      {field(
+                        task.skill || task.business_status || task.a2a_state,
+                      )}
+                    </h3>
+                  </div>
+                  {(Boolean(task.business_status) ||
+                    Boolean(task.a2a_state)) && (
+                    <Status value={task.business_status || task.a2a_state} />
+                  )}
+                </div>
+                <div className="nv-route-meta">
+                  <span>Task · {field(task.task_id)}</span>
+                  <time>{stamp(task.updated_at || task.started_at)}</time>
+                </div>
+              </article>
+            ))}
+            {events.map((event) => (
+              <article
+                className="nv-risk-card"
+                key={`event:${field(event.id)}`}
+              >
+                <div className="nv-card-head">
+                  <div>
+                    <span className="nv-eyebrow">Risk event</span>
+                    <h3>{field(event.summary || event.kind)}</h3>
+                  </div>
+                  <time>{stamp(event.ts)}</time>
+                </div>
+                {Boolean(event.reason_code) && (
+                  <p>{field(event.reason_code)}</p>
+                )}
               </article>
             ))}
           </div>
@@ -922,10 +1040,13 @@ function ReviewPage({ data }: PageProps) {
     <div className="nv-panel nv-scroll">
       <Section title="Quality reviews" count={reviews.length}>
         <div className="nv-review-list">
-          {reviews.map((review) => (
+          {reviews.map((review, index) => (
             <article
               className="nv-review-card"
-              key={field(review.target_task_id)}
+              key={
+                str(review.id, "") ||
+                `${str(review.target_task_id, "")}:${str(review.ts, "")}:${index}`
+              }
             >
               <div className="nv-card-head">
                 <div>

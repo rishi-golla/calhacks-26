@@ -231,7 +231,7 @@ export const STEPS: Step[] = [
     id: "payments",
     title: "Payments · Nessie",
     subtitle: "Capital One sandbox payouts",
-    operator: "Controller agent",
+    operator: "Carrier AP agent",
     sources: ["payment_proposal", "invoice"],
     feed: (d) => [
       ...rows(d, "payment_proposal").map((r) =>

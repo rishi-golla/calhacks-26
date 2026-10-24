@@ -329,9 +329,10 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
 
     def delivered() -> list[dict]:
         signed = scenario != "pod_unsigned"
+        receiver = _person(rnd) if signed else None
         refs["pod"] = docs.write(f"POD-{lid}", "proof_of_delivery", {
             **tms, "carrier": doc_carrier, "consignee": k, "arrived": _ts(arrive), "departed": _ts(depart),
-            "pallets_received": load["pallets"], "receiver": _person(rnd) if signed else None})
+            "pallets_received": load["pallets"], "receiver": receiver})
         out = [refs["pod"]]
         if scenario in ("detention_supported", "decoy_detention_supported_small"):
             refs["det"] = docs.write(f"DET-{lid}", "detention_log", {
@@ -340,7 +341,11 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
             out.append(refs["det"])
         return [_event("load.delivered", load, {**base, "dwell_min": pl["dwell"]}, depart),
                 *ping(depart, 1, "delivery.departed", pl["dwell"])(),
-                _event("pod.received", load, {**base, "pod_ref": refs["pod"], "signed": signed}, depart, refs=out)]
+                _event("pod.received", load, {
+                    **base, "pod_ref": refs["pod"], "signed": signed, "carrier_id": doc_carrier.get("id"),
+                    "contract_rate": load["contract_rate"], "delivered_at": _ts(depart),
+                    "receiver": receiver, "signed_by": receiver,
+                }, depart, refs=out)]
     add(depart, delivered)
 
     def invoice_payload(number: str, doc_ref: str, at: datetime) -> tuple[dict, list[str]]:
@@ -558,7 +563,11 @@ async def seed_hero(world: dict) -> None:
             _event("gps.ping", load, {**common, "milestone": "delivery.arrived", "dwell_min": None}, arrived),
             _event("load.delivered", load, {**common, "dwell_min": 47}, departed),
             _event("gps.ping", load, {**common, "milestone": "delivery.departed", "dwell_min": 47}, departed),
-            _event("pod.received", load, {**common, "pod_ref": refs[2], "signed": True}, departed, refs=refs[2:3]),
+            _event("pod.received", load, {
+                **common, "pod_ref": refs[2], "signed": True, "carrier_id": carrier["id"],
+                "contract_rate": 1850.0, "delivered_at": _ts(departed),
+                "receiver": "R. Gomez", "signed_by": "R. Gomez",
+            }, departed, refs=refs[2:3]),
             _event("shipper_invoice.issued", load,
                    {**common, "invoice_id": sinv, "shipper": shipper, "amount": 1850.0},
                    at, refs=[sinv_ref]),

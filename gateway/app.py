@@ -41,6 +41,22 @@ def provider(x_webhook_secret: str = Header(default="")) -> None:
 OP = [Depends(operator)]
 
 
+@app.get("/console", include_in_schema=False)
+async def console():
+    """Live ops console (static page; every data call it makes still needs the operator token)."""
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse((pathlib.Path(__file__).parent / "console.html").read_text())
+
+
+@app.get("/cases", dependencies=OP)
+async def cases():
+    seen: dict[str, float] = {}
+    for e in store.events():
+        if e["case_id"]:
+            seen[e["case_id"]] = e["ts"]
+    return sorted(seen, key=seen.get, reverse=True)[:30]
+
+
 # ---- voice ----
 @app.post("/voice/webhook", dependencies=[Depends(provider)])
 async def voice_webhook(req: Request):

@@ -75,9 +75,8 @@ const SPECS: Record<string, Spec> = {
   },
   documents: {
     color: "#a86b3c",
-    shape:
-      circle(38, 72, 18) + circle(60, 56, 24) + circle(84, 66, 18) + circle(90, 86, 12) + circle(30, 86, 12) + "M30 78V98H90V78Z",
-    face: [60, 72],
+    shape: roundedPolygon(polar(5, 52, 60, 64), 0.24),
+    face: [60, 66],
   },
 };
 const FALLBACK: Spec = { color: "#8b95a5", shape: circle(60, 62, 40), face: [60, 60] };

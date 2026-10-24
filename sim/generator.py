@@ -226,9 +226,10 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                                                 "contract_rate": rate, "pickup_appt": pickup.isoformat(),
                                                 "delivery_appt": delivery_appt.isoformat()}, t0, refs=[refs["rc"]])]
     add(t0, tender)
-    add(t0 + timedelta(minutes=rnd.randint(20, 90)), lambda: [_event("load.status", load, {
+    dispatch_at = t0 + timedelta(minutes=rnd.randint(20, 90))
+    add(dispatch_at, lambda: [_event("load.status", load, {
         **base, "status": "dispatched", "driver": load["driver"], "truck": f"T{rnd.randint(100, 999)}",
-        "trailer": load["trailer"]}, t0)])
+        "trailer": load["trailer"]}, dispatch_at)])
 
     def ping(at: datetime, frac: float, milestone: str, dwell: int | None = None) -> Callable[[], list[dict]]:
         pt = geo.along(s, k, frac) if "lat" in s and "lat" in k else {}
@@ -311,17 +312,18 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
         def bank_change() -> list[dict]:
             real = c.get("email") or f"billing@{c['usdot']}.carrier.example"
             sender = mail.lookalike(real) if scenario == "bank_change" else real
+            new_account_last4 = f"{rnd.randint(0, 9999):04d}"
             m = mail.write(sender, mail.AP_INBOX, f"URGENT: updated remittance details - {c['name']}",
                            "Hi AP team,\n\nWe have changed banks. Effective immediately please send all payments, "
                            f"including invoice {inv_no}, to the new account below.\nRouting ****{remit['routing_last4']}"
-                           f" / Account ****{rnd.randint(0, 9999):04d}\n\nThank you,\nAccounting", at,
+                           f" / Account ****{new_account_last4}\n\nThank you,\nAccounting", at,
                            reply_to=sender)
             return [_event("email.received", load, {**base, **m}, at),
                     _event("bank_change.requested", load, {
                         **base, "case_id": f"{case}-BANK", "carrier": c, "invoice_id": inv_id,
                         "requested_via": "email" if scenario == "bank_change" else "invoice_remit_to",
                         "from": sender, "registered_email": c.get("email"), "new_payee": remit["name"],
-                        "new_account_last4": f"{rnd.randint(0, 9999):04d}", "source_email": m["mail_id"]},
+                        "new_account_last4": new_account_last4, "source_email": m["mail_id"]},
                         at, "P0", [f"mail:{m['mail_id']}"])]
         add(at, bank_change)
 

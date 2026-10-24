@@ -257,6 +257,7 @@ def run(data_dir: str | Path = "data") -> dict:
             continue
         sinv = shipper_docs.get(f"SINV-{load_id}")
         if not sinv:
+            add("V4", load_id, f"SINV-{load_id}", "shipper invoice missing")
             continue
         shipper_name = sinv.get("shipper", {}).get("name")
         matching = [row for row in bank_records if row[3] == shipper_name

@@ -157,6 +157,23 @@ def test_verifier_detects_missing_pod(generated_data, tmp_path):
                for item in report["unexpected_violations"])
 
 
+def test_verifier_detects_missing_shipper_invoice(generated_data, tmp_path):
+    root = _copy_data(generated_data, tmp_path / "missing-shipper-invoice")
+    clean_load = next(item["load_id"] for item in
+                      (json.loads(line) for line in (root / "answer_key.jsonl").read_text().splitlines())
+                      if item["scenario"] == "clean")
+    invoice_path = next(path for path in (root / "docs").glob("*.json")
+                        if (doc := json.loads(path.read_text())).get("load_id") == clean_load
+                        and doc.get("type") == "shipper_invoice")
+    invoice = json.loads(invoice_path.read_text())
+    (root / "docs" / invoice.get("pdf", f"{invoice['ref']}.pdf")).unlink()
+    invoice_path.unlink()
+    report = verify.run(root)
+    assert not report["ok"]
+    assert any(item["rule"] == "V4" and item["load_id"] == clean_load
+               for item in report["unexpected_violations"])
+
+
 def test_verifier_detects_counterparty_phone_mutation(generated_data, tmp_path):
     root = _copy_data(generated_data, tmp_path / "phone-mutation")
     clean_load = next(item["load_id"] for item in

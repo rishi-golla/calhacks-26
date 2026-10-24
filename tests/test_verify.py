@@ -99,8 +99,9 @@ def test_answer_key_scenarios_and_outcomes_are_isolated(generated_data):
 
 
 def test_pdf_fsc_rates_keep_precision_and_satisfy_v2(generated_data):
-    from ingest.documents import extract_invoice_rules
     from pypdf import PdfReader
+
+    from ingest.documents import extract_invoice_rules
 
     clean_load = next(item["load_id"] for item in
                       (json.loads(line) for line in (generated_data / "answer_key.jsonl").read_text().splitlines())

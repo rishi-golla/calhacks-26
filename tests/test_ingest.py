@@ -10,8 +10,8 @@ import pytest
 from pypdf import PdfReader
 
 from common import harness_client
-from ingest.documents import classify, extract_invoice_rules, read_email
 from ingest import main as ingest_main
+from ingest.documents import classify, extract_invoice_rules, read_email
 from ingest.main import _invoice_email, connect, handle
 from integrations import edgar, fmcsa
 from sim import docs, generator
@@ -34,6 +34,9 @@ def test_ingest_group_starts_at_stream_beginning(world, monkeypatch):
 
         async def xreadgroup(self, *args, **kwargs):
             raise StopReading
+
+        async def aclose(self):
+            pass
 
     fake_redis = FakeRedis()
     db = connect()
@@ -224,6 +227,7 @@ def test_invoice_rules_parse_all_carrier_layouts(world, style):
 def test_bank_offset_rolls_back_and_reemits_payment_on_redelivery(world):
     _, _, events = _run(world, "shipper_short_pay")
     bank_event = next(event for event in events if event["type"] == "bank.event")
+    bank_event["payload"].pop("record")
     db = connect()
     try:
         _ingest(events[:events.index(bank_event)], db)

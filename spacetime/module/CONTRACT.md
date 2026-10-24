@@ -101,8 +101,10 @@ per event, not a retry-count table. Changes also enter the standard audit trail.
 The repository router writes before Redis acknowledgment when `SPACETIME_DISABLED=0`,
 using its `SPACETIME_TOKEN_ROUTER` credential (or the existing token fallback).
 Failure leaves the event pending; A2A retries retain their event idempotency key.
-`gps.ping` is not routed; unknown or invalid events go to triage/dead letter.
-`queue_ms` measures Redis entry creation to processing start. Model-call telemetry
+`gps.ping` is acknowledged without a dispatch record (high-volume telemetry is not
+audited); unknown or invalid events go to triage/dead letter. The router's write id is
+`dispatch:<redis entry id>:<status>`, so an ambiguous retry is a reducer no-op rather
+than a `duplicate`. `queue_ms` measures Redis entry creation to processing start. Model-call telemetry
 remains separate. The dashboard's **Intake & models → Live intake** panel subscribes
 to `dispatch` and supports status filtering, including events without a case.
 

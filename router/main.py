@@ -61,7 +61,9 @@ async def record_dispatch(entry_id, event, status, reason, *, agent='', skill=''
     # A malformed event still gets a stable telemetry identity from Redis.
     event_id = event_id if isinstance(event_id, str) and event_id.strip() else f'redis:{entry}'
     queue_ms = min(4294967295, max(0, (received_ms or int(time.time() * 1000)) - int(entry.split('-')[0])))
+    # A stable write id makes an ambiguous retry a reducer no-op instead of a `duplicate` row.
     await db.mutate('record_dispatch', {
+        'write_id': f'dispatch:{entry}:{status}',
         'event_id': event_id, 'case_id': case_id if isinstance(case_id, str) else '',
         'agent': agent, 'skill': skill, 'task_id': task_id, 'status': status,
         'reason': reason, 'queue_ms': queue_ms, 'policy_version': POLICY_VERSION,
@@ -88,8 +90,7 @@ async def process_entry(client, entry_id, fields) -> None:
             await pipeline.execute()
         return
     if event.get('type') == 'gps.ping':
-        await record_dispatch(entry_id, event, 'not_routed', 'GPS ping does not require a finance agent',
-                              received_ms=received_ms)
+        # High-volume telemetry: acknowledge without a dispatch row (each row also writes audit history).
         await client.xack('events', 'router', entry_id)
         return
     accepted = await send_task(agent, env, meta)

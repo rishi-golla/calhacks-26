@@ -59,7 +59,7 @@ async def test_dispatch_persistence_failure_keeps_accepted_event_pending(monkeyp
     assert telemetry.call_args.kwargs['task_id'] == 'task'
 
 
-async def test_gps_is_recorded_without_agent_admission(monkeypatch):
+async def test_gps_is_acknowledged_without_telemetry_or_admission(monkeypatch):
     import json
 
     from router import main
@@ -68,7 +68,7 @@ async def test_gps_is_recorded_without_agent_admission(monkeypatch):
     monkeypatch.setattr(main, 'send_task', sender)
     monkeypatch.setattr(main, 'record_dispatch', telemetry)
     await process_entry(client, b'1-0', {b'json': json.dumps({'event_id': 'gps-1', 'type': 'gps.ping'})})
-    assert telemetry.call_args.args[2] == 'not_routed'
+    telemetry.assert_not_awaited()
     sender.assert_not_awaited()
     client.xack.assert_awaited_once()
 
@@ -102,6 +102,7 @@ async def test_dispatch_uses_router_identity_and_redis_queue_time(monkeypatch):
     await main.record_dispatch(b'1000-0', {}, 'triage', 'missing event', received_ms=1123)
     factory.assert_called_once_with(actor='router')
     payload = db.mutate.call_args.args[1]
+    assert payload['write_id'] == 'dispatch:1000-0:triage'
     assert payload['event_id'] == 'redis:1000-0'
     assert payload['queue_ms'] == 123
     assert payload['case_id'] == ''

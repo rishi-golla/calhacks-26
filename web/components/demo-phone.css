@@ -29,8 +29,25 @@
 .demo-phone-status:empty { display: none; }
 .demo-phone-progress { display: flex; align-items: center; gap: 6px; }
 .demo-phone-status .error-text { color: #a14439; }
+.demo-phone-guide { margin-top: 20px; border-top: 1px solid #dceadf; }
+.demo-phone-guide summary { padding-top: 14px; color: var(--dark-green); font-size: 12px; font-weight: 600; cursor: pointer; }
+.demo-phone-guide summary::marker { color: #789181; }
+.demo-phone-guide summary span { margin-left: 9px; color: #789181; font-size: 10px; font-weight: 400; }
+.demo-phone-guide summary:focus-visible { outline: 2px solid var(--green); outline-offset: 5px; border-radius: 2px; }
+.demo-phone-guide-body { display: grid; gap: 12px; padding-top: 16px; }
+.demo-phone-guide-badge { justify-self: start; border-radius: 4px; padding: 3px 7px; background: #e7eee9; color: #526d5e; font-size: 10px; font-weight: 600; }
+.demo-phone-guide-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 20px; margin: 0; padding: 13px; border: 1px solid #dceadf; border-radius: 6px; background: #ffffff80; }
+.demo-phone-guide-facts dt { color: #789181; font-size: 10px; }
+.demo-phone-guide-facts dd { margin: 2px 0 0; font-size: 11px; color: #425e4f; }
+.demo-phone-guide ol { display: grid; gap: 14px; padding-left: 20px; margin: 2px 0; }
+.demo-phone-guide li { padding-left: 3px; color: #789181; font-size: 11px; }
+.demo-phone-guide li strong { color: #2e503f; font-size: 12px; font-weight: 550; }
+.demo-phone-guide li p { margin-top: 3px; font-size: 11px; }
+.demo-phone-guide-label { color: #4b6f58; font-weight: 550; }
+.demo-phone-guide .demo-phone-guide-note { border-top: 1px solid #dceadf; padding-top: 12px; font-size: 11px; }
 @media (max-width: 520px) {
   .demo-phone { padding: 20px; }
   .demo-phone-action { align-items: stretch; flex-direction: column; gap: 15px; }
   .demo-phone h2 { font-size: 19px; }
+  .demo-phone-guide-facts { grid-template-columns: 1fr; }
 }

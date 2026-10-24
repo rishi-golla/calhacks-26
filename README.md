@@ -8,7 +8,8 @@ Financial changes go through deterministic controls with a Git-style audit trail
 
 The current sponsor work focuses on **Cartesia and Apify**. CRS and Nessie are deferred.
 Apify carrier/website observations have been verified through live A2A tasks. Cartesia has three
-hosted personas and an outbound number configured; the first live team phone call remains pending.
+hosted personas and an outbound number configured. The team phone demo now supplies a complete
+synthetic load brief and five case-scoped lookup tools; see the [role-play guide](docs/VOICE-DEMO.md).
 The inbox distinguishes a synthetic **Demo case** from **Live external evidence** returned by tools.
 
 ## Layout (owner in brackets)
@@ -92,7 +93,13 @@ Enable `DEMO_PHONE_ENABLED=1` and the same private `DEMO_CONTROL_TOKEN` in the g
 and `web/.env.local`, with `GATEWAY_URL=http://127.0.0.1:9000` in the latter. Never use a
 `NEXT_PUBLIC_*` variable for this token. The button cannot choose another destination.
 
-No live call has been placed during implementation. The explicit call command and optional hosted
+The fictional GG-1042 scenario covers an Oakland–Sacramento dry-van load with a $250 detention
+claim and a provisional $125 calculation pending signed support. Voice can look up the load,
+documents, case summary, invoice and payment status. Tools run through a separate HTTPS-tunneled
+read-only service on :9001, authenticated with a short-lived per-call capability. Call completion
+still uses the local poller. The console includes an expandable **Demo call guide** with suggested
+questions and expected facts. No additional phone call was placed while implementing this update.
+The explicit call command and hosted
 webhook-tool setup are documented in the [voice runbook](docs/A2A-RUNBOOK.md#enable-a-real-demo-phone-call).
 
 For W2's live database and dashboard, follow [spacetime/README.md](spacetime/README.md).

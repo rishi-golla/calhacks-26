@@ -23,9 +23,9 @@ from common.voice import (
     recover_uncertain_call,
     valid_call_token,
 )
+from gateway.voice_tools import READ_ONLY_TOOLS, lookup
 
 log = logging.getLogger(__name__)
-READ_ONLY_TOOLS = {"get_load_facts", "get_payment_status", "get_invoice_status", "get_case_summary"}
 
 
 def require_secret(actual: str, variable: str) -> None:
@@ -151,7 +151,9 @@ async def voice_webhook(req: Request, x_webhook_secret: str = Header(default="")
 
 @app.post("/voice/tools/{name}")
 async def voice_tool(name: str, req: Request, x_call_token: str = Header(default="")):
-    if name not in READ_ONLY_TOOLS | {"record_promise_to_pay", "open_dispute"}:
+    if name in READ_ONLY_TOOLS:
+        return await lookup(name, req, x_call_token)
+    if name not in {"record_promise_to_pay", "open_dispute"}:
         raise HTTPException(404)
     body = await object_body(req)
     row = await req.app.state.calls.get(str(body.get("attempt_id", "")))
@@ -159,32 +161,16 @@ async def voice_tool(name: str, req: Request, x_call_token: str = Header(default
         raise HTTPException(401, "invalid or expired call capability")
     if body.get("case_id", row["case_id"]) != row["case_id"]:
         raise HTTPException(403, "call belongs to a different case")
-    from common.source_repository import SourceRepository
-
-    source = await SourceRepository().load(TaskEnvelope(task_type="place_call", case_id=row["case_id"]))
-    if name == "get_load_facts":
-        keys = ("load_id", "lane", "gps_dwell_min", "free_time_min", "contract_rate")
-    elif name in {"get_payment_status", "get_invoice_status"}:
-        case = row["case_id"].replace("'", "''")
-        if mode() == "live":
-            db = SpacetimeClient(actor="voice_desk")
-            table = "payment_proposal" if name == "get_payment_status" else "invoice"
-            return {"tool": name, "result": await db.query_rows(f"SELECT * FROM {table} WHERE case_id = '{case}'")}
-        keys = ("invoice_id", "invoice_amount", "paid_amount")
-    elif name == "get_case_summary":
-        keys = ("load_id", "lane", "invoice_id", "claim_type", "required_documents")
-    else:
-        event_id = body.get("event_id")
-        if not isinstance(event_id, str) or not event_id or len(event_id) > 100:
-            raise HTTPException(400, "stable event_id required")
-        # Append evidence only; this cannot approve or settle any financial record.
-        await SpacetimeClient(actor="voice_desk").mutate("append_audit", {
-            "write_id": f"voice-tool:{row['id']}:{event_id}", "case_id": row["case_id"],
-            "task_id": row["task_id"], "kind": name, "reason_code": "CALLER_STATEMENT",
-            "summary": str(body.get("statement", ""))[:2000], "evidence_refs": [f"call://{row['id']}"],
-        })
-        return {"tool": name, "result": {"recorded_as_evidence": True}}
-    return {"tool": name, "result": {key: source[key] for key in keys if key in source}}
+    event_id = body.get("event_id")
+    if not isinstance(event_id, str) or not event_id or len(event_id) > 100:
+        raise HTTPException(400, "stable event_id required")
+    # Append evidence only; this cannot approve or settle any financial record.
+    await SpacetimeClient(actor="voice_desk").mutate("append_audit", {
+        "write_id": f"voice-tool:{row['id']}:{event_id}", "case_id": row["case_id"],
+        "task_id": row["task_id"], "kind": name, "reason_code": "CALLER_STATEMENT",
+        "summary": str(body.get("statement", ""))[:2000], "evidence_refs": [f"call://{row['id']}"],
+    })
+    return {"tool": name, "result": {"recorded_as_evidence": True}}
 
 
 @app.get("/cases/{case_id}/why")

@@ -1,0 +1,80 @@
+{
+  "synthetic": true,
+  "purpose": "Fictional detention-dispute training scenario. All organizations, people, references and shipment facts are invented; no contact destination is included.",
+  "cases": {
+    "SYN-CARTESIA-TEAM-CALL": {
+      "case_id": "SYN-CARTESIA-TEAM-CALL",
+      "synthetic": true,
+      "title": "[Synthetic] GG-1042 detention verification",
+      "load_id": "SYN-CARTESIA-TEAM-CALL-LOAD",
+      "load_reference": "GG-1042",
+      "invoice_id": "SYN-CARTESIA-TEAM-CALL-INVOICE",
+      "invoice_reference": "SVT-1042",
+      "bill_of_lading_reference": "BOL-GG-1042",
+      "carrier_id": "DEMO-TEAM",
+      "shipper_id": "SYN-BAY-PANTRY",
+      "period": "2026-10",
+      "lane": "Oakland, CA -> Sacramento, CA",
+      "scenario": {
+        "kind": "detention_dispute",
+        "summary": "Sierra Valley Transport invoiced $250 detention on load GG-1042. Supplied delivery times and rate terms provisionally support $125; signed detention documentation is still missing.",
+        "fictional_notice": "This is a fictional team demonstration. Names, shipment details and documents are synthetic; statements do not authorize a payment."
+      },
+      "parties": {
+        "broker": {"id": "SYN-GOLDEN-GATE", "name": "Golden Gate Freight"},
+        "carrier": {"id": "DEMO-TEAM", "name": "Sierra Valley Transport"},
+        "shipper": {"id": "SYN-BAY-PANTRY", "name": "Bay Pantry Foods"},
+        "receiver": {"id": "SYN-RIVERBEND", "name": "Riverbend Grocery Distribution"}
+      },
+      "route": {
+        "origin": {"city": "Oakland", "state": "CA", "facility": "Bay Pantry Foods Oakland Warehouse"},
+        "destination": {"city": "Sacramento", "state": "CA", "facility": "Riverbend Grocery Sacramento Distribution Center"}
+      },
+      "stops": [
+        {"kind": "pickup", "facility": "Bay Pantry Foods Oakland Warehouse", "city": "Oakland", "state": "CA", "timezone": "America/Los_Angeles", "appointment_at": "2026-10-22T16:00:00-07:00"},
+        {"kind": "delivery", "facility": "Riverbend Grocery Sacramento Distribution Center", "city": "Sacramento", "state": "CA", "timezone": "America/Los_Angeles", "appointment_at": "2026-10-23T09:00:00-07:00", "arrival_at": "2026-10-23T08:45:00-07:00", "released_at": "2026-10-23T12:15:00-07:00"}
+      ],
+      "cargo": {"commodity": "Packaged shelf-stable food", "equipment": "53-foot dry van", "pallets": 18, "weight_lb": 36000},
+      "invoice_amount": 1225,
+      "contract_rate": 975,
+      "paid_amount": 0,
+      "issued_at": "2026-10-23T13:00:00-07:00",
+      "claim_type": "detention",
+      "free_time_min": 120,
+      "detention_hours_claimed": 2.5,
+      "detention": {
+        "claimed_amount": 250,
+        "claimed_hours": 2.5,
+        "free_minutes": 120,
+        "free_time_starts_at": "later_of_arrival_or_appointment",
+        "rate_per_hour": 100,
+        "arrival_at": "2026-10-23T08:45:00-07:00",
+        "appointment_at": "2026-10-23T09:00:00-07:00",
+        "released_at": "2026-10-23T12:15:00-07:00",
+        "timezone": "America/Los_Angeles",
+        "receipt_required": true,
+        "receipt_ref": null
+      },
+      "line_items": [
+        {"kind": "linehaul", "amount": 975, "approved": true},
+        {"kind": "detention", "amount": 250, "approved": false, "receipt_required": true, "receipt_ref": null}
+      ],
+      "required_documents": ["rate_confirmation", "pod", "detention_receipt"],
+      "documents": [
+        {"kind": "rate_confirmation", "ref": "synthetic:GG-1042:rate-confirmation", "load_id": "SYN-CARTESIA-TEAM-CALL-LOAD", "present": true, "signed": true, "status": "present"},
+        {"kind": "pod", "ref": "synthetic:GG-1042:pod", "load_id": "SYN-CARTESIA-TEAM-CALL-LOAD", "present": true, "signed": true, "status": "present"},
+        {"kind": "detention_log", "ref": "synthetic:GG-1042:unsigned-detention-log", "load_id": "SYN-CARTESIA-TEAM-CALL-LOAD", "present": true, "signed": false, "status": "unsigned"},
+        {"kind": "detention_receipt", "ref": null, "load_id": "SYN-CARTESIA-TEAM-CALL-LOAD", "present": false, "signed": false, "status": "missing"}
+      ],
+      "contacts": {"carrier_dispatcher": {"name": "Maya Chen (fictional)", "role": "Dispatcher"}},
+      "evidence_refs": ["synthetic:GG-1042:scenario", "synthetic:GG-1042:invoice", "synthetic:GG-1042:rate-confirmation", "synthetic:GG-1042:pod", "synthetic:GG-1042:unsigned-detention-log"]
+    }
+  },
+  "companies": {
+    "DEMO-TEAM": {"id": "DEMO-TEAM", "name": "Sierra Valley Transport (fictional team demo)", "synthetic": true, "source": "operator", "source_url": "operator://explicit-team-demo-destination", "verified": true, "timezone": "America/Los_Angeles"},
+    "SYN-BAY-PANTRY": {"id": "SYN-BAY-PANTRY", "name": "Bay Pantry Foods (fictional)", "synthetic": true, "source": "synthetic:GG-1042:scenario", "verified": false},
+    "SYN-GOLDEN-GATE": {"id": "SYN-GOLDEN-GATE", "name": "Golden Gate Freight (fictional)", "synthetic": true, "source": "synthetic:GG-1042:scenario", "verified": false},
+    "SYN-RIVERBEND": {"id": "SYN-RIVERBEND", "name": "Riverbend Grocery Distribution (fictional)", "synthetic": true, "source": "synthetic:GG-1042:scenario", "verified": false}
+  },
+  "contacts": {}
+}

@@ -21,10 +21,12 @@ from ingest.documents import (
     read_email,
 )
 from integrations import directory
-from sim.events import append_event, iso_z
+from sim.events import iso_z
 
 log = logging.getLogger("ingest")
-STREAM = "events"
+RAW_STREAM = os.getenv("RAW_STREAM", "raw")
+EVENTS_STREAM = os.getenv("EVENTS_STREAM", "events")
+DOCUMENTS_STREAM = os.getenv("DOCUMENTS_STREAM", "documents")
 GROUP = "ingest"
 CONSUMER = "ingest-1"
 ACCESSORIAL_TERMS = ("detention", "lumper", "layover", "stop-off", "stop off", "tonu", "driver assist")
@@ -459,11 +461,11 @@ async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict) -> b
         raw = values.get(b"json") or values.get("json")
         events = await handle(json.loads(raw), db)
         for event in events:
-            await r.xadd(STREAM, {"json": json.dumps(event, default=str)},
+            stream = DOCUMENTS_STREAM if event.get("type") == "document.extracted" else EVENTS_STREAM
+            await r.xadd(stream, {"json": json.dumps(event, default=str)},
                          maxlen=20_000, approximate=True)
-            append_event(event)
         db.commit()
-        await r.xack(STREAM, GROUP, entry_id)
+        await r.xack(RAW_STREAM, GROUP, entry_id)
         return True
     except Exception:
         db.rollback()
@@ -476,13 +478,13 @@ async def main() -> None:
     db = connect()
     try:
         try:
-            await r.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
+            await r.xgroup_create(RAW_STREAM, GROUP, id="0", mkstream=True)
         except redis.ResponseError as exc:
             if "BUSYGROUP" not in str(exc):
                 raise
         while True:
             while True:
-                pending = await r.xreadgroup(GROUP, CONSUMER, {STREAM: "0"}, count=10)
+                pending = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: "0"}, count=10)
                 entries = [entry for _stream, batch in pending or [] for entry in batch]
                 if not entries:
                     break
@@ -492,7 +494,7 @@ async def main() -> None:
                         failed = True
                 if failed:
                     await asyncio.sleep(1)
-            response = await r.xreadgroup(GROUP, CONSUMER, {STREAM: ">"}, count=10, block=2000)
+            response = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: ">"}, count=10, block=2000)
             for _stream, entries in response or []:
                 for entry_id, values in entries:
                     await _process_entry(r, db, entry_id, values)

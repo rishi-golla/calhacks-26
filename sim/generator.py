@@ -1,4 +1,4 @@
-"""W4: continuous, real-time synthetic operations for Golden Gate Freight -> Redis `events`.
+"""W4: continuous, real-time synthetic operations for Golden Gate Freight -> Redis `raw`.
 
 Every load plays out on the shared business clock (sim/clock.py) against real counterparties and real mileage
 from data/world.json, producing the full paper trail a brokerage receives:
@@ -36,7 +36,7 @@ SCENARIOS = {"clean": 0.60, "decoy_detention_supported_small": 0.06, "decoy_quic
 assert math.isclose(sum(SCENARIOS.values()), 1.0, rel_tol=0.0, abs_tol=1e-9)
 # Scenarios that end in a parked call/email waiting on a human playing the counterparty.
 NEEDS_HUMAN = {"detention_unsupported", "shipper_short_pay", "bank_change", "factoring_unverified"}
-STREAM = "events"
+RAW_STREAM = os.getenv("RAW_STREAM", "raw")
 FIRST = ["Maria", "James", "Luis", "Ashley", "Darnell", "Priya", "Tom", "Keisha", "Raj", "Elena", "Mike", "Grace"]
 LAST = ["Garcia", "Nguyen", "Johnson", "Patel", "Kim", "Lopez", "Brown", "Singh", "Martinez", "Chen", "Davis"]
 _INVOICE_REGISTRIES: dict[pathlib.Path, dict[str, str]] = {}
@@ -429,7 +429,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
 
 async def publish(r: redis.Redis | None, ev: dict) -> None:
     if r is not None:
-        await r.xadd(STREAM, {"json": json.dumps(ev)}, maxlen=20_000, approximate=True)
+        await r.xadd(RAW_STREAM, {"json": json.dumps(ev)}, maxlen=20_000, approximate=True)
     events.append_event(ev)
 
 

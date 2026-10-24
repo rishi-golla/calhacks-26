@@ -44,7 +44,7 @@ def test_ingest_group_starts_at_stream_beginning(world, monkeypatch):
     monkeypatch.setattr(ingest_main, "connect", lambda: db)
     with pytest.raises(StopReading):
         asyncio.run(ingest_main.main())
-    assert fake_redis.group_args == ("events", "ingest", "0", True)
+    assert fake_redis.group_args == ("raw", "ingest", "0", True)
 
 
 @pytest.fixture

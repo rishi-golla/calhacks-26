@@ -5,6 +5,9 @@ models (Nemotron, Qwen, gpt-oss, DeepSeek) don't qualify. Candidates must also u
 safetensors weights (no `trust_remote_code`, no pickle). Every file is checked against the SHA-256 that Hugging Face
 publishes (`infra/download_open_models.py`).
 
+**Current lineup:** classify and cross-check on **Apertus-8B** (fully open). Extraction is still Nemotron Nano
+(open-weight) until a fully open extractor passes.
+
 **Swap rule:** a model replaces the current one in its slot only if it matches it on these tests:
 - `tests/slot_eval.py`: 60 labelled documents; the owner is known from the 7.3 table
 - `tests/batch_bench.py`: 300 documents scored against the simulator's ground truth; it must keep 100% redaction recall
@@ -17,7 +20,7 @@ publishes (`infra/download_open_models.py`).
 |---|---|---|
 | OLMoE-1B-7B-0125-Instruct (AI2) | plain 20/60, reason-first 17/60, few-shot 5/60, few-shot without JSON constraint 0/60. Understands the item ("update bank details") but can't pick from a fixed label set; ~1B active parameters | **rejected** |
 | SmolLM3-3B (Hugging Face) | 40/60: invoices and payments 40/40, bank-change requests **0/20**, all labelled as payments, even for "We have changed banks… send all payments to the new account". Same with reason-first | **rejected**: misses the bank-change fraud case (P-004) |
-| Apertus-8B-Instruct-2509 (Swiss AI) | pending download | |
+| Apertus-8B-Instruct-2509 (Swiss AI) | original prompt 53/60 (7 bank changes → payment); with reason-first, a sharper bank-change rule, or both: **60/60**, p50 2.4–2.7 s (Qwen3-4B 1.4 s) | **passes**: in the classify slot, with the reason-first prompt adopted for all models |
 | Olmo-3-7B-Instruct (AI2) | pending download | |
 
 ### Slot A: extraction + names/addresses (baseline Nemotron Nano, open-weight)
@@ -29,11 +32,11 @@ Fast lane, 300 docs: 35.5 docs/min, 100% redaction recall, invoice totals 132/13
 | Olmo-3-7B-Instruct (AI2) | pending | |
 | OLMo-2-1124-13B-Instruct (AI2, FP8 on the fly) | pending | |
 
-### Slot C: independent cross-check (currently Qwen3-4B; gpt-oss parked for NaN output on GB10)
+### Slot C: independent cross-check (was Qwen3-4B; gpt-oss parked for NaN output on GB10)
 
 | Model | Result | Verdict |
 |---|---|---|
-| Apertus-8B-Instruct-2509 (Swiss AI) | pending | |
+| Apertus-8B-Instruct-2509 (Swiss AI) | 300 docs with dispatch: **redaction recall 100%** (0/1,215), invoice totals 132/132, 0/83 false flags, math errors 4/4; verify p50 4.2 s (Qwen3-4B 2.0 s), throughput 29.1 vs 35.5 docs/min | **passes**: in the cross-check slot |
 
 ### Considered and not tested
 

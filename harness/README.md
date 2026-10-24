@@ -20,6 +20,10 @@ here is on their inference path.
   (`data/team-release/a2a.env`, see its README); the router needs `A2A_TOKEN_ROUTER` from it.
   `harness/infra/a2a_tokens.sh` only generates a set for a fresh, separate deployment.
 
+- Local fixture-mode agents on the GX10 load `data/team-release/agents-local.env`: the team A2A tokens plus
+  `DEMO_ALLOWLIST_*`, and no provider keys. Without an allowlist every outreach is refused by design (P-011), and the
+  refusal cascades Voice Desk → Verification → Risk → Carrier AP as `child task failed`.
+
 ## Run
 ```bash
 make harness          # :8000

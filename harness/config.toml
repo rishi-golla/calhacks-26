@@ -61,12 +61,13 @@ max_concurrency = 16
 chat_template_kwargs = { enable_thinking = false }
 
 # Logical name -> backends in preference order. The first healthy one serves; the rest are fallbacks.
-# C (gpt-oss) is out of rotation: its MXFP4 Marlin kernel emits NaN logits on GB10 (token 0 "!" garbage,
-# corrupt Harmony headers) under load, batched or not. Re-add "C" here once a working C is serving.
+# Fully open models only (see OPEN_MODELS.md): classify and cross-check run on Apertus (E) with no open-weight
+# fallback. Extraction (reasoning) is still Nemotron Nano (A, open-weight) until a fully open extractor passes.
+# C (gpt-oss) is out of rotation: its MXFP4 Marlin kernel emits NaN logits on GB10.
 [logical]
-small-fast = ["B", "A"]
-reasoning = ["A", "B"]
-coder-tools = ["B", "A"]
+small-fast = ["E"]
+reasoning = ["A"]
+coder-tools = ["E"]
 
 # model="auto": the first matching rule wins. Match keys (all must hold):
 #   task_type / agent / priority: list of values; stakes: string; has_tools / has_schema: bool.

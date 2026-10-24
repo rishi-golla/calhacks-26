@@ -123,7 +123,7 @@ def leaks(planted: list[tuple[str, str]], outgoing: str) -> list[tuple[str, str]
 
 # ---------------------------------------------------------------- run
 async def run(args) -> dict:
-    events = [json.loads(line) for line in BATCH.read_text().splitlines()]
+    events = [json.loads(line) for line in BATCH.read_text().splitlines()][:args.limit or None]
     truth = Truth(Path(args.data).expanduser())
     pool = Pool()
     await pool.check_health()
@@ -275,6 +275,7 @@ def main() -> None:
     ap.add_argument("--concurrency", type=int, default=MODEL_CONCURRENCY)
     ap.add_argument("--dispatch", action="store_true")
     ap.add_argument("--progress", action="store_true")
+    ap.add_argument("--limit", type=int, help="only the first N events (rare types come first in the batch)")
     ap.add_argument("--tag", default=str(int(time.time())))
     args = ap.parse_args()
     if args.export:

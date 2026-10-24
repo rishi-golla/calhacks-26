@@ -337,6 +337,7 @@ export function LearningView({
       await mutate("revert_instruction_version", {
         agent: revert.agent,
         version: num(revert.version),
+        expected_version: num(revert.expected_version),
         reason,
       });
       notify("Instruction restored through a new compensating version.");
@@ -541,6 +542,16 @@ export function LearningView({
                     {row.active ? <Badge value="active" /> : null}
                   </div>
                   <div className="inline">
+                    {row.active ? (
+                      <button className="button" disabled={state !== "live" || busy}
+                        onClick={() => {
+                          setRevert({ ...row, version: 0, expected_version: num(row.version) });
+                          setModalError("");
+                          setReason("");
+                        }}>
+                        Restore original instructions
+                      </button>
+                    ) : null}
                     <FlagButton
                       onFlag={onFlag}
                       target={{
@@ -551,7 +562,8 @@ export function LearningView({
                       className="button"
                       disabled={Boolean(row.active) || state !== "live"}
                       onClick={() => {
-                        setRevert(row);
+                        setRevert({ ...row, expected_version: Math.max(0, ...data.instruction_version
+                          .filter((item) => item.agent === row.agent).map((item) => num(item.version))) });
                         setModalError("");
                         setReason("");
                       }}

@@ -244,9 +244,9 @@ def instruction_proposal(original: str) -> str:
     reminder = "\nBefore completing a result, cite the source records and recheck monetary totals in exact cents.\n"
     if reminder.strip() in original:
         return ""
-    revised = original.rstrip("\n") + "\n" + reminder
+    revised = original + reminder
     patch = "".join(difflib.unified_diff(original.splitlines(keepends=True), revised.splitlines(keepends=True),
-                                       fromfile="a/instructions.md", tofile="b/instructions.md"))
+                                       fromfile="a/instructions.md", tofile="b/instructions.md", n=0))
     if apply_instruction_patch(original, patch) != revised:
         raise ValueError("generated instruction patch failed validation")
     return patch

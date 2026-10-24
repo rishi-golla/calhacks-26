@@ -81,7 +81,9 @@ def reconstruct_instructions(agent: str, history: list[dict]) -> tuple[str, int]
         if next_version != version + 1 or row.get("agent", agent) != agent:
             raise InvalidInstructionPatch("non-contiguous or cross-agent instruction history")
         revert = int(row.get("reverts_version") or 0)
-        if revert:
+        if not row.get("diff") and not revert:
+            effective = base  # A compensating version restoring the checked-in baseline.
+        elif revert:
             if revert not in snapshots:
                 raise InvalidInstructionPatch("unknown revert version")
             effective = snapshots[revert]

@@ -4,7 +4,7 @@ import time
 import uvicorn
 from fastapi import FastAPI, Request
 
-app = FastAPI(title="freightops-harness (mock)")
+app = FastAPI(title="freightline-harness (mock)")
 
 
 @app.get("/v1/models")

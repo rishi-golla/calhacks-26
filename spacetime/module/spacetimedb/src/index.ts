@@ -38,6 +38,7 @@ export const upsert_contact = db.reducer(input, (ctx, { payload }) => run(ctx, p
 export const upsert_call = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'upsert_call', ['voice_desk'], op.upsertCall));
 export const add_precedent = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'add_precedent', ['controller'], op.addPrecedent));
 export const log_llm_call = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'log_llm_call', ['harness'], op.logLlmCall));
+export const record_dispatch = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'record_dispatch', ['router'], op.recordDispatch));
 export const set_metric = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'set_metric', ['evaluator'], op.setMetric));
 export const set_agent_model = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'set_agent_model', ['human'], op.setAgentModel));
 export const upsert_forecast = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'upsert_forecast', ['cfo'], op.upsertForecast));

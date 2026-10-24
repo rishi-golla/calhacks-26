@@ -18,7 +18,7 @@ async def lifespan(app):
         await store.close()
 
 
-app = FastAPI(title="FreightOps call lookups", lifespan=lifespan,
+app = FastAPI(title="FreightLine call lookups", lifespan=lifespan,
               docs_url=None, redoc_url=None, openapi_url=None)
 app.add_api_route("/voice/tools/{name}", lookup, methods=["POST"])
 

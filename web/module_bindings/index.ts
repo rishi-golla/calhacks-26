@@ -51,6 +51,7 @@ import ProposePaymentReducer from "./propose_payment_reducer";
 import PublishInstructionVersionReducer from "./publish_instruction_version_reducer";
 import RaiseFlagReducer from "./raise_flag_reducer";
 import RecordDelegationReducer from "./record_delegation_reducer";
+import RecordDispatchReducer from "./record_dispatch_reducer";
 import RecordDocReadReducer from "./record_doc_read_reducer";
 import ReleaseHoldReducer from "./release_hold_reducer";
 import RequestApprovalReducer from "./request_approval_reducer";
@@ -88,6 +89,7 @@ import CompanyRow from "./company_table";
 import ContactRow from "./contact_table";
 import DelegationEdgeRow from "./delegation_edge_table";
 import DemoTargetRow from "./demo_target_table";
+import DispatchRow from "./dispatch_table";
 import DocReadRow from "./doc_read_table";
 import FlagRow from "./flag_table";
 import HoldRow from "./hold_table";
@@ -323,6 +325,23 @@ const tablesSchema = __schema({
       { name: 'demo_target_phone_key', constraint: 'unique', columns: ['phone'] },
     ],
   }, DemoTargetRow),
+  dispatch: __table({
+    name: 'dispatch',
+    indexes: [
+      { accessor: 'agent', name: 'dispatch_agent_idx_btree', algorithm: 'btree', columns: [
+        'agent',
+      ] },
+      { accessor: 'case_id', name: 'dispatch_case_id_idx_btree', algorithm: 'btree', columns: [
+        'caseId',
+      ] },
+      { accessor: 'event_id', name: 'dispatch_event_id_idx_btree', algorithm: 'btree', columns: [
+        'eventId',
+      ] },
+    ],
+    constraints: [
+      { name: 'dispatch_event_id_key', constraint: 'unique', columns: ['eventId'] },
+    ],
+  }, DispatchRow),
   docRead: __table({
     name: 'doc_read',
     indexes: [
@@ -595,6 +614,7 @@ const reducersSchema = __reducers(
   __reducerSchema("publish_instruction_version", PublishInstructionVersionReducer),
   __reducerSchema("raise_flag", RaiseFlagReducer),
   __reducerSchema("record_delegation", RecordDelegationReducer),
+  __reducerSchema("record_dispatch", RecordDispatchReducer),
   __reducerSchema("record_doc_read", RecordDocReadReducer),
   __reducerSchema("release_hold", ReleaseHoldReducer),
   __reducerSchema("request_approval", RequestApprovalReducer),

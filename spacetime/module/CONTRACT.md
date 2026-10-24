@@ -31,7 +31,8 @@ Authentication comes only from the actual SpacetimeDB sender identity. The init 
 | `upsert_call` | voice_desk | `id`, `case_id`, `task_id`, `company_id`, optional `contact_id`, `routed_to`, `persona`, `direction`, `status`, `findings_json`, `transcript_redacted`, `recording_url`, `disclosure_given`, `team_demo_authorized` (default false; restricted below); intended number is resolved from directory |
 | `set_demo_target` | admin | `phone` (E.164), `label`, `enabled` |
 | `add_precedent` | controller | `id`, `carrier_id`, `claim_type`, `lane`, `pattern_json`, `outcome`, `source_case` |
-| `log_llm_call` | harness | `id`, `agent`, `model`, `latency_ms`, `tokens`, `route_reason`, `ensemble_agreement` |
+| `log_llm_call` | harness | `id`, `agent` (nine agent IDs, `router`, or `ingest`), `model`, `latency_ms`, `tokens`, `route_reason`, `ensemble_agreement` |
+| `record_dispatch` | router | `event_id`, `case_id`, `skill`, `agent`, `task_id`, `status` (`accepted`, `triage`, `not_routed`, `duplicate`), `reason`, `queue_ms`, `policy_version` |
 | `set_metric` | evaluator | `name`, `value` |
 | `set_agent_model` | human | `agent`, `model`, `enabled` (default true) |
 | `upsert_forecast` | cfo | `id`, `case_id`, `period`, `category`, `amount` (signed), `confidence`, `assumptions_json` |
@@ -39,8 +40,8 @@ Authentication comes only from the actual SpacetimeDB sender identity. The init 
 | `upsert_contact` | ingest | `id`, `company_id`, `name`, optional `title`, `phone`, `email`, `linkedin_url`, `source`, `source_url`, `confidence`, `alternates_json` |
 | `add_review` | validator | `id`, `target_task_id`, `case_id`, `verdict` (`pass` or `issue`), `checks_json`, `friction_json`, `actions` |
 | `upsert_memory` | validator, human | `id`, `agent`, `scope` (object with carrier_id/lane/claim_type/skill only), `text`, `source_ref`, `active` |
-| `publish_instruction_version` | validator, human | `agent`, `diff`, `reason`, `source_ref`; version assigned atomically |
-| `revert_instruction_version` | human | `agent`, `version` (version to reactivate), `reason`; creates a new compensating version |
+| `publish_instruction_version` | validator, human | `agent`, `diff`, `reason`, `source_ref`, `expected_version`; compare-and-swap against latest version (0 initially); validator patches restricted to approved append-only advisory template |
+| `revert_instruction_version` | human | `agent`, `version` (snapshot to restore, 0 for checked-in baseline), `reason`, `expected_version`; compare-and-swap creates a new compensating version |
 | `raise_flag` | human | `id`, `target_ref`, `kind` (`wrong`, `unclear`, `policy`, `praise`, `other`), `note`, optional `case_id` |
 | `resolve_flag` | validator | `id`, `status` (`reviewing`, `resolved`, `rejected`), `resolution_ref` |
 | `claim_outbox` | router | `id`, optional `lease_seconds` (max 300) |
@@ -63,3 +64,55 @@ New calls normally allow one attempt per company per hour, including failed atte
 Outbox kinds are `review_output` and `review_flag` for the Validator, and `review_followup` for the original task's agent. Dispatch using the row's `target_agent`. Followup payloads include `target_task_id`, `case_id`, `agent`, `actions` (`reopen_case` / `rerun_task`), and `review_id`; only one corrective request is queued per original task to bound retry loops. Human-owned cases do not receive automatic corrective followups. Acknowledge delivery after successful handoff; revised output and execution status belong to a new task. Delivery acknowledgement is not evidence that execution completed.
 
 Instruction history is append-only except for the active marker. A normal row (`reverts_version = 0`) contains a diff relative to the preceding effective version. A revert row creates a new version whose effective content is the **fully reconstructed content of `reverts_version`**. Its copied `diff` is display context only; W3 must not apply that copied patch to the latest text. Reconstruct versions in ascending order, preserving the effective text for each version, and use the target snapshot for revert rows. Policy code, approval thresholds, tool permissions and delegation allowlists remain outside this version stream and are never mutable through lesson reducers.
+
+### Instruction learning and rollback
+
+Validator publishes code-generated evidence/cents reminders after deterministic review failures.
+The patch and base version are durably checkpointed before publication. The reducer rejects a
+stale or missing `expected_version`; it never rebases automatically over human edits. When
+the version advanced between planning and publication, Validator re-plans once from the new
+history: an already-present reminder is reported as `superseded`, and the review still resolves
+its flag. Replays with the same write ID retain the original receipt. New tasks load the reconstructed latest
+instructions; already-running tasks retain their checkpointed instruction version.
+
+Automated patches can only append the approved advisory template. Model output, flag text and
+source documents cannot delete base instructions or introduce new policy/permission text.
+Human rollback restores a selected snapshot (including version 0) as a new immutable version,
+with the same concurrency check. Financial policies and role/delegation permissions are unchanged.
+
+Deploy the updated module before restarting Validator or using the updated rollback UI. Older
+modules do not enforce the new precondition. This change adds no tables or A2A envelope fields.
+
+### Intake dispatch telemetry
+
+`dispatch` is a public table keyed by `event_id`, with the `record_dispatch` fields
+above and a server-generated `ts` for the latest observation. Only the `router`
+role can write it. Accepted/duplicate records require a case, matching agent/skill,
+and the accepted remote A2A task ID. These references need not already exist in
+SpacetimeDB; this reducer records intake evidence and grants no task ownership.
+Triage and not-routed records may leave unresolved references empty.
+
+Exact `write_id` retries are no-ops. A new observation of an accepted event becomes
+`duplicate`, retains the original queue time and policy version, and cannot change
+the accepted case/agent/skill/task or downgrade to triage. A triage record can later
+be updated after resolution. `ts` changes on each new observation; this is one row
+per event, not a retry-count table. Changes also enter the standard audit trail.
+
+The repository router writes before Redis acknowledgment when `SPACETIME_DISABLED=0`,
+using its `SPACETIME_TOKEN_ROUTER` credential (or the existing token fallback).
+Failure leaves the event pending; A2A retries retain their event idempotency key.
+`gps.ping` is acknowledged without a dispatch record (high-volume telemetry is not
+audited); unknown or invalid events go to triage/dead letter. The router's write id is
+`dispatch:<redis entry id>:<status>`, so an ambiguous retry is a reducer no-op rather
+than a `duplicate`. `queue_ms` measures Redis entry creation to processing start. Model-call telemetry
+remains separate. The dashboard's **Intake & models → Live intake** panel subscribes
+to `dispatch` and supports status filtering, including events without a case.
+
+Deployment order: the database owner republishes the additive module, then deploy
+this dashboard and router together. From the repository root, with the owner's login:
+
+```sh
+spacetime publish --module-path spacetime/module/spacetimedb --server https://maincloud.spacetimedb.com --delete-data=never at350-freightops
+```
+
+The module change does not enable telemetry on a disabled router or deploy the UI.

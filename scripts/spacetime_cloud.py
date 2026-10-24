@@ -1,4 +1,4 @@
-"""Provision and seed the explicitly authorized at350 FreightOps cloud database.
+"""Provision and seed the explicitly authorized at350 FreightLine cloud database.
 
 This is deliberately separate from the loopback-only LocalAdmin helper. It never
 publishes, deletes, clears data, changes the CLI login, or reads the publisher's

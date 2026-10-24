@@ -12,6 +12,7 @@ from integrations import directory, edgar, fmcsa
 from sim import geo
 
 CARRIER_STATES: list[str] = []  # empty = nationwide
+WORLD_SCHEMA = 2  # bump when the roster shape or defaults change so cached worlds rebuild
 US_STATES = frozenset(geo.STATE_CENTROIDS)
 DIESEL_USD = 3.85  # $/gal used by the fuel-surcharge table (DOE-style: (price - 1.25) / 6 mpg per mile)
 GL_ACCOUNTS = [
@@ -84,7 +85,7 @@ def build(n_carriers: int = 300, n_shippers: int = 60, seed: int | None = None) 
                 "accessorials": {"lumper": "reimbursed at cost with receipt", "layover": 250.0, "tonu": 150.0,
                                  "stop_off": 75.0, "driver_assist": 100.0},
                 "transit_hours": round(geo.transit_hours(miles), 1)})
-    world = {"built_at": datetime.now(UTC).isoformat(), "brokerage": "Golden Gate Freight (fictional)",
+    world = {"schema": WORLD_SCHEMA, "built_at": datetime.now(UTC).isoformat(), "brokerage": "Golden Gate Freight (fictional)",
              "brokerage_mc": "MC-000000 (fictional)", "diesel_usd": DIESEL_USD, "fsc_per_mile": fsc_per_mile(),
              "sources": {"carriers": fmcsa.URL, "shippers": edgar.TICKERS, "geocoder": geo.CENSUS},
              "gl_accounts": GL_ACCOUNTS, "carriers": carriers, "shippers": shippers, "lanes": lanes}
@@ -94,7 +95,7 @@ def build(n_carriers: int = 300, n_shippers: int = 60, seed: int | None = None) 
 
 def ensure(**kw) -> dict:
     w = directory.load()
-    return w if w.get("lanes") and "miles" in w["lanes"][0] else build(**kw)
+    return w if w.get("schema") == WORLD_SCHEMA and w.get("lanes") else build(**kw)
 
 
 if __name__ == "__main__":

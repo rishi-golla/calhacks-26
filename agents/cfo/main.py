@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from agents.cfo.card import DESCRIPTIONS
-from common.agent_support import evidence, finish, identifier, money, mutate, number
+from common.agent_support import evidence, finish, identifier, matched_deposit_total, money, mutate, number
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
@@ -30,14 +30,7 @@ class CfoAgent(FreightAgent):
         if receivables is None:
             collected = source.get("shipper_paid_amount")
             if collected is None:
-                deposits = [item for item in source.get("deposits", [])
-                            if item.get("invoice_id") == source.get("shipper_invoice_id")
-                            and item.get("shipper_id") == source.get("shipper_id")
-                            and source.get("shipper_invoice_id")]
-                ids = [item.get("id") for item in deposits]
-                if any(not identity for identity in ids) or len(set(ids)) != len(ids):
-                    raise SourceUnavailable("duplicate or missing source deposit ID")
-                collected = sum((money(item["amount"]) for item in deposits), Decimal(0))
+                collected = matched_deposit_total(source)
             receivables = [{"amount": source.get("shipper_invoice_amount"),
                             "collected": collected}]
         payables = source.get("payables")

@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from pydantic import ValidationError
 
-from common.agent_support import money
+from common.agent_support import matched_deposit_total, money
 from common.envelope import Friction, Lesson, ResultArtifact, ReviewOutput
 from common.learning import apply_instruction_patch
 from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
@@ -140,8 +140,13 @@ def deterministic_review(bundle: dict) -> ReviewOutput:
             if role == "cfo":
                 revenue, cost = money(source.get("shipper_invoice_amount")), money(source.get("invoice_amount"))
                 contract = money(source.get("contract_rate"))
-                receivables = source.get("receivables", [{"amount": revenue,
-                                                        "collected": source.get("shipper_paid_amount", 0)}])
+                receivables = source.get("receivables")
+                if receivables is None:
+                    # Same collections basis as the CFO: matched deposits when no paid summary exists.
+                    collected = source.get("shipper_paid_amount")
+                    if collected is None:
+                        collected = matched_deposit_total(source)
+                    receivables = [{"amount": revenue, "collected": collected}]
                 payables = source.get("payables", [{"amount": cost, "paid": source.get("paid_amount", 0)}])
                 incoming = sum((money(x["amount"]) - money(x.get("collected", 0))
                                 for x in receivables), Decimal(0))

@@ -229,6 +229,62 @@ async def test_repeated_collection_does_not_request_a_second_posted_deposit():
     assert calls == ["assess_financial_impact"]
 
 
+
+def journal_request(request_id, requested_by="shipper_ar", **extra):
+    return {"id": request_id, "case_id": "CASE-OTHER", "requested_by": requested_by, "period": "2026-10",
+            "lines": [{"account": "cash", "debit": 300, "credit": 0},
+                      {"account": "accounts_receivable", "debit": 0, "credit": 300}], **extra}
+
+
+async def test_controller_posts_a_batch_and_keeps_separation_of_duties_per_request():
+    source = invoice()
+    source.update(request_ids=["JR-1", "JR-2", "JR-3"], journal_requests=[
+        journal_request("JR-1"), journal_request("JR-2", "controller"),
+        journal_request("JR-3", posted_entry_id="ENTRY-3")])
+    result = await run_handler(ControllerAgent, "approve_entry", source)
+    assert [(entry["request_id"], entry["outcome"]) for entry in result.findings["entries"]] == [
+        ("JR-1", "approve"), ("JR-2", "reject"), ("JR-3", "verified")]
+    assert result.outcome == "partial"
+    assert result.policy_ids == ["P-005", "P-006"]
+
+
+async def test_controller_accepts_a_single_request_reference():
+    source = invoice()
+    source.update(request_id="JR-1", journal_request=journal_request("JR-1"))
+    result = await run_handler(ControllerAgent, "approve_entry", source)
+    assert result.outcome == "approve"
+    assert [entry["request_id"] for entry in result.findings["entries"]] == ["JR-1"]
+
+
+@pytest.mark.parametrize("request_ids", [["JR-1", "JR-MISSING"], ["JR-1", "JR-1"], [], "JR-1"])
+async def test_controller_rejects_an_unresolvable_batch_before_posting(request_ids, monkeypatch):
+    import agents.controller.main as controller
+    posted = []
+    async def mutate(*args):
+        posted.append(args)
+        return {"decision": "allow"}
+    monkeypatch.setattr(controller, "mutate", mutate)
+    source = invoice()
+    source.update(request_ids=request_ids, journal_requests=[journal_request("JR-1")])
+    with pytest.raises(SourceUnavailable):
+        await run_handler(ControllerAgent, "approve_entry", source)
+    assert posted == []
+
+
+async def test_reconciliation_sends_all_deposit_requests_to_one_approval():
+    source = invoice()
+    deposits = [{"id": f"D-{i}", "invoice_id": "AR-1", "shipper_id": "S-OTHER", "amount": 300} for i in range(4)]
+    source.update(shipper_invoice_id="AR-1", deposits=deposits, journal_requests=[
+        journal_request(identifier(f"S-OTHER:D-{i}", "receivable_journal_request")) for i in range(4)])
+    calls = []
+    async def delegate(skill, env, *args, **kwargs):
+        calls.append((skill, env.subject.get("request_ids")))
+        return [{"outcome": "approve", "findings": {}}]
+    result = await run_handler(ShipperArAgent, "reconcile_customer_payment", source, delegate=delegate)
+    assert result.findings["matched_amount"] == 1200
+    assert calls == [("approve_entry", [request["id"] for request in source["journal_requests"]]),
+                     ("assess_financial_impact", None)]
+
 def test_fixture_source_contains_multiple_financial_scenarios():
     data = json.loads(Path("sim/fixtures/brokerage_source.json").read_text())
     assert len(data["cases"]) >= 3

@@ -56,7 +56,7 @@ class ShipperArAgent(FreightAgent):
                 raise SourceUnavailable("journal period is required")
             existing = source.get("journal_requests", []) if fixture_mode() else await rows(
                 self.name, "journal_request", "case_id", env.case_id)
-            requests, posted = [], []
+            requests, posted, pending = [], [], []
             for deposit in matched:
                 # Bind an entry to its bank deposit, so a later reconciliation
                 # with more deposits cannot post earlier cash a second time.
@@ -82,9 +82,13 @@ class ShipperArAgent(FreightAgent):
                 # A fixture mutation is only a proposal until independently
                 # represented in source data; live posting is a Controller task.
                 if request.get("executed") or stored:
-                    posted.extend(await self.delegate("approve_entry", child_envelope(
-                        env, "approve_entry", request_id=request_id), meta, task_id,
-                        invocation_key="post_receivable_journal:" + request_id))
+                    pending.append(request_id)
+            if pending:
+                # One Settlement Approvals child posts every deposit's request, so
+                # any number of deposits fits the fan-out bound beside cash impact.
+                posted.extend(await self.delegate("approve_entry", child_envelope(
+                    env, "approve_entry", request_ids=pending), meta, task_id,
+                    invocation_key="post_receivable_journals:" + identifier(",".join(pending), "journal_batch")))
             findings["journal_requests"], findings["controller"] = requests, posted
         if env.task_type == "chase_overdue" and balance > 0:
             if not source.get("overdue"):

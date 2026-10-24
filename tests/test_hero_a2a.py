@@ -134,3 +134,64 @@ async def test_document_ingestion_resumes_original_task(agents):
                               {"ingestion_ref": pod["ref"]}, sender="router",
                               idempotency_key="pod-ingestion-event")
     assert extract_artifact_data(replay) == extract_artifact_data(complete)
+
+
+@pytest.mark.parametrize("deposit_count", [3, 4])
+async def test_reconciliation_posts_every_matched_deposit_and_assesses_cash(agents, deposit_count):
+    await asyncio.gather(*(_wait_ready(spec.url) for spec in AGENTS.values()))
+    from common.agent_support import identifier
+    source_path = agents / "source.json"
+    dataset = json.loads(source_path.read_text())
+    source = json.loads(json.dumps(dataset["cases"]["CASE-SHORT"]))
+    source["case_id"] = f"CASE-DEPOSITS-{deposit_count}"
+    source.pop("shipper_paid_amount")
+    source["deposits"] = [{"id": f"DEP-{i}", "shipper_id": "S-07", "invoice_id": "AR-SHORT", "amount": 300}
+                          for i in range(deposit_count)]
+    # Requests already recorded but not yet posted, as after a live request_journal_entry.
+    source["journal_requests"] = [{
+        "id": identifier(f"S-07:DEP-{i}", "receivable_journal_request"), "case_id": source["case_id"],
+        "requested_by": "shipper_ar", "period": "2026-10",
+        "lines": [{"account": "cash", "debit": 300, "credit": 0},
+                  {"account": "accounts_receivable", "debit": 0, "credit": 300}],
+    } for i in range(deposit_count)]
+    dataset["cases"][source["case_id"]] = source
+    source_path.write_text(json.dumps(dataset))
+    env = TaskEnvelope(task_type="reconcile_customer_payment", case_id=source["case_id"])
+    task = await send_task("shipper_ar", env, DelegationMeta(
+        case_id=env.case_id, from_agent="router", idempotency_key=f"reconcile-{deposit_count}"))
+    complete = await await_state("shipper_ar", task.id, TaskState.TASK_STATE_COMPLETED)
+    result = extract_artifact_data(complete)[-1]
+    assert result["findings"]["matched_amount"] == 300 * deposit_count
+    assert len(result["findings"]["journal_requests"]) == deposit_count
+    approvals = result["findings"]["controller"]
+    assert [entry["request_id"] for item in approvals for entry in item["findings"]["entries"]] == [
+        request["id"] for request in source["journal_requests"]]
+    assert all(item["outcome"] == "approve" for item in approvals)
+    assert result["findings"]["cash_impact"][-1]["outcome"]
+
+
+async def test_validator_passes_a_forecast_built_from_matched_deposits(agents):
+    await asyncio.gather(*(_wait_ready(spec.url) for spec in AGENTS.values()))
+    source_path = agents / "source.json"
+    dataset = json.loads(source_path.read_text())
+    source = json.loads(json.dumps(dataset["cases"]["CASE-SHORT"]))
+    source["case_id"] = "CASE-DEPOSIT-FORECAST"
+    source.pop("shipper_paid_amount")
+    source["deposits"] = [{"id": "DEP-A", "shipper_id": "S-07", "invoice_id": "AR-SHORT", "amount": 200},
+                          {"id": "DEP-B", "shipper_id": "S-07", "invoice_id": "AR-OTHER", "amount": 999}]
+    dataset["cases"][source["case_id"]] = source
+    source_path.write_text(json.dumps(dataset))
+    env = TaskEnvelope(task_type="assess_financial_impact", case_id=source["case_id"])
+    task = await send_task("cfo", env, DelegationMeta(
+        case_id=env.case_id, from_agent="router", idempotency_key="deposit-forecast"))
+    forecast = extract_artifact_data(await await_state("cfo", task.id, TaskState.TASK_STATE_COMPLETED))[-1]
+    assert forecast["findings"]["expected_collections"] == 1400
+    review_env = TaskEnvelope(task_type="review_output", case_id=env.case_id, subject={
+        "target_task": {"task_id": task.id, "agent": "cfo", "skill": "assess_financial_impact",
+                        "a2a_state": "completed"},
+        "artifact": forecast, "source": source})
+    review_task = await send_task("validator", review_env, DelegationMeta(
+        case_id=env.case_id, from_agent="router", idempotency_key="deposit-forecast-review"))
+    review = extract_artifact_data(await await_state("validator", review_task.id, TaskState.TASK_STATE_COMPLETED))[-1]
+    failed = [check["name"] for check in review["findings"]["review"]["checks"] if not check["ok"]]
+    assert review["outcome"] == "pass", failed

@@ -59,28 +59,46 @@ class ControllerAgent(FreightAgent):
                                           "balanced": bool(lines) and debit == credit},
                                 policy_ids=["P-006"], evidence_refs=refs)
         if env.task_type == "approve_entry":
-            request_id = env.subject.get("request_id")
-            if not request_id:
-                raise SourceUnavailable("approve_entry requires an existing journal request reference")
-            requests = [source["journal_request"]] if fixture_mode() and source.get("journal_request") else (
-                [] if fixture_mode() else await rows(self.name, "journal_request", "id", request_id))
-            if not requests or requests[0].get("id") != request_id or requests[0].get("case_id") != env.case_id:
-                raise SourceUnavailable("matching source journal request was not found")
-            request = requests[0]
-            if request.get("posted_entry_id"):
-                return await finish(self, env, task_id, outcome="verified", findings={
-                    "already_posted": True, "journal_entry_id": request["posted_entry_id"]}, evidence_refs=refs)
-            if request.get("requested_by") == self.name:
-                return await finish(self, env, task_id, outcome="reject", findings={"reason": "requester is approver"},
-                                    policy_ids=["P-005"], evidence_refs=refs)
-            journal = await mutate(self, env, task_id, "post_journal_entry", {
-                "id": identifier(request_id, "journal"), "request_id": request_id,
-                "lines": request["lines"], "period": request["period"],
-                "requested_by": request["requested_by"],
-            })
-            return await finish(self, env, task_id, outcome="approve" if journal.get("decision", "allow") == "allow"
-                                else "reject", findings={"journal": journal},
-                                policy_ids=["P-005", "P-006"], evidence_refs=refs)
+            request_ids = env.subject.get("request_ids")
+            if request_ids is None and env.subject.get("request_id"):
+                request_ids = [env.subject["request_id"]]
+            if not isinstance(request_ids, list) or not request_ids or len(set(request_ids)) != len(request_ids) \
+                    or any(not isinstance(item, str) or not item for item in request_ids):
+                raise SourceUnavailable("approve_entry requires existing journal request references")
+            # Resolve every request before posting any, so a missing one cannot leave a partial batch.
+            requests = []
+            for request_id in request_ids:
+                if fixture_mode():
+                    recorded = [*source.get("journal_requests", []), *filter(None, [source.get("journal_request")])]
+                    found = [item for item in recorded if item.get("id") == request_id][:1]
+                else:
+                    found = await rows(self.name, "journal_request", "id", request_id)
+                if not found or found[0].get("id") != request_id or found[0].get("case_id") != env.case_id:
+                    raise SourceUnavailable("matching source journal request was not found")
+                requests.append(found[0])
+            entries, policy_ids = [], set()
+            for request in requests:
+                entry = {"request_id": request["id"]}
+                if request.get("posted_entry_id"):
+                    entry.update(outcome="verified", already_posted=True, journal_entry_id=request["posted_entry_id"])
+                elif request.get("requested_by") == self.name:
+                    entry.update(outcome="reject", reason="requester is approver")
+                    policy_ids.add("P-005")
+                else:
+                    journal = await mutate(self, env, task_id, "post_journal_entry", {
+                        "id": identifier(request["id"], "journal"), "request_id": request["id"],
+                        "lines": request["lines"], "period": request["period"],
+                        "requested_by": request["requested_by"],
+                    })
+                    entry.update(outcome="approve" if journal.get("decision", "allow") == "allow" else "reject",
+                                 journal=journal)
+                    policy_ids.update({"P-005", "P-006"})
+                entries.append(entry)
+            outcomes = {entry["outcome"] for entry in entries}
+            outcome = "reject" if outcomes == {"reject"} else "partial" if "reject" in outcomes else \
+                "approve" if "approve" in outcomes else "verified"
+            return await finish(self, env, task_id, outcome=outcome, findings={"entries": entries},
+                                policy_ids=sorted(policy_ids), evidence_refs=refs)
         if env.task_type != "review_hold":
             raise ValueError("unsupported Settlement Approvals skill")
         amount = money(source["invoice_amount"])

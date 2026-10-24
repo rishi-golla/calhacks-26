@@ -34,6 +34,19 @@ def test_cash_review_recomputes_values_and_missing_evidence_never_passes():
     assert deterministic_review(bundle).verdict == "issue"
 
 
+
+def test_cash_review_counts_matched_deposits_when_paid_summary_is_absent():
+    bundle = cash_bundle()
+    bundle["source"].pop("shipper_paid_amount")
+    bundle["source"].update(shipper_id="s1", shipper_invoice_id="invoice-1", deposits=[
+        {"id": "d1", "invoice_id": "invoice-1", "shipper_id": "s1", "amount": 175.23},
+        {"id": "d2", "invoice_id": "invoice-other", "shipper_id": "s1", "amount": 500}])
+    assert deterministic_review(bundle).verdict == "pass"
+    bundle["source"]["deposits"].append({"id": "d1", "invoice_id": "invoice-1", "shipper_id": "s1", "amount": 1})
+    review = deterministic_review(bundle)
+    assert review.verdict == "issue"
+    assert not next(x for x in review.checks if x["name"] == "financial_source_complete")["ok"]
+
 def test_duplicate_deposits_and_unbalanced_journals_are_detected():
     bundle = cash_bundle()
     bundle["target"].update(agent="shipper_ar", skill="reconcile_customer_payment")

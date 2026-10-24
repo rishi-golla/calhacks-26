@@ -29,6 +29,17 @@ def number(value: Decimal) -> float:
     return float(value)
 
 
+def matched_deposit_total(source: dict) -> Decimal:
+    """Cash collected on this shipper invoice from its own uniquely identified deposits."""
+    invoice_id = source.get("shipper_invoice_id")
+    deposits = [item for item in source.get("deposits", []) if invoice_id
+                and item.get("invoice_id") == invoice_id and item.get("shipper_id") == source.get("shipper_id")]
+    ids = [item.get("id") for item in deposits]
+    if any(not identity for identity in ids) or len(set(ids)) != len(ids):
+        raise SourceUnavailable("duplicate or missing source deposit ID")
+    return sum((money(item["amount"]) for item in deposits), Decimal(0))
+
+
 def identifier(task_id: str, operation: str) -> str:
     return hashlib.sha256(f"{task_id}:{operation}".encode()).hexdigest()[:32]
 

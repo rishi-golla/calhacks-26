@@ -82,6 +82,13 @@ def test_redact_obj_by_key_and_pattern(vault):
     assert leftovers(out) == []
 
 
+@pytest.mark.parametrize("key", ["new_account", "account", "bank_account"])
+def test_redact_obj_bare_account_keys(vault, key):
+    out, toks = redact_obj({key: "123456789012", "amount": 9400.0}, vault)
+    assert out[key].startswith("[[ACCOUNT_") and vault.lookup(out[key]) == "123456789012"
+    assert out["amount"] == 9400.0 and len(toks) == 1
+
+
 def test_replace_spans_and_leftovers(vault):
     tok = vault.tokenize("NAME", "Dale Whitaker")
     obj = {"note": "Signed by Dale Whitaker", "items": ["Dale Whitaker, owner"]}

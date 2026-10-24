@@ -47,7 +47,7 @@ PATTERNS: list[tuple[str, re.Pattern, int, Any]] = [
 # Structured payload keys whose whole value is sensitive regardless of format.
 SENSITIVE_KEYS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"(?i)routing|aba"), "ROUTING"),
-    (re.compile(r"(?i)iban|account_?(no|num|number)|acct|bank_account"), "ACCOUNT"),
+    (re.compile(r"(?i)iban|account|acct"), "ACCOUNT"),  # also bare `account` / `new_account`
     (re.compile(r"(?i)\bssn\b|social"), "SSN"),
     (re.compile(r"(?i)\bein\b|tax_?id|\btin\b"), "EIN"),
     (re.compile(r"(?i)card_?(no|num|number)|\bpan\b"), "CARD"),

@@ -529,9 +529,23 @@ async def seed_hero(world: dict) -> None:
             "total": 2150.0, "origin": lane["origin"], "destination": lane["destination"]})
         refs.append(invoice_ref)
         at = departed + timedelta(hours=2)
+        sinv = f"SINV-{load_id}"
+        sinv_ref = docs.write(sinv, "shipper_invoice",
+            {**common, "invoice_id": sinv, "date": _ts(at), "terms": "Net 30",
+             "due": _ts(at + timedelta(days=30)), "shipper": shipper,
+             "line_items": [{"desc": "Linehaul", "qty": 1, "rate": 1850.0, "amount": 1850.0},
+                            {"desc": "Fuel surcharge", "qty": 133, "rate": 0.0, "amount": 0.0}],
+             "total": 1850.0})
+        refs.append(sinv_ref)
         message = mail.write(carrier["email"], "ap@goldengatefreight.example", f"Invoice {invoice}",
                              "Please see attached invoice and signed POD.", at,
                              attachments=[f"INV-{load_id}-1", f"POD-{load_id}"])
+        paid_at = at + timedelta(days=1)
+        remittance = mail.write(shipper["email"], "ar@goldengatefreight.example",
+                                f"Remittance advice - {shipper['name']} - {sinv}",
+                                f"Payment of $1,850.00 sent via ACH for invoice {sinv} (PO {po}).",
+                                paid_at)
+        payment = bank.post("ach_credit", 1850.0, shipper["name"], sinv, paid_at)
         tms = {**common, "carrier": carrier, "shipper": shipper, "consignee": consignee, "contract_rate": 1850.0,
                "free_time_min": 120, "operator_overrides": {}, "pickup_appt": _ts(loaded),
                "delivery_appt": _ts(arrived)}
@@ -543,7 +557,13 @@ async def seed_hero(world: dict) -> None:
             _event("load.delivered", load, {**common, "dwell_min": 47}, departed),
             _event("gps.ping", load, {**common, "milestone": "delivery.departed", "dwell_min": 47}, departed),
             _event("pod.received", load, {**common, "pod_ref": refs[2], "signed": True}, departed, refs=refs[2:3]),
+            _event("shipper_invoice.issued", load,
+                   {**common, "invoice_id": sinv, "shipper": shipper, "amount": 1850.0},
+                   at, refs=[sinv_ref]),
             _event("email.received", load, _email_payload(message), at),
+            _event("email.received", load, _email_payload(remittance), paid_at),
+            _event("bank.event", load, {"file": payment["file"], "account": payment["account"],
+                                        "record": payment["record"]}, paid_at),
         ]
         for event in events_to_publish:
             await publish(None, event)

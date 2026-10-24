@@ -287,7 +287,10 @@ function DashboardBody() {
                   aria-current={view === item.id ? "page" : undefined}
                   aria-label={item.label}
                   title={item.label}
-                  onClick={() => navigate(item.id)}
+                  onClick={() => {
+                    if (item.id === "home") setCaseId("");
+                    navigate(item.id);
+                  }}
                 >
                   <item.icon size={17} />
                   <span>{item.label}</span>

@@ -391,10 +391,13 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
         add(at, bank_change)
 
     sh_lines = [{"desc": f"Linehaul {lane['origin']} -> {lane['destination']} ({lane['miles']} mi)",
-                 "amount": lane["shipper_linehaul"]}, {"desc": "Fuel surcharge", "amount": lane["shipper_fsc"]}]
+                 "qty": 1, "rate": lane["shipper_linehaul"], "amount": lane["shipper_linehaul"]},
+                {"desc": "Fuel surcharge", "qty": lane["miles"], "rate": load["fsc_per_mile"],
+                 "amount": lane["shipper_fsc"]}]
     if scenario == "detention_supported":
-        sh_lines.append({"desc": f"Detention {pl['claimed_h']}h", "amount": round(pl["claimed_h"] *
-                                                                                 lane["detention_rate_hr"] * 1.25, 2)})
+        detention_rate = lane["detention_rate_hr"] * 1.25
+        sh_lines.append({"desc": f"Detention {pl['claimed_h']}h", "qty": pl["claimed_h"],
+                         "rate": detention_rate, "amount": round(pl["claimed_h"] * detention_rate, 2)})
     sh_total = round(sum(li["amount"] for li in sh_lines), 2)
     sinv = f"SINV-{lid}"
 

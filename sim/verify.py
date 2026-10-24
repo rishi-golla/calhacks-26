@@ -95,6 +95,28 @@ def run(data_dir: str | Path = "data") -> dict:
                     amount = round(float(line["qty"]) * float(line["rate"]), 2)
                     if round(float(line.get("amount", 0)), 2) != amount:
                         add("V2", load_id, ref, f"{line.get('desc')} amount does not equal qty × rate")
+            if pdf.exists():
+                text = "\n".join(page.extract_text() or "" for page in PdfReader(str(pdf)).pages)
+                section = re.search(r"Description\s+Qty\s+Rate\s+Amount(.*?)TOTAL\s+DUE", text,
+                                    re.IGNORECASE | re.DOTALL)
+                number = r"[\d,]+(?:\.\d+)?"
+                row_pattern = re.compile(
+                    rf"^(?P<desc>.+?)\s+(?P<qty>{number})\s+(?P<rate>-?\$?-?{number})"
+                    rf"\s+(?P<amount>-?\$?-?{number})\s*$")
+                pdf_lines = []
+                if section:
+                    for row in section.group(1).splitlines():
+                        match = row_pattern.match(row.strip())
+                        if match:
+                            pdf_lines.append({
+                                key: float(match.group(key).replace("$", "").replace(",", ""))
+                                for key in ("qty", "rate", "amount")
+                            })
+                if len(pdf_lines) != len(lines):
+                    add("V2", load_id, ref, "invoice PDF line table could not be fully parsed")
+                for line in pdf_lines:
+                    if round(line["qty"] * line["rate"], 2) != round(line["amount"], 2):
+                        add("V2", load_id, ref, "PDF line amount does not equal printed qty × rate")
 
     carriers = {x.get("id"): x for x in world.get("carriers", [])}
     shippers = {x.get("id"): x for x in world.get("shippers", [])}

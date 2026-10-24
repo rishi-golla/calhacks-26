@@ -98,6 +98,31 @@ def test_answer_key_scenarios_and_outcomes_are_isolated(generated_data):
         assert not any(term.casefold() in data for term in forbidden), path.name
 
 
+def test_pdf_fsc_rates_keep_precision_and_satisfy_v2(generated_data):
+    from ingest.documents import extract_invoice_rules
+    from pypdf import PdfReader
+
+    clean_load = next(item["load_id"] for item in
+                      (json.loads(line) for line in (generated_data / "answer_key.jsonl").read_text().splitlines())
+                      if item["scenario"] == "clean")
+    docs = [json.loads(path.read_text()) for path in (generated_data / "docs").glob("*.json")]
+    invoice = next(doc for doc in docs if doc.get("load_id") == clean_load
+                   and doc.get("type") == "carrier_invoice")
+    invoice_text = "\n".join(page.extract_text() or "" for page in
+                             PdfReader(str(generated_data / "docs" / invoice["pdf"])).pages)
+    parsed = extract_invoice_rules(invoice_text)
+    fsc = next(line for line in parsed["line_items"] if "fuel surcharge" in line["desc"].casefold())
+    assert fsc["rate"] == 0.433
+    assert round(fsc["qty"] * fsc["rate"], 2) == fsc["amount"]
+    for kind in ("rate_confirmation", "shipper_invoice"):
+        doc = next(item for item in docs if item.get("load_id") == clean_load and item.get("type") == kind)
+        text = "\n".join(page.extract_text() or "" for page in
+                         PdfReader(str(generated_data / "docs" / doc["pdf"])).pages)
+        assert "$0.433" in text
+    report = verify.run(generated_data)
+    assert not any(item["rule"] == "V2" and item["load_id"] == clean_load for item in report["violations"])
+
+
 def test_verifier_detects_invoice_total_mutation(generated_data, tmp_path):
     root = _copy_data(generated_data, tmp_path / "total-mutation")
     clean_load = next(item["load_id"] for item in

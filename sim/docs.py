@@ -27,6 +27,10 @@ def _money(v: float) -> str:
     return f"${v:,.2f}"
 
 
+def _rate(v: float) -> str:
+    return f"${v:,.3f}" if round(v, 2) != v else _money(v)
+
+
 class _Doc(FPDF):
     def __init__(self, title: str, issuer: dict, accent: tuple[int, int, int] = (20, 60, 120), style: int = 0):
         super().__init__(format="Letter")
@@ -130,7 +134,7 @@ def rate_confirmation(d: dict) -> FPDF:
     p.block("PICKUP", [d["shipper"]["name"], d["shipper"].get("address"), f"Appt: {d['pickup_appt']}"])
     p.block("DELIVERY", [d["consignee"]["name"], d["consignee"].get("address"), f"Appt: {d['delivery_appt']}"])
     p.table(["Charge", "Basis", "Amount"], [["Linehaul", "flat", _money(d["linehaul"])],
-            ["Fuel surcharge", f"{d['miles']} mi x ${d['fsc_per_mile']:.3f}", _money(d["fsc"])],
+            ["Fuel surcharge", f"{d['miles']} mi x {_rate(d['fsc_per_mile'])}", _money(d["fsc"])],
             ["TOTAL", "", _money(d["total"])]], [80, 70, 46])
     a = d["accessorials"]
     p.block("ACCESSORIAL SCHEDULE", [
@@ -179,7 +183,7 @@ def carrier_invoice(d: dict) -> FPDF:
     p.block("REMIT TO", [d["remit_to"]["name"], d["remit_to"].get("address"),
                          f"ACH routing ****{d['remit_to']['routing_last4']} acct ****{d['remit_to']['account_last4']}"])
     p.table(["Description", "Qty", "Rate", "Amount"],
-            [[li["desc"], li.get("qty", 1), _money(li.get("rate", li["amount"])), _money(li["amount"])]
+            [[li["desc"], li.get("qty", 1), _rate(li.get("rate", li["amount"])), _money(li["amount"])]
              for li in d["line_items"]], [96, 20, 40, 40])
     p.set_font("Helvetica", "B", 11)
     p.cell(0, 8, _t(f"TOTAL DUE: {_money(d['total'])}"), align="R", new_x="LMARGIN", new_y="NEXT")
@@ -193,7 +197,9 @@ def shipper_invoice(d: dict) -> FPDF:
     p.kv([("Invoice #", d["invoice_id"]), ("Date", d["date"]), ("PO #", d["po"]), ("BOL #", d["bol"]),
           ("Terms", d["terms"]), ("Due", d["due"])])
     p.block("BILL TO", [d["shipper"]["name"], d["shipper"].get("address"), "Attn: Accounts Payable"])
-    p.table(["Description", "Amount"], [[li["desc"], _money(li["amount"])] for li in d["line_items"]], [150, 46])
+    p.table(["Description", "Qty", "Rate", "Amount"],
+            [[li["desc"], li.get("qty", 1), _rate(li.get("rate", li["amount"])), _money(li["amount"])]
+             for li in d["line_items"]], [78, 20, 48, 48])
     p.set_font("Helvetica", "B", 11)
     p.cell(0, 8, _t(f"AMOUNT DUE: {_money(d['total'])}"), align="R")
     return p

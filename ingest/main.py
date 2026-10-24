@@ -431,7 +431,7 @@ async def main() -> None:
     db = connect()
     try:
         try:
-            await r.xgroup_create(STREAM, GROUP, id="$", mkstream=True)
+            await r.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
         except redis.ResponseError as exc:
             if "BUSYGROUP" not in str(exc):
                 raise

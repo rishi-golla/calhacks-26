@@ -11,6 +11,7 @@ from pypdf import PdfReader
 
 from common import harness_client
 from ingest.documents import classify, extract_invoice_rules, read_email
+from ingest import main as ingest_main
 from ingest.main import _invoice_email, connect, handle
 from integrations import edgar, fmcsa
 from sim import docs, generator
@@ -18,6 +19,29 @@ from sim import mail as sim_mail
 from sim.generator import SCENARIOS
 from sim.world import price_lane
 from tests.test_w4_data import CARRIER_ROW, SEC_SUB
+
+
+def test_ingest_group_starts_at_stream_beginning(world, monkeypatch):
+    class StopReading(Exception):
+        pass
+
+    class FakeRedis:
+        def __init__(self):
+            self.group_args = None
+
+        async def xgroup_create(self, stream, group, id, mkstream):
+            self.group_args = (stream, group, id, mkstream)
+
+        async def xreadgroup(self, *args, **kwargs):
+            raise StopReading
+
+    fake_redis = FakeRedis()
+    db = connect()
+    monkeypatch.setattr(ingest_main.redis, "from_url", lambda _url: fake_redis)
+    monkeypatch.setattr(ingest_main, "connect", lambda: db)
+    with pytest.raises(StopReading):
+        asyncio.run(ingest_main.main())
+    assert fake_redis.group_args == ("events", "ingest", "0", True)
 
 
 @pytest.fixture

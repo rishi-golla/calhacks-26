@@ -31,6 +31,8 @@ DOCUMENTS_STREAM = os.getenv("DOCUMENTS_STREAM", "documents")
 GROUP = "ingest"
 CONSUMER = "ingest-1"
 ACCESSORIAL_TERMS = ("detention", "lumper", "layover", "stop-off", "stop off", "tonu", "driver assist")
+# Events ingest derives that open a case for the router; a demo load's one jumps to P0 and carries its outreach target.
+CASE_EVENTS = {"carrier_invoice.received", "bank_change.requested", "shipper_payment.received"}
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS loads (load_id TEXT PRIMARY KEY, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS invoices (invoice_id TEXT PRIMARY KEY, load_id TEXT, invoice_number TEXT, json TEXT NOT NULL);
@@ -605,8 +607,30 @@ async def _handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
     return []
 
 
+def _stamp_demo(trigger: dict, derived: list[dict], db: sqlite3.Connection) -> None:
+    """Keep a demo load's origin on what ingest derives from it (the simulator already stamps its own events).
+
+    The case-opening event also gets P0 (PRD H5 reserves P0 capacity for the demo) and the routing context the
+    Voice Desk reads from its subject. That context is routing, not evidence: it is added after the records are
+    stored, so the source export never sees it. `demo_channel`, not `channel`: a bank-change payload's `channel`
+    is how the request arrived."""
+    for event in derived:
+        if event.get("event_id") == trigger.get("event_id"):
+            continue
+        payload = event.get("payload") or {}
+        demo = (_load(db, payload.get("load_id") or payload.get("matched_load_id")) or {}).get("demo")
+        if not demo:
+            continue
+        event["source"] = "demo"
+        if event.get("type") in CASE_EVENTS:
+            event["priority"] = "P0"
+            payload.update(demo_target=demo.get("demo_target"), demo_channel=demo.get("channel"),
+                           injection_id=demo.get("injection_id"))
+
+
 async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
     derived = await _handle(ev, db)
+    _stamp_demo(ev, derived, db)
     trigger_id = ev.get("event_id")
     if not trigger_id:
         trigger_id = hashlib.sha256(json.dumps(ev, sort_keys=True, default=str).encode()).hexdigest()[:16]

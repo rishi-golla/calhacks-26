@@ -220,7 +220,7 @@ export default function Workflow({
       sent.current.clear();
       return;
     }
-    for (const id of visible) {
+    for (const { id } of STEPS) {
       const url = urls[id];
       if (sent.current.get(id) === url) continue;
       sent.current.set(id, url);
@@ -230,12 +230,7 @@ export default function Workflow({
         body: JSON.stringify({ url }),
       }).catch(() => sent.current.delete(id));
     }
-    for (const id of [...sent.current.keys()])
-      if (!visible.has(id)) {
-        sent.current.delete(id);
-        fetch(`${FARM}/sessions/${id}`, { method: "DELETE" }).catch(() => {});
-      }
-  }, [farm, visible, urls]);
+  }, [farm, urls]);
 
   const shown = useRef(new Set<string>());
   useEffect(() => {

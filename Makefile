@@ -2,7 +2,7 @@ PY := .venv/bin/python
 SIM_DATA_DIR ?= data
 SPACETIME_DB ?= freightops
 SPACETIME_URL ?= http://127.0.0.1:3000
-.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest verify-data
+.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest verify-data review-worker live-agents live-demo live-gateway
 
 setup:            ## create venv + install
 	python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -11,7 +11,7 @@ infra:            ## postgres + redis
 	docker compose up -d
 harness:          ## W1 mock harness on :8000
 	$(PY) -m harness.server
-agents:           ## all 8 A2A agents on :9101-9108
+agents:           ## all 9 A2A agents on :9101-9109
 	./scripts/dev_agents.sh
 gateway:          ## webhooks + demo endpoints on :9000
 	$(PY) -m gateway.app
@@ -25,14 +25,22 @@ sim:              ## publish raw simulator arrivals to Redis `raw`
 	$(PY) -m sim.generator
 verify-data:      ## verify generated W4 documents and event traces
 	$(PY) -m sim.verify --data "$(SIM_DATA_DIR)"
+review-worker:    ## W2 review outbox -> Settlement Quality Review
+	$(PY) -m common.review_worker
 web:              ## dashboard on :3001
 	cd web && npm run dev -- -p 3001
 test:
 	$(PY) -m pytest -q
 lint:
 	.venv/bin/ruff check .
-demo:             ## hero case smoke: AP -> Risk over real A2A
+demo:             ## fixture case across the real nine-service A2A mesh
 	$(PY) -m scripts.hero_smoke
+live-agents:      ## nine authenticated services using the private local live profile
+	$(PY) -m scripts.live_agents
+live-demo:        ## one bounded live concurrent workload with synthetic source data
+	$(PY) -m scripts.live_concurrency_demo
+live-gateway:     ## local Cartesia result polling with private service credentials
+	$(PY) -m scripts.live_gateway
 
 spacetime-setup:   ## install the pinned module + dashboard dependencies
 	cd spacetime/module/spacetimedb && npm ci

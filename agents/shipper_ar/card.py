@@ -1,2 +1,2 @@
-"""Skill descriptions for the shipper_ar Agent Card. Skills/ports come from common.config."""
-DESCRIPTIONS: dict[str, str] = {}
+"""Shipper Billing & Collections Agent Card descriptions."""
+DESCRIPTIONS = {'reconcile_customer_payment': 'Match identified deposits to shipper invoices and request balanced receivable journals.', 'chase_overdue': 'Follow up on overdue balances or short-pay disputes through verified shipper contacts.', 'set_credit_limit': 'Produce a sourced credit recommendation; actual credit-limit mutation is not supported.'}

@@ -17,11 +17,12 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from common.policy import check
+from common.spacetime_client import SpacetimeProtocolError, canonical_sql_column
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = (
     "carrier_ap", "shipper_ar", "cfo", "risk", "controller", "verification",
-    "voice_desk", "validator", "ingest", "harness", "evaluator", "router",
+    "voice_desk", "validator", "documents", "ingest", "harness", "evaluator", "router",
 )
 
 
@@ -84,8 +85,10 @@ class LocalAdmin:
         )
         response.raise_for_status()
         result = response.json()[0]
-        names = [e["name"].get("some") if isinstance(e["name"], dict) else e["name"]
+        names = [canonical_sql_column(e["name"].get("some") if isinstance(e["name"], dict) else e["name"])
                  for e in result["schema"]["elements"]]
+        if len(set(names)) != len(names):
+            raise SpacetimeProtocolError("SpacetimeDB returned ambiguous SQL column names")
         return [dict(zip(names, row, strict=True)) for row in result["rows"]]
 
     def publish(self) -> None:

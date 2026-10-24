@@ -1,5 +1,7 @@
-"""Integration tools called by agents (PRD 7.6). Return {"error": ...} instead of raising.
-Real by default: public FMCSA/SEC records, plus optional keyed providers. MOCK_INTEGRATIONS=1 is for offline tests."""
+"""Integration tools (PRD 7.6). Return {"error": ...} instead of raising.
+Real by default: public FMCSA/SEC records, plus optional keyed providers. MOCK_INTEGRATIONS=1 is for offline tests.
+The live agent tool loop uses integrations.apify for Apify lookups; these functions back the simulator, ingestion
+and fixtures, and hold the CRS/Nessie stubs until those connectors land."""
 import os
 import re
 

@@ -157,6 +157,11 @@ def _read_query(sql: str) -> str:
     return statement
 
 
+def canonical_sql_column(name: str) -> str:
+    """Normalize the module SDK's numeric acronym spelling to the Python contract."""
+    return "a2a_state" if name == "a_2_a_state" else name
+
+
 def _query_result(value: Any) -> QueryResult:
     try:
         if not isinstance(value, list) or len(value) != 1:
@@ -167,7 +172,10 @@ def _query_result(value: Any) -> QueryResult:
             name = element["name"]
             if isinstance(name, dict):
                 name = name.get("some")
-            if not isinstance(name, str) or not name or name in columns:
+            if not isinstance(name, str) or not name:
+                raise ValueError
+            name = canonical_sql_column(name)
+            if name in columns:
                 raise ValueError
             columns.append(name)
         rows = result["rows"]

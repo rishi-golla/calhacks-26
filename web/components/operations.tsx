@@ -157,7 +157,7 @@ export function Overview({
                   now - timestamp(row.last_seen) < 60000,
               ).length
             }
-            <em> / 8</em>
+            <em> / {AGENTS.length}</em>
           </strong>
           <small>Independent A2A services</small>
         </div>

@@ -87,7 +87,6 @@ function LiveFrame({ id, tick }: { id: string; tick: number }) {
 
 const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
   const { step, events, status, farm, tick } = data;
-  const Icon = step.icon;
   return (
     <div
       className={`wf-node ${data.leaving ? "leaving" : ""}`}
@@ -105,10 +104,8 @@ const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
         <X size={12} />
       </button>
       <div className="wf-head">
-        <span className="wf-icon">
-          <Icon size={15} strokeWidth={1.8} />
-        </span>
         <div>
+          <span className="wf-agent">{step.operator}</span>
           <strong>{step.title}</strong>
           <small>{step.subtitle}</small>
         </div>
@@ -358,10 +355,9 @@ export default function Workflow({
                     setPalette(false);
                   }}
                 >
-                  <s.icon size={14} />
                   <span>
                     <b>{s.title}</b>
-                    <small>{s.subtitle}</small>
+                    <small>{s.operator}</small>
                   </span>
                 </button>
               ))}
@@ -425,6 +421,8 @@ export default function Workflow({
                 <dl>
                   <dt>Step</dt>
                   <dd>{open.title}</dd>
+                  <dt>Agent</dt>
+                  <dd>{open.operator}</dd>
                   <dt>Status</dt>
                   <dd>{statusOf(open)}</dd>
                   <dt>Events in this case</dt>

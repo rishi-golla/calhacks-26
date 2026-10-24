@@ -1,22 +1,4 @@
 "use client";
-import {
-  Brain,
-  Building2,
-  ChartNoAxesCombined,
-  CheckCheck,
-  Database,
-  FileSearch,
-  GitCommitHorizontal,
-  Headphones,
-  Landmark,
-  Receipt,
-  ShieldCheck,
-  Sparkles,
-  Truck,
-  UserRound,
-  Wallet,
-  type LucideIcon,
-} from "lucide-react";
 import { money, str, timestamp, type Row, type Snapshot } from "@/lib/data";
 
 export type Line = { key: string; ts: number; text: string; meta?: string };
@@ -24,7 +6,7 @@ export type Step = {
   id: string;
   title: string;
   subtitle: string;
-  icon: LucideIcon;
+  operator: string;
   agent?: string;
   sources: string[];
   feed: (d: Snapshot) => Line[];
@@ -59,7 +41,7 @@ export const STEPS: Step[] = [
     id: "generator",
     title: "Synthetic generator",
     subtitle: "Loads, invoices, PODs, bank lines",
-    icon: Database,
+    operator: "Simulator",
     sources: ["case", "invoice"],
     feed: (d) => [
       ...rows(d, "case").map((r) =>
@@ -84,7 +66,7 @@ export const STEPS: Step[] = [
     id: "ingest",
     title: "Ingestion",
     subtitle: "Raw documents to routable events",
-    icon: FileSearch,
+    operator: "Ingest agent",
     agent: "ingest",
     sources: ["doc_read", "audit_event"],
     feed: (d) => [
@@ -103,7 +85,7 @@ export const STEPS: Step[] = [
     id: "asus",
     title: "ASUS secure env",
     subtitle: "Redaction, local LLM, routing",
-    icon: ShieldCheck,
+    operator: "ASUS GX10 router",
     sources: ["routing_outbox", "delegation_edge"],
     feed: (d) => [
       ...rows(d, "routing_outbox").map((r) =>
@@ -128,7 +110,7 @@ export const STEPS: Step[] = [
     id: "carrier_ap",
     title: "Carrier AP",
     subtitle: "Three-way match: rate con, POD, invoice",
-    icon: Truck,
+    operator: "Carrier AP agent",
     agent: "carrier_ap",
     sources: ["audit_event", "task"],
     feed: byAgent("carrier_ap"),
@@ -137,7 +119,7 @@ export const STEPS: Step[] = [
     id: "shipper_ar",
     title: "Shipper AR",
     subtitle: "Payments, short-pay, collections",
-    icon: Receipt,
+    operator: "Shipper AR agent",
     agent: "shipper_ar",
     sources: ["audit_event", "task"],
     feed: byAgent("shipper_ar"),
@@ -146,7 +128,7 @@ export const STEPS: Step[] = [
     id: "risk",
     title: "Risk",
     subtitle: "Bank-change and fraud screening",
-    icon: ShieldCheck,
+    operator: "Risk agent",
     agent: "risk",
     sources: ["audit_event", "task"],
     feed: byAgent("risk"),
@@ -155,7 +137,7 @@ export const STEPS: Step[] = [
     id: "contacts",
     title: "Live data · contacts",
     subtitle: "FMCSA carriers, SEC shippers",
-    icon: Building2,
+    operator: "Verification agent",
     sources: ["company", "contact"],
     feed: (d) => [
       ...rows(d, "company").map((r) =>
@@ -180,7 +162,7 @@ export const STEPS: Step[] = [
     id: "verification",
     title: "Verification",
     subtitle: "Confirms identity against public records",
-    icon: CheckCheck,
+    operator: "Verification agent",
     agent: "verification",
     sources: ["audit_event", "task"],
     feed: byAgent("verification"),
@@ -189,7 +171,7 @@ export const STEPS: Step[] = [
     id: "voice_desk",
     title: "Voice Desk",
     subtitle: "Demo-routed calls and email",
-    icon: Headphones,
+    operator: "Voice Desk agent",
     agent: "voice_desk",
     sources: ["call", "audit_event"],
     feed: (d) => [
@@ -208,7 +190,7 @@ export const STEPS: Step[] = [
     id: "controller",
     title: "Controller",
     subtitle: "Deterministic pass: holds, ledger",
-    icon: Landmark,
+    operator: "Controller agent",
     agent: "controller",
     sources: ["hold", "ledger_entry", "audit_event"],
     feed: (d) => [
@@ -230,7 +212,7 @@ export const STEPS: Step[] = [
     id: "cfo",
     title: "CFO",
     subtitle: "Cash forecast and capital",
-    icon: ChartNoAxesCombined,
+    operator: "CFO agent",
     agent: "cfo",
     sources: ["cash_forecast", "audit_event"],
     feed: (d) => [
@@ -249,7 +231,7 @@ export const STEPS: Step[] = [
     id: "payments",
     title: "Payments · Nessie",
     subtitle: "Capital One sandbox payouts",
-    icon: Wallet,
+    operator: "Controller agent",
     sources: ["payment_proposal", "invoice"],
     feed: (d) => [
       ...rows(d, "payment_proposal").map((r) =>
@@ -276,7 +258,7 @@ export const STEPS: Step[] = [
     id: "audit",
     title: "Audit trail",
     subtitle: "Git-style change sets per result",
-    icon: GitCommitHorizontal,
+    operator: "Audit writer",
     sources: ["change_set"],
     feed: (d) =>
       rows(d, "change_set").map((r) =>
@@ -292,7 +274,7 @@ export const STEPS: Step[] = [
     id: "human",
     title: "Human input",
     subtitle: "Approvals and flags",
-    icon: UserRound,
+    operator: "Human reviewer",
     sources: ["approval", "flag"],
     feed: (d) => [
       ...rows(d, "approval").map((r) =>
@@ -312,7 +294,7 @@ export const STEPS: Step[] = [
     id: "validator",
     title: "Validator",
     subtitle: "Reviews every agent output",
-    icon: Sparkles,
+    operator: "Validator agent",
     agent: "validator",
     sources: ["review", "audit_event"],
     feed: (d) => [
@@ -326,7 +308,7 @@ export const STEPS: Step[] = [
     id: "instructions",
     title: "Instructions & memory",
     subtitle: "What the agents learn",
-    icon: Brain,
+    operator: "Validator agent",
     sources: ["instruction_version", "agent_memory"],
     feed: (d) => [
       ...rows(d, "instruction_version").map((r) =>

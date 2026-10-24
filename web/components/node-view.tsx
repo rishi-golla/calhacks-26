@@ -15,10 +15,8 @@ function View({ id, caseId }: { id: string; caseId: string }) {
   return (
     <main className="nv">
       <header>
-        <span className="wf-icon">
-          <step.icon size={18} />
-        </span>
         <div>
+          <span className="wf-agent">{step.operator}</span>
           <h1>{step.title}</h1>
           <p>
             {step.subtitle}

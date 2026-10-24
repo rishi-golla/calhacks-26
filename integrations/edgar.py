@@ -51,7 +51,7 @@ def company(cik: int, client: httpx.Client | None = None) -> dict:
 
 
 def sample_shippers(n: int = 12, states: set[str] | None = None, seed: int | None = None,
-                    max_requests: int = 400) -> list[dict]:
+                    max_requests: int = 1500) -> list[dict]:
     """Walk a shuffled ticker list and keep US shippers (optionally in `states`) with a registered phone."""
     out: list[dict] = []
     with _client() as c:

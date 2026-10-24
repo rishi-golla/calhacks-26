@@ -11,7 +11,7 @@ import httpx
 from integrations import directory, edgar, fmcsa
 from sim import geo
 
-CARRIER_STATES = ["CA", "NV", "OR", "WA", "AZ", "UT", "ID"]
+CARRIER_STATES: list[str] = []  # empty = nationwide
 US_STATES = frozenset(geo.STATE_CENTROIDS)
 DIESEL_USD = 3.85  # $/gal used by the fuel-surcharge table (DOE-style: (price - 1.25) / 6 mpg per mile)
 GL_ACCOUNTS = [
@@ -56,7 +56,7 @@ def _geocode_all(companies: list[dict]) -> None:
             co.update(g)
 
 
-def build(n_carriers: int = 30, n_shippers: int = 12, seed: int | None = None) -> dict:
+def build(n_carriers: int = 300, n_shippers: int = 60, seed: int | None = None) -> dict:
     rnd = random.Random(seed)
     carriers = fmcsa.search_carriers(CARRIER_STATES, limit=n_carriers, offset=rnd.randrange(0, 1500, 25))
     shippers = edgar.sample_shippers(n_shippers, states=US_STATES, seed=seed)
@@ -99,8 +99,8 @@ def ensure(**kw) -> dict:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--carriers", type=int, default=30)
-    ap.add_argument("--shippers", type=int, default=12)
+    ap.add_argument("--carriers", type=int, default=300)
+    ap.add_argument("--shippers", type=int, default=60)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--refresh", action="store_true")
     a = ap.parse_args()

@@ -52,6 +52,14 @@ url = "http://127.0.0.1:8007"
 timeout_s = 45
 max_concurrency = 16
 
+[backends.H]                 # SmolLM3-3B (Hugging Face): slot B candidate after OLMoE failed it
+served_name = "smollm3"
+url = "http://127.0.0.1:8008"
+timeout_s = 20
+max_concurrency = 16
+[backends.H.extra_body]
+chat_template_kwargs = { enable_thinking = false }
+
 # Logical name -> backends in preference order. The first healthy one serves; the rest are fallbacks.
 # C (gpt-oss) is out of rotation: its MXFP4 Marlin kernel emits NaN logits on GB10 (token 0 "!" garbage,
 # corrupt Harmony headers) under load, batched or not. Re-add "C" here once a working C is serving.

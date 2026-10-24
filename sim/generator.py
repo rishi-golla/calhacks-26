@@ -24,6 +24,7 @@ import redis.asyncio as redis
 
 from common import store
 from sim import bank, clock, docs, events, geo, mail
+from sim import retention
 from sim.world import ensure
 
 SCENARIOS = {"clean": 0.40, "decoy_detention_supported_small": 0.06, "decoy_quickpay": 0.06,
@@ -527,6 +528,12 @@ async def heartbeat(r: redis.Redis) -> None:
         await asyncio.sleep(5)
 
 
+async def retention_loop() -> None:
+    while True:
+        retention.prune(data_dir())
+        await asyncio.sleep(60)
+
+
 async def main() -> None:
     world = ensure()
     await seed_hero(world)
@@ -541,7 +548,7 @@ async def main() -> None:
         scenario = pick(rnd)
         backdate = timedelta(days=rnd.uniform(2, max(2, history_days)))
         await run_load(r, world, rnd, scenario, backdate=backdate)
-    running: set[asyncio.Task] = {asyncio.create_task(heartbeat(r))}
+    running: set[asyncio.Task] = {asyncio.create_task(heartbeat(r)), asyncio.create_task(retention_loop())}
     print(f"sim: {len(world['carriers'])} carriers, {len(world['shippers'])} shippers; new load every ~{interval}s; "
           f"1 wall second = {clock.ratio() / 60:.0f} business minutes")
     warm_human = 0

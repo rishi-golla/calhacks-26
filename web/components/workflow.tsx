@@ -11,7 +11,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Lock, Menu, Plus, X } from "lucide-react";
-import { str, timestamp } from "@/lib/data";
+import { num, str, timestamp } from "@/lib/data";
 import { useLive } from "./live-provider";
 import { MASCOT_IDS, Mascot } from "./mascot";
 import { useClock } from "./ui";
@@ -337,9 +337,14 @@ export default function Workflow({
     const url = tabs[id]?.url || urls[id];
     const { host, path } = urlParts(url);
     const owner = STEPS.find((s) => s.agent && s.agent === mascotOf(step));
+    const rec = owner && data.agent.find((r) => r.name === owner.agent);
     const working =
-      !!owner &&
-      ["live", "online", "working", "busy"].includes(statusOf(owner));
+      !!rec &&
+      now - timestamp(rec.last_seen) <= 60_000 &&
+      !["offline", "error", "stopped"].includes(
+        str(rec.status).toLowerCase(),
+      ) &&
+      num(rec.active) > 0;
     const nodeState: StepState = needsApproval
       ? "need"
       : ["live", "online", "working", "busy"].includes(status)

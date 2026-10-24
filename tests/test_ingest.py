@@ -247,6 +247,33 @@ def test_bank_offset_rolls_back_and_reemits_payment_on_redelivery(world):
         db.close()
 
 
+def test_raw_bank_events_process_each_record_independently(world):
+    _, load_a, events_a = _run(world, "clean", seed=3)
+    _, load_b, events_b = _run(world, "clean", seed=11)
+
+    def event_of_type(events, event_type):
+        return next(event for event in events if event["type"] == event_type)
+
+    shipper_invoice_a = event_of_type(events_a, "shipper_invoice.issued")
+    bank_event_a = event_of_type(events_a, "bank.event")
+    shipper_invoice_b = event_of_type(events_b, "shipper_invoice.issued")
+    bank_event_b = event_of_type(events_b, "bank.event")
+    for bank_event in (bank_event_a, bank_event_b):
+        bank_event["payload"]["file"] = "BAI2-same-file.txt"
+
+    db = connect()
+    try:
+        first = _ingest([shipper_invoice_a, bank_event_a], db)
+        second = _ingest([shipper_invoice_b, bank_event_b], db)
+    finally:
+        db.close()
+
+    payments = [event for event in first + second if event["type"] == "shipper_payment.received"]
+    assert {event["payload"]["load_id"] for event in payments} == {load_a["load_id"], load_b["load_id"]}
+    assert not any(event["type"] == "document.extracted" and event["payload"]["status"] == "needs_review"
+                   for event in first + second)
+
+
 def test_unclassified_pdf_email_emits_review_event(world):
     _, load, events = _run(world, "clean")
     pod_ref = next(event["payload"]["pod_ref"] for event in events if event["type"] == "pod.received")

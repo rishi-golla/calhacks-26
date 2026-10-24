@@ -315,21 +315,25 @@ def _remittance_advice(trigger: dict, message: dict, db: sqlite3.Connection) -> 
 
 
 def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
-    filename = trigger.get("payload", {}).get("file")
-    if not filename:
-        return [_document_event(trigger, "bank_file", "needs_review")]
-    filename = Path(str(filename)).name
-    path = data_dir() / "bank" / filename
-    if not path.is_file():
-        return [_document_event(trigger, "bank_file", "needs_review", {"file": filename})]
-    contents = path.read_bytes()
-    row = db.execute("SELECT offset FROM bank_offsets WHERE file=?", (filename,)).fetchone()
-    offset = int(row[0]) if row else 0
-    if offset > len(contents):
-        offset = 0
-    pending = contents[offset:].decode("utf-8", errors="replace")
+    payload = trigger.get("payload", {})
+    record = payload.get("record")
+    filename = Path(str(payload["file"])).name if payload.get("file") else None
+    if record is not None:
+        pending = [str(record)]
+    else:
+        if not filename:
+            return [_document_event(trigger, "bank_file", "needs_review")]
+        path = data_dir() / "bank" / filename
+        if not path.is_file():
+            return [_document_event(trigger, "bank_file", "needs_review", {"file": filename})]
+        contents = path.read_bytes()
+        row = db.execute("SELECT offset FROM bank_offsets WHERE file=?", (filename,)).fetchone()
+        offset = int(row[0]) if row else 0
+        if offset > len(contents):
+            offset = 0
+        pending = contents[offset:].decode("utf-8", errors="replace").splitlines()
     output = []
-    for line in pending.splitlines():
+    for line in pending:
         if not line.startswith("16,"):
             continue
         parts = line.rstrip("/\r\n").split(",")
@@ -362,7 +366,8 @@ def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
         if invoice.get("source_email"):
             evidence_refs.append(f"mail:{invoice['source_email']}")
         output.append(_event(trigger, "shipper_payment.received", payload, "P2", evidence_refs))
-    db.execute("INSERT OR REPLACE INTO bank_offsets(file, offset) VALUES (?,?)", (filename, len(contents)))
+    if record is None:
+        db.execute("INSERT OR REPLACE INTO bank_offsets(file, offset) VALUES (?,?)", (filename, len(contents)))
     return output
 
 

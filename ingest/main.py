@@ -400,7 +400,7 @@ def _remittance_advice(trigger: dict, message: dict, db: sqlite3.Connection) -> 
                 _email_event(trigger, message)]
     invoice["deduction_reason"] = reason
     invoice["source_email"] = message.get("mail_id")
-        invoice["remittance_text"] = message.get("body") or ""
+    invoice["remittance_text"] = message.get("body") or ""
     db.execute("UPDATE shipper_invoices SET json=? WHERE invoice_id=?", (_dump(invoice), invoice_id))
     fields = {"invoice_id": invoice_id, "deduction_reason": reason}
     case_id = f"{invoice.get('case_id')}-AR"

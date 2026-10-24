@@ -11,7 +11,7 @@ import os
 import pathlib
 import random
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import redis.asyncio as redis
 
@@ -91,9 +91,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
         claimed_h, receipt = math.ceil((dwell - free) / 60), True
     else:
         dwell, claimed_h, receipt = rnd.randint(25, 110), 0, None
-    departed = _now() - timedelta(minutes=rnd.randint(5, 30))
-    arrived = departed - timedelta(minutes=dwell)
-    gps = {"arrived": f"{arrived:%H:%M}", "departed": f"{departed:%H:%M}"}
+    gps = {"delivery_dwell_min": dwell, "free_time_min": free}
     for delay, stop, kind in ((6, lane["origin"], "pickup.arrived"), (5, lane["origin"], "pickup.departed"),
                               (8, lane["destination"], "delivery.arrived"),
                               (5, lane["destination"], "delivery.departed")):

@@ -1,11 +1,12 @@
 """Public HTTPS gateway (behind the tunnel): Cartesia webhooks, approvals, flags, audit reads, demo triggers.
 Everything that resumes a parked agent goes through common.parking (claimed once, duplicate-safe)."""
+import asyncio
 import hmac
 import json
 import os
 import pathlib
-import time
-import uuid
+import random
+import re
 
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -14,10 +15,9 @@ from pydantic import BaseModel
 from common import a2a_client, store
 from common.envelope import TaskEnvelope
 from common.parking import resume_parked
-from router.main import dispatch
+from integrations import directory
 
 app = FastAPI(title="freightops-gateway")
-FIXTURES = pathlib.Path(__file__).parent.parent / "sim" / "fixtures"
 
 
 def _check(given: str, env_name: str) -> None:
@@ -190,34 +190,68 @@ async def learning(agent: str):
     return {"memory": store.memories(agent), "instructions": store.instruction_patches(agent, include_reverted=True)}
 
 
-# ---- demo triggers ----
-class Scenario(BaseModel):
-    channel: str = "call"  # call | email
-    demo_target: str | None = None
+# ---- live data plane (W4) ----
+class Inject(BaseModel):
+    channel: str = "call"  # call | email (verification channel for detention disputes)
     force_human_approval: bool = False
-    overrides: dict = {}
+    demo_target: str | None = None
 
 
-@app.post("/demo/{kind}", dependencies=OP)
-async def demo_trigger(kind: str, body: Scenario | None = None):
-    """Publish a preset event (Redis if the router is running, else dispatch directly over A2A)."""
-    if kind not in {"phone", "email", "scenario"}:
+def _redis():
+    import redis.asyncio as redis
+    return redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+
+
+@app.post("/inject/{scenario}", dependencies=OP)
+async def inject(scenario: str, body: Inject | None = None):
+    """Start one live load now (real counterparties, real-time lifecycle) with the chosen planted exception."""
+    from sim.generator import SCENARIOS, new_load, stream_load
+    from sim.world import ensure
+    if scenario not in SCENARIOS:
+        raise HTTPException(404, f"scenario must be one of {sorted(SCENARIOS)}")
+    body = body or Inject()
+    rnd = random.Random()
+    load = new_load(ensure(), rnd)
+    ov = {"verification_channel": body.channel, "force_human_approval": body.force_human_approval,
+          "demo_target": body.demo_target}
+    task = asyncio.create_task(stream_load(_redis(), load, scenario, rnd,
+                                           float(os.getenv("SIM_INJECT_SPEED", "3")), ov))
+    _bg.add(task)
+    task.add_done_callback(_bg.discard)
+    return {"case_id": load["case_id"], "load_id": load["load_id"], "carrier": load["carrier"]["name"],
+            "shipper": load["shipper"]["name"], "scenario": scenario}
+
+
+_bg: set[asyncio.Task] = set()
+
+
+@app.get("/feed", dependencies=OP)
+async def feed(n: int = 60):
+    rows = await _redis().xrevrange("events", count=max(1, min(n, 500)))
+    return [{"stream_id": sid.decode(), **json.loads(f[b"json"])} for sid, f in rows]
+
+
+@app.get("/world", dependencies=OP)
+async def world():
+    return directory.load()
+
+
+@app.get("/docs/{ref}", dependencies=OP)
+async def source_doc(ref: str):
+    ref = ref.removeprefix("doc:")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", ref):
+        raise HTTPException(400)
+    p = pathlib.Path(os.getenv("SIM_DATA_DIR", "data")) / "docs" / f"{ref}.json"
+    if not p.exists():
         raise HTTPException(404)
-    body = body or Scenario()
-    hero = json.loads((FIXTURES / "hero_case.json").read_text())
-    run = uuid.uuid4().hex[:4].upper()
-    payload = {**hero, "case_id": f"{hero['case_id']}-{run}", "invoice_id": f"INV-{hero['load_id']}-{run}",
-               "verification_channel": "email" if kind == "email" else body.channel,
-               "demo_target": body.demo_target, "force_human_approval": body.force_human_approval,
-               **body.overrides}
-    ev = {"event_id": f"EVT-{uuid.uuid4().hex[:8]}", "type": "carrier_invoice.received", "ts": time.time(),
-          "priority": "P0", "payload": payload, "source": f"demo:{kind}"}
-    if os.getenv("DEMO_VIA_REDIS", "0") == "1":
-        import redis.asyncio as redis
-        await redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0")).xadd("events", {"json": json.dumps(ev)})
-        return {"queued": ev["event_id"], "case_id": payload["case_id"]}
-    task_id = await dispatch(ev)
-    return {"dispatched": task_id, "case_id": payload["case_id"]}
+    return json.loads(p.read_text())
+
+
+@app.get("/answer_key", dependencies=OP)
+async def answer_key(n: int = 50):
+    p = pathlib.Path(os.getenv("SIM_DATA_DIR", "data")) / "answer_key.jsonl"
+    lines = p.read_text().splitlines()[-max(1, min(n, 500)):] if p.exists() else []
+    return [json.loads(x) for x in reversed(lines)]
 
 
 if __name__ == "__main__":

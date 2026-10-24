@@ -16,7 +16,6 @@ from datetime import UTC, datetime, timedelta
 import redis.asyncio as redis
 
 from common import store
-from integrations import directory
 from sim.world import ensure
 
 SCENARIOS = {"clean": 0.55, "detention_unsupported": 0.12, "detention_supported": 0.08,
@@ -74,7 +73,7 @@ def _event(etype: str, load: dict, payload: dict, priority: str = "P3", refs: li
     return ev
 
 
-def lifecycle(load: dict, scenario: str, rnd: random.Random) -> list[tuple[float, dict]]:
+def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | None = None) -> list[tuple[float, dict]]:
     """(delay_before_seconds, event) steps for one load. Delays are scaled by SIM_SPEED at publish time."""
     lid, case, c, s = load["load_id"], load["case_id"], load["carrier"], load["shipper"]
     lane, rate, free = load["lane"], load["contract_rate"], load["free_time_min"]
@@ -113,7 +112,8 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random) -> list[tuple[float
                              "Golden Gate Freight", **base, "line_items": lines, "total": total})
     invoice = {**base, "invoice_id": inv_id, "carrier": c, "shipper": s, "contract_rate": rate,
                "invoice_amount": total, "line_items": lines, "detention_hours_claimed": claimed_h,
-               "free_time_min": free, "gps": gps, "gps_dwell_min": dwell, "receipt_attached": receipt}
+               "free_time_min": free, "gps": gps, "gps_dwell_min": dwell, "receipt_attached": receipt,
+               **(overrides or {})}
     refs = [inv, pod, ratecon]
     steps.append((4, _event("carrier_invoice.received", load, invoice, "P1" if claimed_h else "P2", refs)))
     if scenario == "duplicate_invoice":
@@ -157,13 +157,18 @@ async def publish(r: redis.Redis, ev: dict) -> None:
     await r.xadd(STREAM, {"json": json.dumps(ev)}, maxlen=20_000, approximate=True)
 
 
-async def run_load(r: redis.Redis, world: dict, rnd: random.Random, scenario: str, speed: float = 1.0) -> dict:
-    load = new_load(world, rnd)
+async def stream_load(r: redis.Redis, load: dict, scenario: str, rnd: random.Random, speed: float = 1.0,
+                      overrides: dict | None = None) -> None:
     record_answer(load, scenario)
-    for delay, ev in lifecycle(load, scenario, rnd):
+    for delay, ev in lifecycle(load, scenario, rnd, overrides):
         await asyncio.sleep(delay / speed)
         ev["ts"] = _now().isoformat()
         await publish(r, ev)
+
+
+async def run_load(r: redis.Redis, world: dict, rnd: random.Random, scenario: str, speed: float = 1.0) -> dict:
+    load = new_load(world, rnd)
+    await stream_load(r, load, scenario, rnd, speed)
     return load
 
 
@@ -189,11 +194,6 @@ async def main() -> None:
         t.add_done_callback(running.discard)
         print(f"sim: started {sc}")
         await asyncio.sleep(interval * rnd.uniform(0.6, 1.4))
-
-
-def world_summary() -> dict:
-    w = directory.load()
-    return {k: len(w.get(k, [])) for k in ("carriers", "shippers", "lanes")}
 
 
 if __name__ == "__main__":

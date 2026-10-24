@@ -60,6 +60,7 @@ The configured local stack uses the private profile loaded by these commands in 
 make live-agents
 make live-gateway
 make web
+make browsers
 ```
 
 The gateway polls Cartesia locally, so the default setup does not require a public URL or webhook

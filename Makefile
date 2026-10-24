@@ -2,7 +2,7 @@ PY := .venv/bin/python
 SIM_DATA_DIR ?= data
 SPACETIME_DB ?= freightops
 SPACETIME_URL ?= http://127.0.0.1:3000
-.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest verify-data review-worker live-agents live-demo live-gateway
+.PHONY: setup infra harness agents gateway router web browsers test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest verify-data review-worker live-agents live-demo live-gateway
 
 setup:            ## create venv + install
 	python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -29,6 +29,8 @@ review-worker:    ## W2 review outbox -> Settlement Quality Review
 	$(PY) -m common.review_worker
 web:              ## dashboard on :3001
 	cd web && npm run dev -- -p 3001
+browsers:         ## self-hosted Chromium browser farm on :9300
+	$(PY) -m browserfarm
 test:
 	$(PY) -m pytest -q
 lint:

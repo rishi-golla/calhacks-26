@@ -20,13 +20,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5"]
+browser = ["playwright>=1.47,<2"]
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["common*", "agents*", "harness*", "router*", "gateway*", "sim*", "ingest*", "integrations*", "evaluator*"]
+include = ["common*", "agents*", "harness*", "router*", "gateway*", "sim*", "ingest*", "integrations*", "evaluator*", "browserfarm*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

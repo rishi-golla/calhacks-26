@@ -23,8 +23,9 @@ def post(kind: str, amount: float, counterparty: str, reference: str, at: dateti
     if not path.exists():
         path.write_text(f"01,GGFBANK,GGF,{at:%y%m%d},0000,1,,,2/\n02,GGF,GGFBANK,1,{at:%y%m%d},,USD,2/\n"
                         f"03,{ACCOUNT},USD,/\n")
+    record = f"16,{TYPE_CODES[kind]},{cents},0,{txn_id},{reference},{counterparty}/"
     with path.open("a") as f:
-        f.write(f"16,{TYPE_CODES[kind]},{cents},0,{txn_id},{reference},{counterparty}/\n")
+        f.write(record + "\n")
     return {"txn_id": txn_id, "account": ACCOUNT, "kind": kind, "type_code": TYPE_CODES[kind],
             "amount": round(amount, 2), "counterparty": counterparty, "reference": reference,
-            "posted_at": at.isoformat(), "file": path.name}
+            "posted_at": at.isoformat(), "file": path.name, "record": record}

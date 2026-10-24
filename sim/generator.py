@@ -23,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 import redis.asyncio as redis
 
 from common import store
-from sim import bank, clock, docs, geo, mail
+from sim import bank, clock, docs, events, geo, mail
 from sim.world import ensure
 
 SCENARIOS = {"clean": 0.40, "detention_unsupported": 0.10, "detention_supported": 0.06, "shipper_short_pay": 0.08,
@@ -94,9 +94,9 @@ class Step:
 
 def _event(etype: str, load: dict, payload: dict, at: datetime, priority: str = "P3",
            refs: list[str] | None = None) -> dict:
-    ev = {"event_id": f"EVT-{uuid.uuid4().hex[:10]}", "type": etype, "ts": _now().isoformat(),
-          "occurred_at": at.isoformat(), "case_hint": payload.get("case_id", load["case_id"]),
-          "priority": priority, "source": "sim", "payload": payload}
+    ev = {"event_id": f"EVT-{uuid.uuid4().hex[:10]}", "type": etype, "ts": events.iso_z(),
+          "sim_ts": events.iso_z(at), "case_hint": payload.get("case_id", load["case_id"]),
+          "priority": priority, "source": load.get("_event_source", "sim"), "payload": payload}
     if refs:
         ev["evidence_refs"] = refs
     return ev
@@ -236,7 +236,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                                                 "delivery_appt": delivery_appt.isoformat()}, t0, refs=[refs["rc"]])]
     add(t0, tender)
     dispatch_at = t0 + timedelta(minutes=rnd.randint(20, 90))
-    add(dispatch_at, lambda: [_event("load.status", load, {
+    add(dispatch_at, lambda: [_event("load.dispatched", load, {
         **base, "status": "dispatched", "driver": load["driver"], "truck": f"T{rnd.randint(100, 999)}",
         "trailer": load["trailer"]}, dispatch_at)])
 
@@ -270,7 +270,8 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                 "load_id": lid, "bol": load["bol"], "consignee": k, "appt": _ts(delivery_appt),
                 "arrived": _ts(arrive), "departed": _ts(depart), "dwell_min": pl["dwell"], "clerk": _person(rnd)})
             out.append(refs["det"])
-        return [*ping(depart, 1, "delivery.departed", pl["dwell"])(),
+        return [_event("load.delivered", load, {**base, "dwell_min": pl["dwell"]}, depart),
+                *ping(depart, 1, "delivery.departed", pl["dwell"])(),
                 _event("pod.received", load, {**base, "pod_ref": refs["pod"], "signed": signed}, depart, refs=out)]
     add(depart, delivered)
 
@@ -346,19 +347,24 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                        f"Payment of ${amount:,.2f} sent via ACH for invoice {sinv} (PO {load['po']})."
                        + (f"\nDeduction ${short:,.2f}: rate dispute." if short else ""), paid_at)
         return [_event("email.received", load, _email_payload(m), paid_at),
-                _event("bank.file_appended", load, {"file": txn["file"], "account": txn["account"]}, paid_at)]
+                _event("bank.event", load, {"file": txn["file"], "account": txn["account"],
+                                            "record": txn["record"]}, paid_at)]
     add(paid_at, paid)
     steps.sort(key=lambda st: st.at)
     load["planted"] = pl["planted"]
     return steps
 
 
-async def publish(r: redis.Redis, ev: dict) -> None:
-    await r.xadd(STREAM, {"json": json.dumps(ev)}, maxlen=20_000, approximate=True)
+async def publish(r: redis.Redis | None, ev: dict) -> None:
+    if r is not None:
+        await r.xadd(STREAM, {"json": json.dumps(ev)}, maxlen=20_000, approximate=True)
+    events.append_event(ev)
 
 
 async def stream_load(r: redis.Redis, load: dict, scenario: str, rnd: random.Random,
-                      overrides: dict | None = None, backdate: timedelta | None = None) -> None:
+                      overrides: dict | None = None, backdate: timedelta | None = None,
+                      source: str = "sim") -> None:
+    load["_event_source"] = source
     clk = await clock.load(r, heartbeat=True)
     t0 = clk.now() - backdate if backdate is not None else clk.now()
     steps = lifecycle(load, scenario, rnd, overrides, t0)
@@ -368,15 +374,37 @@ async def stream_load(r: redis.Redis, load: dict, scenario: str, rnd: random.Ran
         if wait > 0:
             await asyncio.sleep(wait)
         for ev in st.make():
-            ev["ts"] = _now().isoformat()
+            ev["ts"] = events.iso_z()
             await publish(r, ev)
 
 
 async def run_load(r: redis.Redis, world: dict, rnd: random.Random, scenario: str,
-                   backdate: timedelta | None = None) -> dict:
+                   backdate: timedelta | None = None, source: str = "sim") -> dict:
     load = new_load(world, rnd)
-    await stream_load(r, load, scenario, rnd, backdate=backdate)
+    await stream_load(r, load, scenario, rnd, backdate=backdate, source=source)
     return load
+
+
+async def inject(scenario: str, overrides: dict | None = None, r: redis.Redis | None = None):
+    owns_redis = r is None
+    client = r or redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+    world = ensure()
+    rnd = random.Random()
+    load = new_load(world, rnd, quick=True)
+    load["_event_source"] = "demo"
+    clk = await clock.load(client)
+    await publish(client, _event("scenario.injected", load, {
+        "scenario": scenario, "load_id": load["load_id"], "case_id": load["case_id"],
+    }, clk.now(), priority="P1"))
+
+    async def run() -> None:
+        try:
+            await stream_load(client, load, scenario, rnd, overrides, source="demo")
+        finally:
+            if owns_redis:
+                await client.aclose()
+
+    return asyncio.create_task(run())
 
 
 def open_human_items() -> int:

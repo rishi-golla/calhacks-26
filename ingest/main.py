@@ -20,6 +20,7 @@ from ingest.documents import (
     read_email,
 )
 from integrations import directory
+from sim.events import append_event, iso_z
 
 log = logging.getLogger("ingest")
 STREAM = "events"
@@ -89,10 +90,11 @@ def _find_load(db: sqlite3.Connection, fields: dict) -> tuple[dict | None, str |
 
 def _event(trigger: dict, event_type: str, payload: dict, priority: str = "P2",
            evidence_refs: list[str] | None = None) -> dict:
+    wall_time = iso_z()
     return {"event_id": f"EVT-{uuid.uuid4().hex[:10]}", "type": event_type,
-            "ts": datetime.now(UTC).isoformat(), "occurred_at": trigger.get("occurred_at") or
-            datetime.now(UTC).isoformat(), "case_hint": payload.get("case_id") or trigger.get("case_hint"),
-            "priority": priority, "source": "ingest", "payload": payload,
+            "ts": wall_time, "sim_ts": trigger.get("sim_ts") or wall_time,
+            "case_hint": payload.get("case_id") or trigger.get("case_hint"),
+            "priority": priority, "source": "sim", "payload": payload,
             "evidence_refs": evidence_refs or []}
 
 
@@ -403,7 +405,7 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
         if kind == "remittance_advice":
             return _remittance_advice(ev, message, db)
         return [_email_needs_review(ev, message)]
-    elif event_type == "bank.file_appended":
+    elif event_type == "bank.event":
         return _bank_appended(ev, db)
     return []
 
@@ -411,10 +413,11 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
 async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict) -> bool:
     try:
         raw = values.get(b"json") or values.get("json")
-        events = await handle(json.loads(raw), db)
-        for event in events:
-            await r.xadd(STREAM, {"json": json.dumps(event, default=str)},
-                         maxlen=20_000, approximate=True)
+            events = await handle(json.loads(raw), db)
+            for event in events:
+                await r.xadd(STREAM, {"json": json.dumps(event, default=str)},
+                             maxlen=20_000, approximate=True)
+                append_event(event)
         db.commit()
         await r.xack(STREAM, GROUP, entry_id)
         return True

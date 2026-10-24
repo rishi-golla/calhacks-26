@@ -274,6 +274,22 @@ def test_raw_bank_events_process_each_record_independently(world):
                    for event in first + second)
 
 
+def test_handle_assigns_stable_event_ids_for_same_trigger(world):
+    _, _, events = _run(world, "clean")
+    trigger = next(event for event in events if event["type"] == "email.received"
+                   and any(Path(name).stem.startswith("INV-") for name in event["payload"]["attachments"]))
+    db = connect()
+    try:
+        _store_tms(db, events)
+        first = asyncio.run(handle(trigger, db))
+        second = asyncio.run(handle(trigger, db))
+    finally:
+        db.close()
+
+    assert [event["event_id"] for event in first] == [event["event_id"] for event in second]
+    assert [event["event_id"] for event in first] == [f"{trigger['event_id']}:{i}" for i in range(len(first))]
+
+
 def test_unclassified_pdf_email_emits_review_event(world):
     _, load, events = _run(world, "clean")
     pod_ref = next(event["payload"]["pod_ref"] for event in events if event["type"] == "pod.received")

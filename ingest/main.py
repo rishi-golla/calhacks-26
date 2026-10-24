@@ -1,5 +1,6 @@
 """Turn raw simulator emails and bank files into the case-opening events consumed by the router."""
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -371,7 +372,7 @@ def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
     return output
 
 
-async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
+async def _handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
     init_db(db)
     event_type, payload = ev.get("type"), ev.get("payload", {})
     if event_type == "load.tendered":
@@ -412,6 +413,19 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
     elif event_type == "bank.event":
         return _bank_appended(ev, db)
     return []
+
+
+async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
+    derived = await _handle(ev, db)
+    trigger_id = ev.get("event_id")
+    if not trigger_id:
+        trigger_id = hashlib.sha256(json.dumps(ev, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    trigger_id = str(trigger_id)
+    if not trigger_id.startswith("EVT-"):
+        trigger_id = f"EVT-{trigger_id}"
+    for index, event in enumerate(derived):
+        event["event_id"] = f"{trigger_id}:{index}"
+    return derived
 
 
 async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict) -> bool:

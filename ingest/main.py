@@ -187,7 +187,6 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
                 pod_signed = candidate["signed"]
             else:
                 unmatched_attachments.append(filename)
-                pod = candidate
         elif attachment_kind == "detention_log":
             candidate = extract_detention_log_rules(text)
             if _same_identifier(candidate.get("load_id"), load_id) \
@@ -196,7 +195,6 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
                 has_detention_log = True
             else:
                 unmatched_attachments.append(filename)
-                detention_log = candidate
         elif attachment_kind == "lumper_receipt":
             candidate = extract_lumper_receipt_rules(text)
             if _same_identifier(candidate.get("po"), load.get("po")):

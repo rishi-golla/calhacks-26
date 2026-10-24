@@ -12,6 +12,14 @@ here is on their inference path.
 | `ingest/` | Stage 1: regex redaction -> 7.3 table -> A extracts + flags names/addresses -> B labels only unlabeled items -> C cross-checks PII and amounts (`subject.needs_review`) -> `TaskEnvelope` -> A2A with `idempotency_key = event:<event_id>`. |
 | `data/` (gitignored) | `vault.sqlite` (token -> real value, mode 600, never leaves the box) and `ingest.sqlite` (event -> task mapping for dedup). |
 
+## Secrets (never committed)
+- `.env` (gitignored, mode 600) on the router host: `SPACETIME_*` for the harness/router identities and
+  `A2A_TOKEN_ROUTER`. `make router` does not read it, so start the router with
+  `set -a; . ./.env; set +a; make router`.
+- A2A tokens are shared secrets: `harness/infra/a2a_tokens.sh` writes all eleven (9 agents, router, gateway)
+  to `~/.config/freightops/a2a-tokens.env`. Every agent host needs that whole file; it refuses to overwrite,
+  because rotating one value breaks every peer.
+
 ## Run
 ```bash
 make harness          # :8000

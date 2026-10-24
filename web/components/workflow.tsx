@@ -20,6 +20,7 @@ import {
   Plus,
   X,
 } from "lucide-react";
+import AgentScreen from "./agent-screen";
 import { money, str, timestamp } from "@/lib/data";
 import {
   useApprovalDecision,
@@ -92,9 +93,7 @@ function LiveFrame({ id, tick }: { id: string; tick: number }) {
       img.onload = null;
     };
   }, [id, tick]);
-  if (!src) return <p className="wf-empty">Opening browser…</p>;
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img className="wf-shot" alt="" src={src} />;
+  return <AgentScreen streamSrc={src} loading={!src} className="wf-shot" />;
 }
 
 const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
@@ -609,11 +608,12 @@ export default function Workflow({
                 aria-label="Live browser stream"
               >
                 {farm ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  <AgentScreen
+                    key={open.id}
+                    fit="contain"
                     className="wf-live-view"
                     alt={`${open.title} live browser`}
-                    src={`${FARM}/stream/${open.id}`}
+                    streamSrc={`${FARM}/stream/${open.id}`}
                   />
                 ) : (
                   <p className="wf-empty">

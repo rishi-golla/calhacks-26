@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from integrations import directory
-from sim import generator, retention, verify
+from sim import docs, generator, retention, verify
 from sim.verify import ALLOWED
 from sim.world import offline_world
 
@@ -190,6 +190,24 @@ def test_corrupt_invoice_pdf_reports_v1_without_crashing(generated_data, tmp_pat
     assert (root / "verify_report.json").is_file()
     assert any(item["rule"] == "V1" and item["doc_ref"] == invoice["ref"] for item in report["violations"])
     assert not any(item["rule"] == "V2" and item["doc_ref"] == invoice["ref"] for item in report["violations"])
+
+
+def test_pdf_total_mismatch_detected_when_rendered_lines_change(generated_data, tmp_path):
+    root = _copy_data(generated_data, tmp_path / "pdf-total-mismatch")
+    clean_load = next(item["load_id"] for item in
+                      (json.loads(line) for line in (root / "answer_key.jsonl").read_text().splitlines())
+                      if item["scenario"] == "clean")
+    invoice_path = next(path for path in (root / "docs").glob("*.json")
+                        if (doc := json.loads(path.read_text())).get("load_id") == clean_load
+                        and doc.get("type") == "carrier_invoice")
+    invoice = json.loads(invoice_path.read_text())
+    changed_pdf = {**invoice, "line_items": [dict(line) for line in invoice["line_items"]]}
+    changed_pdf["line_items"][0]["amount"] = round(changed_pdf["line_items"][0]["amount"] + 1, 2)
+    docs.carrier_invoice(changed_pdf).output(str(root / "docs" / invoice["pdf"]))
+
+    report = verify.run(root)
+    assert any(item["rule"] == "V2" and item["doc_ref"] == invoice["ref"]
+               and item["detail"] == "PDF total != printed line sum" for item in report["unexpected_violations"])
 
 
 def test_verifier_detects_counterparty_phone_mutation(generated_data, tmp_path):

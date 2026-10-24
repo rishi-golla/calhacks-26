@@ -117,6 +117,11 @@ def run(data_dir: str | Path = "data") -> dict:
                 for line in pdf_lines:
                     if round(line["qty"] * line["rate"], 2) != round(line["amount"], 2):
                         add("V2", load_id, ref, "PDF line amount does not equal printed qty × rate")
+                printed_total = re.search(r"TOTAL\s+DUE:\s*\$?([\d,]+\.\d{2})", pdf_text, re.IGNORECASE)
+                if printed_total:
+                    total = float(printed_total.group(1).replace(",", ""))
+                    if round(sum(line["amount"] for line in pdf_lines), 2) != round(total, 2):
+                        add("V2", load_id, ref, "PDF total != printed line sum")
 
     carriers = {x.get("id"): x for x in world.get("carriers", [])}
     shippers = {x.get("id"): x for x in world.get("shippers", [])}

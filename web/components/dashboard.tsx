@@ -112,7 +112,7 @@ const views = [
   },
   {
     id: "harness",
-    label: "Model harness",
+    label: "Intake & models",
     icon: Cpu,
     description: "Route, observe and configure your inference infrastructure.",
   },

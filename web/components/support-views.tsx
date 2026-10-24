@@ -139,15 +139,41 @@ export function HarnessView({
   const calls = newest(
     data.llm_call.filter((row) => !agent || row.agent === agent),
   );
+  const [dispatchStatus, setDispatchStatus] = useState("");
+  const dispatches = newest(data.dispatch.filter((row) => !dispatchStatus || row.status === dispatchStatus));
   return (
     <div className="stack">
+      <Panel title="Live intake" action={
+        <select aria-label="Filter intake by status" value={dispatchStatus}
+          onChange={(event) => setDispatchStatus(event.target.value)}>
+          <option value="">All intake</option>
+          <option value="accepted">Accepted</option>
+          <option value="triage">Needs triage</option>
+          <option value="not_routed">Not routed</option>
+          <option value="duplicate">Duplicate</option>
+        </select>
+      }>
+        <p className="muted">Incoming events and their first agent handoff. Queue time measures waiting before routing; duplicate rows retain the original queue time.</p>
+        <DataTable rows={dispatches} table="dispatch" columns={[
+          timeColumn(),
+          { key: "event_id", title: "Event" },
+          { key: "status", format: (value) => <Badge value={str(value)} /> },
+          { key: "case_id", title: "Case" },
+          agentColumn,
+          { key: "skill" },
+          { key: "task_id", title: "Accepted task" },
+          { key: "reason" },
+          { key: "queue_ms", title: "Queue wait", format: (value) => `${num(value).toLocaleString()} ms` },
+          { key: "policy_version", title: "Routing policy" },
+        ]} emptyTitle="No intake recorded" emptyText="Dispatch records appear here when the connected router processes incoming events." />
+      </Panel>
       <div className="notice">
         <Cpu size={20} />
         <div>
           <strong>Your models. Your routing rules.</strong>
           <p>
-            Auto delegates selection to the ASUS harness. Pin an observed model
-            or enter an exact model ID served by W1.
+            Intake selects the first agent. Each agent uses its own configured
+            model provider; auto uses that agent’s provider default.
           </p>
         </div>
       </div>

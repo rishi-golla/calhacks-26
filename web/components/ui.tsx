@@ -285,7 +285,7 @@ export function DataTable({
           {rows.map((row, i) => (
             <tr
               key={str(
-                row.id ?? row.task_id ?? row.case_id ?? row.name,
+                row.event_id ?? row.id ?? row.task_id ?? row.case_id ?? row.name,
                 String(i),
               )}
             >

@@ -27,7 +27,7 @@
   font-weight: 600;
 }
 .wf-sub {
-  color: #8a8a8e;
+  color: #8e8e93;
   font-size: 12px;
 }
 .wf-menu {
@@ -50,6 +50,30 @@
   padding: 3px 10px;
   font-size: 11.5px;
   color: #1d1d1f;
+}
+.wf-case-id {
+  color: #8e8e93;
+}
+.wf-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid #e7e7ea;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #3a3a3c;
+  white-space: nowrap;
+}
+.wf-status-chip i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c7c7cc;
+}
+.wf-status-chip.live i {
+  background: #30d158;
 }
 .wf-conn {
   margin-left: auto;
@@ -78,43 +102,6 @@
 .wf-conn.connecting::before {
   background: #e0a030;
 }
-.wf-node {
-  width: 250px;
-  background: #fff;
-  border: 1px solid #e5e5e7;
-  border-radius: 14px;
-  box-shadow:
-    0 1px 2px #0000000d,
-    0 4px 14px #0000000a;
-  cursor: pointer;
-  transition:
-    box-shadow 0.15s,
-    border-color 0.15s;
-}
-.wf-node:hover {
-  border-color: #c7c7cc;
-  box-shadow:
-    0 2px 4px #00000012,
-    0 10px 24px #00000012;
-}
-.wf-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px 8px;
-}
-.wf-head > .mascot {
-  flex-shrink: 0;
-}
-.wf-info dd.wf-agent-dd {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.wf-head > div {
-  display: flex;
-  flex-direction: column;
-}
 .wf-agent {
   display: inline-flex;
   width: fit-content;
@@ -126,25 +113,6 @@
   color: #3a3a3c;
   font-size: 10px;
   font-weight: 500;
-}
-.wf-head strong {
-  display: block;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: #1d1d1f;
-}
-.wf-head small {
-  display: block;
-  font-size: 10.5px;
-  color: #8a8a8e;
-  margin-top: 1px;
-}
-.wf-browser {
-  margin: 0 10px;
-  border: 1px solid #ececee;
-  border-radius: 10px;
-  overflow: hidden;
-  background: #fafafa;
 }
 .wf-chrome {
   display: flex;
@@ -215,53 +183,224 @@
     opacity: 0.3;
   }
 }
-.wf-screen {
-  height: 84px;
-  padding: 6px 8px;
-  overflow: hidden;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 9.5px;
-  line-height: 1.55;
-  color: #3a3a3d;
-}
-.wf-screen p {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.wf-screen p span {
-  color: #a1a1a6;
-  margin-right: 6px;
-}
-.wf-screen p.fresh {
-  color: #1d1d1f;
-  font-weight: 600;
-}
 .wf-empty {
   color: #a1a1a6;
   font-style: italic;
 }
-.wf-foot {
-  padding: 7px 12px 9px;
-  font-size: 10px;
-  color: #a1a1a6;
-  white-space: nowrap;
+.wf-node {
+  position: relative;
+  width: 280px;
+  cursor: pointer;
+  animation: wf-enter 0.35s ease-out;
+  transition: transform 150ms ease;
+}
+.wf-node.leaving {
+  animation: wf-leave 0.45s ease-in forwards;
+  pointer-events: none;
+}
+.wf-node:hover {
+  transform: translateY(-2px);
+}
+.wf-win {
+  background: #fff;
+  border: 1px solid #e7e7ea;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.03),
+    0 8px 24px rgba(0, 0, 0, 0.035);
+}
+.wf-node.need .wf-win {
+  border-color: #ffd9a0;
+  box-shadow:
+    0 0 0 3px rgba(255, 159, 10, 0.1),
+    0 8px 24px rgba(0, 0, 0, 0.035);
+}
+.wf-node:hover .wf-win {
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.05),
+    0 10px 28px rgba(0, 0, 0, 0.07);
+}
+.wf-node.need:hover .wf-win {
+  border-color: #ffd9a0;
+  box-shadow:
+    0 0 0 3px rgba(255, 159, 10, 0.1),
+    0 10px 28px rgba(0, 0, 0, 0.07);
+}
+.wf-bar {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid #f0f0f2;
+  font-size: 11px;
+  color: #8e8e93;
+}
+.wf-dots {
+  display: flex;
+  gap: 5px;
+  flex: none;
+}
+.wf-dots i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e5e5e8;
+}
+.wf-bar .wf-url {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+  padding: 0 28px 0 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #8e8e93;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: normal;
+}
+.wf-lock {
+  flex: none;
+  margin-right: 4px;
+  color: #aeaeb2;
+}
+.wf-address {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.wf .react-flow__handle {
-  width: 9px;
-  height: 9px;
+.wf-address b {
+  color: #3a3a3c;
+  font-weight: 500;
+}
+.wf-screen {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background: #f5f5f7;
+}
+.wf-screen .wf-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+}
+.wf-shot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+  opacity: 1;
+}
+.wf-meta {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 0 2px;
+}
+.wf-status-dot {
+  width: 6px;
+  height: 6px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #c7c7cc;
+  flex: none;
+}
+.wf-status-dot.working {
+  background: #1d1d1f;
+  box-shadow: 0 0 0 3px rgba(29, 29, 31, 0.1);
+  animation: wf-node-pulse 2s ease-in-out infinite;
+}
+.wf-status-dot.need {
+  background: #ff9f0a;
+}
+.wf-details {
+  min-width: 0;
+  flex: 1;
+}
+.wf-meta > .mascot {
+  flex: none;
+}
+.wf-info dd.wf-agent-dd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.wf-name {
+  color: #1d1d1f;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.wf-doing {
+  margin-top: 2px;
+  overflow: hidden;
+  color: #8e8e93;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wf-when {
+  margin-left: auto;
+  color: #aeaeb2;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.wf-review {
+  flex: none;
+  border-radius: 7px;
+  background: #1d1d1f;
+  color: #fff;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.wf-remove {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: #fff;
-  border: 1.5px solid #b5b5ba;
+  color: #8a8a8e;
+  border: 1px solid #ececee;
+  opacity: 0;
+  transition: opacity 0.15s;
 }
-.wf .react-flow__edge-path {
-  stroke: #c7c7cc;
-  stroke-width: 1.6;
+.wf-node:hover .wf-remove {
+  opacity: 1;
 }
-.wf .wf-edge.loop .react-flow__edge-path {
-  stroke-dasharray: 5 5;
-  stroke: #d4d4d8;
+@keyframes wf-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+}
+@keyframes wf-leave {
+  to {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+}
+@keyframes wf-node-pulse {
+  50% {
+    opacity: 0.55;
+  }
 }
 .wf .react-flow__controls {
   box-shadow: none;
@@ -422,43 +561,8 @@
   }
 }
 
-.wf-head strong {
-  font-size: 16px;
-}
-.wf-head small {
-  font-size: 12px;
-}
-.wf-screen {
-  font-size: 11px;
-  height: 74px;
-}
-.wf-screen p span {
-  display: none;
-}
-.wf-foot {
-  font-size: 11px;
-}
-.wf-url {
-  font-size: 10.5px;
-}
 .wf-spacer {
   flex: 1;
-}
-.wf-conn + .wf-conn {
-  margin-left: 0;
-}
-.wf-top .wf-conn {
-  margin-left: 0;
-}
-.wf-chip.following {
-  color: #4a4a4e;
-}
-.wf-chip.following i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #2fb344;
-  animation: wf-pulse 1.6s infinite;
 }
 .wf-add-wrap {
   position: relative;
@@ -467,11 +571,15 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  background: #1d1d1f;
-  color: #fff;
-  border-radius: 999px;
-  padding: 5px 12px;
+  background: #fff;
+  border: 1px solid #e2e2e5;
+  border-radius: 8px;
+  color: #1d1d1f;
+  padding: 6px 12px;
   font-size: 12px;
+}
+.wf-add:hover:not(:disabled) {
+  background: #f8f8f9;
 }
 .wf-add:disabled {
   opacity: 0.4;
@@ -513,60 +621,6 @@
   display: block;
   font-size: 11px;
   color: #8a8a8e;
-}
-.wf-node {
-  position: relative;
-  animation: wf-enter 0.35s ease-out;
-}
-.wf-node.leaving {
-  animation: wf-leave 0.45s ease-in forwards;
-  pointer-events: none;
-}
-@keyframes wf-enter {
-  from {
-    opacity: 0;
-    transform: scale(0.85);
-  }
-}
-@keyframes wf-leave {
-  to {
-    opacity: 0;
-    transform: scale(0.85);
-  }
-}
-.wf-remove {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: #fff;
-  color: #8a8a8e;
-  border: 1px solid #ececee;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.wf-node:hover .wf-remove {
-  opacity: 1;
-}
-.wf-screen {
-  position: relative;
-  height: 140px;
-}
-.wf-shot {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: top left;
-  opacity: 0;
-  transition: opacity 0.2s;
-  background: #fff;
 }
 .wf-stream:has(.wf-live-view) {
   padding: 0;
@@ -647,33 +701,6 @@
   font-weight: 700;
 }
 
-/* live browser previews */
-.wf-node {
-  width: 280px;
-}
-.wf-screen {
-  position: relative;
-  height: auto;
-  aspect-ratio: 16 / 10;
-  padding: 0;
-  background: #f5f5f7;
-}
-.wf-screen .wf-empty {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  font-size: 11px;
-}
-.wf-shot {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: top;
-  opacity: 1;
-}
 .wf-stream {
   padding: 0;
   overflow: hidden;

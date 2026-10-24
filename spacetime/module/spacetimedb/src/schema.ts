@@ -69,6 +69,10 @@ const spacetimedb = schema({
     id: pk(), ts: s(), agent: indexed(), model: s(), latency_ms: t.u32(), tokens: t.u32(),
     route_reason: s(), ensemble_agreement: t.bool(),
   }),
+  dispatch: table({ name: 'dispatch', public: true }, {
+    event_id: pk(), case_id: indexed(), skill: s(), agent: indexed(), task_id: s(),
+    status: s(), reason: s(), queue_ms: t.u32(), policy_version: s(), ts: s(),
+  }),
   metric: table({ name: 'metric', public: true }, { name: pk(), value: t.f64(), updated_at: s() }),
   change_set: table({ name: 'change_set', public: true }, {
     id: pk(), parent_id: s(), case_id: indexed(), task_id: s(), agent: s(), action: s(), summary: s(),

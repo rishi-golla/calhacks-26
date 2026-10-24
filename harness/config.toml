@@ -68,12 +68,15 @@ max_concurrency = 16
 
 # Logical name -> backends in preference order. The first healthy one serves; the rest are fallbacks.
 # Speed and accuracy first (team decision 2026-10-24): fastest models that pass the accuracy tests on this box.
-# Nano (A) finds personal data (amounts are exact code); Qwen3-4B (B) classifies 60/60 and audits personal data.
+# Qwen3-4B FP8 (I) finds and audits personal data and classifies (60/60); Nano (A) is the extraction fallback.
+# Amounts are exact code. 120-doc check: 116 docs/min, recall 100%, invoices 84/84, 0/54 false flags. A Nano
+# auditor (independent model) measured 38 docs/min with 13/54 false flags, so independence comes from the
+# deterministic layers (regex, key rules, structured spans, leftover scan) instead.
 # Fully open alternatives and their results: OPEN_MODELS.md.
 # C (gpt-oss) is out of rotation: its MXFP4 Marlin kernel emits NaN logits on GB10.
 [logical]
 small-fast = ["I", "B"]
-reasoning = ["A"]
+reasoning = ["I", "A"]
 coder-tools = ["I", "B"]
 
 # model="auto": the first matching rule wins. Match keys (all must hold):

@@ -103,9 +103,9 @@ async def test_hero_invoice_end_to_end(pool, agents, tmp_path):
     assert res["case_id"] == "CASE-4821"
     assert res["route"]["skill"] == "process_carrier_invoice" and res["route"]["classifier"] is None
     assert res["extractor"]
-    # Either an independent model cross-checked it, or (verifier timed out under load) it is explicitly flagged.
+    # Either the personal-data audit ran, or (verifier timed out under load) the document is explicitly flagged.
     if res["verifier"]:
-        assert res["verifier"]["model_used"] not in (None, res["extractor"])
+        assert res["verifier"]["model_used"]
     else:
         assert res["needs_review"] and any("verifier unavailable" in n for n in res["envelope"]["subject"]["review_notes"])
     env = res["envelope"]

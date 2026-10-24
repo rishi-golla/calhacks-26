@@ -53,6 +53,12 @@ class _Doc(FPDF):
             self.line(10, self.get_y() + 1, 206, self.get_y() + 1)
         self.ln(5)
 
+    def footer(self) -> None:
+        self.set_y(-11)
+        self.set_font("Helvetica", "", 7)
+        self.set_text_color(105, 105, 105)
+        self.cell(0, 5, "SIMULATED - Golden Gate Freight synthetic document", align="C")
+
     def kv(self, rows: list[tuple[str, object]], cols: int = 2) -> None:
         w = 196 / cols
         for i, (k, v) in enumerate(rows):

@@ -149,6 +149,12 @@ def test_empty_or_malformed_output_cannot_pass(bad):
     assert deterministic_review(bundle).verdict == "issue"
 
 
+async def no_memory(self, agent, *, scope=None, limit=10):
+    """W2 is enabled in these tests, so the Validator's own assessment reads memory."""
+    assert scope == {"skill": "review_output"}
+    return []
+
+
 def test_failed_execution_with_a_plausible_artifact_still_needs_review():
     bundle = cash_bundle()
     bundle["target"]["a2a_state"] = "failed"
@@ -184,6 +190,7 @@ async def test_review_publishes_effective_instructions_and_replays_without_dupli
 
     monkeypatch.setattr("agents.validator.main.load_review", load)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.get_instruction_history", get_history)
+    monkeypatch.setattr("common.spacetime_client.SpacetimeClient.get_agent_memory", no_memory)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.mutate", write)
     store = RuntimeStore(f"sqlite+aiosqlite:///{tmp_path / 'publish.sqlite'}")
     agent = ValidatorAgent(store=store)
@@ -238,6 +245,7 @@ async def test_version_race_is_superseded_and_real_rejections_propagate(tmp_path
 
     monkeypatch.setattr("agents.validator.main.load_review", load)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.get_instruction_history", get_history)
+    monkeypatch.setattr("common.spacetime_client.SpacetimeClient.get_agent_memory", no_memory)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.mutate", write)
     store = RuntimeStore(f"sqlite+aiosqlite:///{tmp_path / 'race.sqlite'}")
     agent = ValidatorAgent(store=store)

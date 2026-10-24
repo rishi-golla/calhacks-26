@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from common.config import AGENTS
+from common.envelope import TaskEnvelope
+from common.source_repository import SourceRepository, SourceUnavailable
 
 ROOT = Path(__file__).resolve().parents[1]
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
@@ -12,6 +16,40 @@ HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 class InvalidInstructionPatch(ValueError):
     pass
+
+
+# Source-record dimensions a learned memory may be scoped to, besides ``skill``.
+# The SpacetimeDB ``upsert_memory`` reducer accepts exactly these plus ``skill``.
+MEMORY_SCOPE_KEYS = ("carrier_id", "lane", "claim_type")
+
+
+def memory_scope(source: Mapping[str, Any] | None, skill: str | None) -> dict[str, str]:
+    """The one scope used both to write Validator lessons and to read them back.
+
+    Each of ``carrier_id``, ``lane`` and ``claim_type`` is included (as a
+    string) only when the case's authoritative source record has a nonempty
+    value; ``skill`` is the task type being performed. Writers and readers
+    must derive scope here, or a lesson is stored under a key no task asks for.
+    """
+    record = source or {}
+    scope = {key: str(record[key]) for key in MEMORY_SCOPE_KEYS if record.get(key)}
+    if skill:
+        scope["skill"] = skill
+    return scope
+
+
+async def task_memory_scope(env: TaskEnvelope) -> dict[str, str]:
+    """Load the case's source record once and derive the memory read scope.
+
+    An unavailable source never fails the task: the read falls back to the
+    skill-only scope, which still matches skill-wide and global memory but
+    never a lesson scoped to a particular carrier, lane or claim type.
+    """
+    try:
+        source = await SourceRepository().load(env)
+    except SourceUnavailable:
+        source = None
+    return memory_scope(source, env.task_type)
 
 
 def apply_instruction_patch(original: str, patch: str) -> str:

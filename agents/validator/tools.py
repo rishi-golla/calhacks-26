@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from common.agent_support import matched_deposit_total, money
 from common.envelope import Friction, Lesson, ResultArtifact, ReviewOutput
-from common.learning import apply_instruction_patch
+from common.learning import apply_instruction_patch, memory_scope
 from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
 
 FINANCIAL_AGENTS = {"carrier_ap", "shipper_ar", "controller", "cfo"}
@@ -228,10 +228,7 @@ def deterministic_review(bundle: dict) -> ReviewOutput:
     failures = [item["name"] for item in checks if not item["ok"]]
     lessons = []
     if failures and role in FINANCIAL_AGENTS:
-        scope = {key: str(source[key]) for key in ("carrier_id", "lane", "claim_type") if source.get(key)}
-        if skill:
-            scope["skill"] = skill
-        lessons.append(Lesson(agent=role, type="memory", scope=scope,
+        lessons.append(Lesson(agent=role, type="memory", scope=memory_scope(source, skill),
             text_or_diff="Before finalizing this skill, recheck authoritative evidence and exact-cent results for: "
                          + ", ".join(failures) + ". Missing evidence remains unresolved.",
             confidence=0.9, evidence_refs=artifact.evidence_refs if artifact else []))

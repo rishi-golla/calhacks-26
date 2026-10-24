@@ -10,8 +10,14 @@ from common.server import serve
 from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
 
 
+class HumanApproverNotConfigured(RuntimeError):
+    """No designated human could ever decide the approval, so parking would wait forever."""
+
+
 class ControllerAgent(FreightAgent):
     name = "controller"
+    # decide_approval accepts only the designated human principal named at request time.
+    live_required_env = ("HUMAN_APPROVER_ID",)
 
     async def approval(self, env, task_id, source, action, target_id, amount):
         approval_id = identifier(task_id, "approval:" + action + ":" + target_id)
@@ -22,12 +28,17 @@ class ControllerAgent(FreightAgent):
                 return {"approval_id": approval_id, "approved": False, "rejected": True}
             if approval.get("decision") == "approved" and approval.get("code_ok") is True:
                 return {"approval_id": approval_id, "approved": True}
-        approver = os.getenv("HUMAN_APPROVER_ID")
-        if not approver:
-            await self.park(task_id, "awaiting_human_approval", "approval", approval_id,
-                            details={"action": action, "amount": number(amount),
-                                     "reason": "designated human approver is not configured"})
         if not stored:
+            # A pending request already names its approver; only a new request needs one.
+            approver = os.getenv("HUMAN_APPROVER_ID", "").strip()
+            if not approver:
+                if not fixture_mode():
+                    raise HumanApproverNotConfigured(
+                        "HUMAN_APPROVER_ID must name the SpacetimeDB human principal that decides approvals")
+                # Simulated runs have no W2 approver; show the wait without requesting one.
+                await self.park(task_id, "awaiting_human_approval", "approval", approval_id,
+                                details={"action": action, "amount": number(amount),
+                                         "reason": "designated human approver is not configured"})
             await mutate(self, env, task_id, "request_approval", {
                 "id": approval_id, "action": action, "target_id": target_id,
                 "invoice_id": source["invoice_id"], "amount": number(amount), "approver": approver,

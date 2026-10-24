@@ -10,7 +10,7 @@ from typing import Any
 from common.agent_support import mutate
 from common.config import AGENTS
 from common.envelope import ResultArtifact
-from common.learning import reconstruct_instructions
+from common.learning import reconstruct_instructions, task_memory_scope
 from common.providers import ProviderConfigurationError, ProviderError, configuration, mode
 from common.runtime import TaskParked
 from common.runtime_store import LeaseLost
@@ -73,7 +73,8 @@ async def _settings(agent, env) -> dict:
         raise ProviderConfigurationError("model-driven tools currently require the OpenAI provider")
     history = await db.get_instruction_history(agent.name)
     instructions, version = reconstruct_instructions(agent.name, history)
-    memories = await db.get_agent_memory(agent.name, scope={"skill": env.task_type}, limit=10)
+    # Read with the same source-derived scope the Validator writes lessons under.
+    memories = await db.get_agent_memory(agent.name, scope=await task_memory_scope(env), limit=10)
     return {"provider": config.provider, "model": config.model, "instructions": instructions,
             "instr_version": version, "memories": [{"text": m["text"], "id": m["id"]} for m in memories]}
 

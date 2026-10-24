@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 import uuid
+from email.utils import parseaddr
 from pathlib import Path
 
 import redis.asyncio as redis
@@ -276,17 +277,30 @@ def _bank_change(trigger: dict, message: dict, db: sqlite3.Connection) -> list[d
                      remit_name.strip().casefold() != carrier_name.strip().casefold() else "email")
     load_id = invoice.get("load_id")
     case_id = f"CASE-{load_id}-BANK"
+    sender_address = parseaddr(str(message.get("from") or ""))[1].strip()
+    registered_email = str(carrier.get("email") or "").strip()
+    sender_domain = sender_address.rpartition("@")[2]
+    registered_domain = registered_email.rpartition("@")[2]
+    sender_matches_registered = bool(
+        sender_address and registered_email
+        and sender_address.casefold() == registered_email.casefold()
+        and sender_domain.casefold() == registered_domain.casefold()
+    )
     payload = {"case_id": case_id, "load_id": load_id, "lane": invoice.get("lane"), "pro": invoice.get("pro"),
                "bol": invoice.get("bol"), "po": invoice.get("po"), "carrier": invoice_carrier,
                "invoice_id": invoice.get("invoice_id"), "requested_via": requested_via,
-               "from": message.get("from"), "registered_email": carrier.get("email"),
+               "from": message.get("from"), "registered_email": registered_email,
+               "sender_matches_registered": sender_matches_registered,
                "new_payee": remit_name or carrier_name, "new_account_last4": account_match.group(1),
                "source_email": message.get("mail_id")}
     document = _document_event(
-        trigger, "bank_change_request", "extracted",
+        trigger, "bank_change_request",
+        "extracted" if sender_matches_registered else "extracted_unverified_sender",
         {"carrier": carrier_name, "invoice_number": number_match.group(1),
-         "new_account_last4": account_match.group(1), "requested_via": requested_via},
-        {"carrier": 0.95, "invoice_number": 0.95, "new_account_last4": 0.95, "requested_via": 0.95},
+         "new_account_last4": account_match.group(1), "requested_via": requested_via,
+         "sender_matches_registered": sender_matches_registered},
+        {"carrier": 0.95, "invoice_number": 0.95, "new_account_last4": 0.95,
+         "requested_via": 0.95, "sender_matches_registered": 0.95},
         load={"load_id": load_id}, case_id=case_id, evidence_refs=refs)
     return [document, _event(trigger, "bank_change.requested", payload, "P0", refs)]
 

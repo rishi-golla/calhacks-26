@@ -290,6 +290,23 @@ def test_handle_assigns_stable_event_ids_for_same_trigger(world):
     assert [event["event_id"] for event in first] == [f"{trigger['event_id']}:{i}" for i in range(len(first))]
 
 
+def test_bank_change_lookalike_sender_is_unverified_but_emitted(world):
+    _, _, events = _run(world, "bank_change")
+    db = connect()
+    try:
+        _store_tms(db, events)
+        derived = _ingest(events, db)
+    finally:
+        db.close()
+
+    request = next(event for event in derived if event["type"] == "bank_change.requested")
+    document = next(event for event in derived if event["type"] == "document.extracted"
+                    and event["payload"].get("kind") == "bank_change_request")
+    assert request["payload"]["sender_matches_registered"] is False
+    assert document["payload"]["status"] == "extracted_unverified_sender"
+    assert document["payload"]["fields"]["sender_matches_registered"] is False
+
+
 def test_unclassified_pdf_email_emits_review_event(world):
     _, load, events = _run(world, "clean")
     pod_ref = next(event["payload"]["pod_ref"] for event in events if event["type"] == "pod.received")

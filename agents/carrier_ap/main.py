@@ -29,6 +29,10 @@ class CarrierAPAgent(FreightAgent):
                                           "paid_amount": source.get("paid_amount", 0)}, evidence_refs=refs)
         if env.task_type not in {"process_carrier_invoice", "propose_payment"}:
             raise ValueError("unsupported Carrier Settlement skill")
+        if source.get("invoice_amount") is None and not source.get("invoice_id"):
+            # Delivery evidence can precede the carrier's bill; there is nothing to settle yet.
+            return await finish(self, env, task_id, outcome="unverified", findings={
+                "awaiting_invoice": True, "load_id": source.get("load_id")}, evidence_refs=refs)
         match = three_way_match(source)
         duplicates = duplicate_invoices(source)
         if duplicates:

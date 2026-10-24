@@ -195,3 +195,47 @@ async def test_validator_passes_a_forecast_built_from_matched_deposits(agents):
     review = extract_artifact_data(await await_state("validator", review_task.id, TaskState.TASK_STATE_COMPLETED))[-1]
     failed = [check["name"] for check in review["findings"]["review"]["checks"] if not check["ok"]]
     assert review["outcome"] == "pass", failed
+
+
+def pod_arrival(case_id: str, pod_ref: str, event_id: str) -> dict:
+    """The routable event ingest publishes when the TMS reports a delivered, signed POD."""
+    return {"event_id": event_id, "type": "pod.received", "priority": "P3",
+            "payload": {"case_id": case_id, "load_id": "LOAD-CLEAN", "pod_ref": pod_ref, "signed": True}}
+
+
+async def test_pod_arrival_resumes_the_waiting_document_chase(agents):
+    from router.main import route_event
+    await asyncio.gather(*(_wait_ready(spec.url) for spec in AGENTS.values()))
+    source_path = agents / "source.json"
+    dataset = json.loads(source_path.read_text())
+    source = json.loads(json.dumps(dataset["cases"]["CASE-CLEAN"]))
+    source["case_id"] = "CASE-POD-LATE"
+    pod = source["documents"].pop()
+    dataset["cases"][source["case_id"]] = source
+    source_path.write_text(json.dumps(dataset))
+    env = TaskEnvelope(task_type="collect_documents", case_id=source["case_id"])
+    chase = await send_task("documents", env, DelegationMeta(
+        case_id=env.case_id, from_agent="router", idempotency_key="chase-late-pod"))
+    await await_state("documents", chase.id, TaskState.TASK_STATE_INPUT_REQUIRED)
+    # Ingestion records the POD in the trusted source, then publishes the arrival through the router.
+    dataset["cases"][env.case_id]["documents"].append(pod)
+    source_path.write_text(json.dumps(dataset))
+    agent, arrival_env, meta = route_event(pod_arrival(env.case_id, pod["ref"], "EVT-POD-LATE"))
+    assert (agent, arrival_env.task_type) == ("documents", "receive_document")
+    arrival = await send_task(agent, arrival_env, meta)
+    received = extract_artifact_data(await await_state(agent, arrival.id, TaskState.TASK_STATE_COMPLETED))[-1]
+    assert received["outcome"] == "clear" and received["findings"]["resumed_task_ids"] == [chase.id]
+    assert received["model_used"] == "deterministic"
+    complete = await await_state("documents", chase.id, TaskState.TASK_STATE_COMPLETED)
+    result = extract_artifact_data(complete)[-1]
+    assert result["outcome"] == "verified" and pod["ref"] in result["evidence_refs"]
+
+
+async def test_pod_before_invoice_opens_no_settlement(agents):
+    """A POD lands hours before the carrier bills; nothing is waiting, so it is recorded and done."""
+    from router.main import route_event
+    await asyncio.gather(*(_wait_ready(spec.url) for spec in AGENTS.values()))
+    agent, env, meta = route_event(pod_arrival("CASE-NOT-BILLED", "doc:POD-NOT-BILLED", "EVT-POD-EARLY"))
+    arrival = await send_task(agent, env, meta)
+    result = extract_artifact_data(await await_state(agent, arrival.id, TaskState.TASK_STATE_COMPLETED))[-1]
+    assert result["outcome"] == "clear" and result["findings"]["resumed_task_ids"] == []

@@ -88,6 +88,21 @@ class FreightAgent(AgentExecutor):
         await self.store.update(task_id, wait_kind=wait_kind, wait_key=wait_key, wait_details=details or {})
         raise TaskParked(business_status, wait_kind, wait_key, details or {})
 
+    async def notify_waiters(self, wait_key: str, key: str, data: dict) -> list[str]:
+        """Deliver an event to this agent's own tasks parked on wait_key, as an A2A resume would.
+
+        For business waits (documents:<case>) whose task IDs only this agent knows. The input is a
+        wakeup; resumed work re-reads trusted sources. Duplicate keys are delivered once.
+        """
+        woken = []
+        for row in await self.store.waiting_on(self.name, wait_key):
+            # The recovery loop resumes waiting tasks with pending input, as it does for child results.
+            await self.store.put_input(row["id"], wait_key, key, data)
+            woken.append(row["id"])
+        if woken:
+            self.wake_recovery()
+        return woken
+
     async def resume_data(self, task_id: str, wait_key: str) -> dict | None:
         return await self.store.get_input(task_id, wait_key)
 

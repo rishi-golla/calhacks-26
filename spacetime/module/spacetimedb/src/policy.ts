@@ -130,7 +130,7 @@ export const SKILLS: Record<string, readonly string[]> = {
   controller: ['review_hold', 'check_already_paid', 'reconcile', 'approve_entry'],
   verification: ['verify_claim', 'verify_bank_change', 'verify_dispute'],
   voice_desk: ['place_call', 'handle_inbound_call'], validator: ['review_output', 'review_flag'],
-  documents: ['collect_documents', 'check_document_packet'],
+  documents: ['collect_documents', 'check_document_packet', 'receive_document'],
 };
 export const TERMINAL = ['completed', 'failed', 'canceled', 'rejected'];
 export const A2A_STATES = ['submitted', 'working', 'input-required', 'auth-required', ...TERMINAL];

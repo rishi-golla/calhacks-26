@@ -13,7 +13,9 @@ from common.envelope import DelegationMeta, TaskEnvelope
 
 ROUTES = {
     "carrier_invoice.received": "process_carrier_invoice",
-    "pod.received": "process_carrier_invoice",
+    # A POD lands at delivery, hours before the carrier bills: it wakes a waiting document chase, never
+    # opens settlement for an invoice that does not exist yet.
+    "pod.received": "receive_document",
     "shipper_payment.received": "reconcile_customer_payment",
     "bank.event": "reconcile_customer_payment",
     "bank_change.requested": "screen_bank_change",

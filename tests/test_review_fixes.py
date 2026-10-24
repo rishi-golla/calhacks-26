@@ -80,4 +80,37 @@ def test_gateway_requires_tokens(monkeypatch):
     assert c.post("/approvals/appr_1", json={"decision": "approve", "approver": "x"}).status_code == 401
     monkeypatch.setenv("CARTESIA_WEBHOOK_SECRET", "s")
     assert c.post("/voice/tools/get_payment_status", json={}).status_code == 401
+    s = {"x-webhook-secret": "s"}
+    assert c.post("/voice/tools/get_case_summary", headers=s, json={"call_id": "nope"}).status_code == 403
+    store.park("call_1", "call", "voice_desk", "t", "C9", "C9", {})
+    store.commit_change_set(case_id="C9", agent="carrier_ap", task_id="t", action="a",
+                            cells=[{"sheet": "ap_subledger", "row": "INV9", "col": "status", "after": "on_hold"}])
+    assert c.post("/voice/tools/get_payment_status", headers=s,
+                  json={"call_id": "call_1", "invoice_id": "INV9"}).json()["status"] == {"status": "on_hold"}
+    assert c.post("/voice/tools/get_payment_status", headers=s,
+                  json={"call_id": "call_1", "invoice_id": "OTHER"}).status_code == 403
     assert c.post("/voice/webhook", headers={"x-webhook-secret": "s"}, json={"call_id": "nope"}).json() == {"ok": False}
+
+
+async def test_router_concurrent_deliveries_dispatch_once(monkeypatch):
+    import asyncio
+    calls = []
+
+    class T:
+        id = "task-1"
+
+    async def slow(*a, **k):
+        calls.append(a)
+        await asyncio.sleep(0.05)
+        return T()
+    monkeypatch.setattr(a2a_client, "start_task", slow)
+    res = await asyncio.gather(router.dispatch(EV), router.dispatch(EV))
+    assert sorted(map(str, res)) == ["None", "task-1"]
+    assert len(calls) == 1
+
+
+def test_transcript_denial_vs_missing_receipt():
+    from common.transcripts import CONFIRM, DENY
+    said = "Yes, the driver waited two hours. We have no receipt though."
+    assert not DENY.search(said) and CONFIRM.search(said)
+    assert DENY.search("Driver was in and out, we withdraw the detention.")

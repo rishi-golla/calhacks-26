@@ -56,7 +56,8 @@ class RiskAgent(FreightAgent):
                               findings={**base, "verification": ver, "claim_confirmed": confirmed,
                                         "claim_denied": denied},
                               evidence_refs=ver.get("evidence_refs", []),
-                              recommended_next=[] if confirmed else ["carrier_ap.short_pay_detention"])
+                              recommended_next=[] if confirmed else ["carrier_ap.short_pay_detention"] if denied
+                              else ["carrier_ap.keep_hold"])
 
     def _bank_verdict(self, ofac: dict, ver: dict) -> ResultArtifact:
         ok = bool(ver.get("findings", {}).get("claim_confirmed")) and not ofac.get("hit")

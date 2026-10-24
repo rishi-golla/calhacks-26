@@ -102,11 +102,17 @@ async def voice_tool(name: str, req: Request):
     if name not in READ_ONLY_TOOLS:
         raise HTTPException(404)
     body = await req.json()
+    call = next((p for p in store.list_parked("call") if p["key"] == body.get("call_id")), None)
+    if call is None:
+        raise HTTPException(403, "tools are only available during an active call")
+    case_id = call["case_id"]
     if name == "get_payment_status":
         inv = body.get("invoice_id", "")
+        if not any(c["row"] == inv for cs in store.change_sets(case_id) for c in cs["cells"]):
+            raise HTTPException(403, "invoice not part of this call's case")
         return {"invoice_id": inv, "status": {c["col"]: c["value"] for c in store.sheet("ap_subledger")
                                               if c["row"] == inv}}
-    return {"case_id": body.get("case_id"), "events": store.events(body.get("case_id"))[-10:]}
+    return {"case_id": case_id, "events": store.events(case_id)[-10:]}
 
 
 # ---- human input ----

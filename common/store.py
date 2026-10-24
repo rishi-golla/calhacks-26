@@ -292,6 +292,11 @@ def is_seen(key: str) -> bool:
         return c.execute("SELECT 1 FROM seen WHERE key=?", (key,)).fetchone() is not None
 
 
+def forget(key: str) -> None:
+    with connect() as c:
+        c.execute("DELETE FROM seen WHERE key=?", (key,))
+
+
 def seen_once(key: str) -> bool:
     """True the first time a key is seen; False for duplicates (event/idempotency dedupe)."""
     with connect() as c:

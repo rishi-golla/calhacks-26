@@ -71,11 +71,20 @@ async def dispatch(ev: dict) -> str | None:
         log.info("skip %s (%s)", ev.get("event_id"), ev.get("type"))
         return None
     agent, env, meta = p
-    task = await a2a_client.start_task(agent, env.model_dump(), meta, context_id=env.case_id)
-    if task is None:
-        raise RuntimeError(f"{agent} did not accept {ev['event_id']}")
-    for k in _keys(ev):
-        store.seen_once(k)
+    keys = _keys(ev)
+    claimed = [k for k in keys if store.seen_once(k)]  # atomic claim: concurrent deliveries can't both pass
+    if len(claimed) < len(keys):
+        for k in claimed:
+            store.forget(k)
+        return None
+    try:
+        task = await a2a_client.start_task(agent, env.model_dump(), meta, context_id=env.case_id)
+        if task is None:
+            raise RuntimeError(f"{agent} did not accept {ev['event_id']}")
+    except Exception:
+        for k in keys:  # release so the redelivered event is retried
+            store.forget(k)
+        raise
     store.log_event(env.case_id, "router", task.id, "routed", to=agent, skill=env.task_type,
                     event_id=ev["event_id"])
     return task.id

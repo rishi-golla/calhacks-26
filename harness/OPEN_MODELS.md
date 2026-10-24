@@ -5,8 +5,10 @@ models (Nemotron, Qwen, gpt-oss, DeepSeek) don't qualify. Candidates must also u
 safetensors weights (no `trust_remote_code`, no pickle). Every file is checked against the SHA-256 that Hugging Face
 publishes (`infra/download_open_models.py`).
 
-**Current lineup:** classify and cross-check on **Apertus-8B** (fully open). Extraction is still Nemotron Nano
-(open-weight) until a fully open extractor passes.
+**Current lineup (every model step fully open):** Olmo-3-7B finds names/addresses; Apertus-8B classifies and audits
+for leftover personal data. Money is read and compared by exact code (`ingest/amounts.py`, `amount_checks`), because
+models misread and misjudge numbers. Fully open run on 300 docs: recall 100%, invoice totals and line items 132/132,
+40.6 docs/min.
 
 **Swap rule:** a model replaces the current one in its slot only if it matches it on these tests:
 - `tests/slot_eval.py`: 60 labelled documents; the owner is known from the 7.3 table
@@ -29,7 +31,7 @@ Fast lane, 300 docs: 35.5 docs/min, 100% redaction recall, invoice totals 132/13
 
 | Model | Result | Verdict |
 |---|---|---|
-| Olmo-3-7B-Instruct (AI2) | pending | |
+| Olmo-3-7B-Instruct (AI2) | asked for amounts: invoice totals **0/132** (decimal shifts such as $1,769.44 → 17694.4, or null), unchanged by prompt wording, field names or decoding mode. Finds names/addresses correctly. With amounts moved to exact code (parser 132/132 totals, line items, payments) it only finds personal data: recall 100%, 132/132 | **passes** with amounts read by code |
 | OLMo-2-1124-13B-Instruct (AI2, FP8 on the fly) | pending | |
 
 ### Slot C: independent cross-check (was Qwen3-4B; gpt-oss parked for NaN output on GB10)

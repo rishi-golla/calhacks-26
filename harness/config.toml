@@ -66,7 +66,7 @@ chat_template_kwargs = { enable_thinking = false }
 # C (gpt-oss) is out of rotation: its MXFP4 Marlin kernel emits NaN logits on GB10.
 [logical]
 small-fast = ["E"]
-reasoning = ["A"]
+reasoning = ["F"]
 coder-tools = ["E"]
 
 # model="auto": the first matching rule wins. Match keys (all must hold):

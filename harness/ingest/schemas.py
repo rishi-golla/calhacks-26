@@ -65,3 +65,7 @@ def is_structured(doc_type: str, payload: dict) -> bool:
     """True when the upstream payload already holds at least two of this document type's fields."""
     fields = [k for k in SCHEMAS[doc_type]["properties"] if k != "pii"]
     return sum(payload.get(k) not in (None, "", []) for k in fields) >= 2
+
+# Fast lane for document types whose amounts are read exactly by harness/ingest/amounts.py: the model only finds
+# the personal-data spans (a short output any capable model gets right).
+PII_ONLY = {"type": "object", "properties": {"pii": PII}, "required": ["pii"], "additionalProperties": False}

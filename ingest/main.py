@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS loads (load_id TEXT PRIMARY KEY, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS invoices (invoice_id TEXT PRIMARY KEY, load_id TEXT, invoice_number TEXT, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS shipper_invoices (invoice_id TEXT PRIMARY KEY, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS bank_offsets (file TEXT PRIMARY KEY, offset INT NOT NULL);
+CREATE TABLE IF NOT EXISTS bank_txns (txn_id TEXT PRIMARY KEY);
 """
 
 
@@ -352,16 +353,23 @@ def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
         if not line.startswith("16,"):
             continue
         parts = line.rstrip("/\r\n").split(",")
+        txn_id = parts[4] if len(parts) > 4 else None
+        if txn_id and db.execute("SELECT 1 FROM bank_txns WHERE txn_id=?", (txn_id,)).fetchone():
+            continue
         if len(parts) < 7:
             output.append(_document_event(trigger, "bank_transaction", "needs_review",
                                           {"file": filename, "record": line}))
+            if txn_id:
+                db.execute("INSERT OR IGNORE INTO bank_txns(txn_id) VALUES (?)", (txn_id,))
             continue
-        cents, txn_id, reference, counterparty = parts[2], parts[4], parts[5], parts[6]
+        cents, reference, counterparty = parts[2], parts[5], parts[6]
         try:
             paid_amount = round(int(cents) / 100, 2)
         except ValueError:
             output.append(_document_event(trigger, "bank_transaction", "needs_review",
                                           {"file": filename, "record": line}))
+            if txn_id:
+                db.execute("INSERT OR IGNORE INTO bank_txns(txn_id) VALUES (?)", (txn_id,))
             continue
         invoice = _read_json(db.execute("SELECT json FROM shipper_invoices WHERE invoice_id=?",
                                         (reference,)).fetchone())
@@ -369,6 +377,8 @@ def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
             output.append(_document_event(trigger, "bank_transaction", "needs_review",
                                           {"file": filename, "reference": reference,
                                            "counterparty": counterparty, "paid_amount": paid_amount}))
+            if txn_id:
+                db.execute("INSERT OR IGNORE INTO bank_txns(txn_id) VALUES (?)", (txn_id,))
             continue
         billed_amount = float(invoice.get("amount", 0))
         case_id = f"{invoice.get('case_id')}-AR"
@@ -381,6 +391,8 @@ def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
         if invoice.get("source_email"):
             evidence_refs.append(f"mail:{invoice['source_email']}")
         output.append(_event(trigger, "shipper_payment.received", payload, "P2", evidence_refs))
+        if txn_id:
+            db.execute("INSERT OR IGNORE INTO bank_txns(txn_id) VALUES (?)", (txn_id,))
     if record is None:
         db.execute("INSERT OR REPLACE INTO bank_offsets(file, offset) VALUES (?,?)", (filename, len(contents)))
     return output

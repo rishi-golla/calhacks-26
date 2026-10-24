@@ -278,6 +278,42 @@ def test_raw_bank_events_process_each_record_independently(world):
                    for event in first + second)
 
 
+def test_raw_bank_record_then_file_fallback_deduplicates_transactions(world):
+    _, load_a, events_a = _run(world, "clean", seed=3)
+    _, load_b, events_b = _run(world, "clean", seed=11)
+
+    def event_of_type(events, event_type):
+        return next(event for event in events if event["type"] == event_type)
+
+    shipper_invoice_a = event_of_type(events_a, "shipper_invoice.issued")
+    bank_event_a = event_of_type(events_a, "bank.event")
+    shipper_invoice_b = event_of_type(events_b, "shipper_invoice.issued")
+    bank_event_b = event_of_type(events_b, "bank.event")
+    record_a = bank_event_a["payload"]["record"]
+    record_b = bank_event_b["payload"]["record"]
+    filename = "BAI2-idempotency.txt"
+    bank_path = generator.data_dir() / "bank" / filename
+    bank_path.parent.mkdir(parents=True, exist_ok=True)
+    bank_path.write_text(f"{record_a}\n{record_b}\n")
+    inline_event = {**bank_event_a, "payload": {**bank_event_a["payload"], "file": filename}}
+    file_event = {**bank_event_b, "payload": {"file": filename, "account": bank_event_b["payload"]["account"]}}
+
+    db = connect()
+    try:
+        _ingest([shipper_invoice_a, shipper_invoice_b], db)
+        inline_output = _ingest([inline_event], db)
+        file_output = _ingest([file_event], db)
+    finally:
+        db.close()
+
+    payment_loads = [event["payload"]["load_id"] for event in inline_output + file_output
+                     if event["type"] == "shipper_payment.received"]
+    assert payment_loads.count(load_a["load_id"]) == 1
+    assert payment_loads.count(load_b["load_id"]) == 1
+    assert [event["payload"]["load_id"] for event in file_output
+            if event["type"] == "shipper_payment.received"] == [load_b["load_id"]]
+
+
 def test_handle_assigns_stable_event_ids_for_same_trigger(world):
     _, _, events = _run(world, "clean")
     trigger = next(event for event in events if event["type"] == "email.received"

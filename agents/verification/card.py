@@ -1,2 +1,2 @@
-"""Skill descriptions for the verification Agent Card. Skills/ports come from common.config."""
-DESCRIPTIONS: dict[str, str] = {}
+"""Carrier Trust & Verification Agent Card descriptions."""
+DESCRIPTIONS = {'verify_claim': 'Verify a disputed freight charge using independent documents and trusted dispatcher contact.', 'verify_bank_change': 'Verify a payment-detail change out of band and require owner-operator identity evidence.', 'verify_dispute': 'Check carrier identity, authority, insurance evidence, or a shipment dispute.'}

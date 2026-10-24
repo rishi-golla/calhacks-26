@@ -37,6 +37,12 @@ export const emptySnapshot = (): Snapshot =>
   Object.fromEntries(TABLES.map((name) => [name, [] as Row[]])) as Snapshot;
 export const camel = (name: string) =>
   name.replace(/_([a-z])/g, (_, char: string) => char.toUpperCase());
+function fieldName(key: string): string {
+  const snake = key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+  // SpacetimeDB's generated WS field is a2AState; SQL exposes a_2_a_state.
+  // Both transports must present the same public task shape to every view.
+  return ["a2_a_state", "a_2_a_state"].includes(snake) ? "a2a_state" : snake;
+}
 export function normalize(value: unknown): unknown {
   if (typeof value === "bigint")
     return Number.isSafeInteger(Number(value))
@@ -50,7 +56,7 @@ export function normalize(value: unknown): unknown {
       return value.toDate().toISOString();
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
-        key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`),
+        fieldName(key),
         normalize(item),
       ]),
     );
@@ -115,59 +121,66 @@ export function safeUrl(value: unknown): string | undefined {
 export const AGENTS = [
   {
     id: "carrier_ap",
-    name: "Carrier AP",
-    short: "AP",
-    role: "Invoice reconciliation",
+    name: "Carrier Settlement",
+    short: "CS",
+    role: "Carrier invoices & payment readiness",
     color: "blue",
   },
   {
     id: "shipper_ar",
-    name: "Shipper AR",
+    name: "Shipper Billing & Collections",
     short: "AR",
-    role: "Collections & receivables",
+    role: "Billing packets, short-pay & collections",
     color: "blue",
   },
   {
     id: "risk",
-    name: "Risk & Compliance",
-    short: "RK",
-    role: "Fraud & charge investigation",
+    name: "Accessorial Audit",
+    short: "AA",
+    role: "Detention, receipts & extra charges",
     color: "amber",
   },
   {
     id: "verification",
-    name: "Verification",
-    short: "VF",
-    role: "Evidence & external checks",
+    name: "Carrier Trust & Verification",
+    short: "CV",
+    role: "Carrier identity & payment verification",
     color: "violet",
   },
   {
     id: "controller",
-    name: "Controller",
+    name: "Settlement Approvals",
     short: "CT",
     role: "Ledger & deterministic controls",
     color: "teal",
   },
   {
     id: "voice_desk",
-    name: "Voice Desk",
+    name: "Dispatcher Outreach",
     short: "VD",
     role: "Demo-routed conversations",
     color: "violet",
   },
   {
     id: "cfo",
-    name: "CFO",
-    short: "CF",
-    role: "Cash & financial impact",
+    name: "Load Profitability",
+    short: "LP",
+    role: "Load margin & cash impact",
     color: "teal",
   },
   {
     id: "validator",
-    name: "Validator",
+    name: "Settlement Quality Review",
     short: "VA",
     role: "Review & continuous learning",
     color: "amber",
+  },
+  {
+    id: "documents",
+    name: "POD & Document Chase",
+    short: "DC",
+    role: "Delivery paperwork & missing receipts",
+    color: "violet",
   },
 ] as const;
 export const agentName = (id: unknown) =>

@@ -1,5 +1,5 @@
 # PRD: Autonomous Back Office for Freight Brokerages
-**Cal Hacks 13.0 · Ground truth v1.3 · Sat Oct 24, 2026 PDT**
+**Cal Hacks 13.0 · Ground truth v1.9 · Sat Oct 24, 2026 PDT**
 
 > This is the one source of truth. If code, a chat message or a slide disagrees with this doc, the doc wins until someone changes it. To change it, edit this file, bump the version in the change log at the bottom, and post one line in the team chat. Section 7 (interface contracts) is frozen at **Sat 3:00 AM**. After that, contract changes need agreement from both owners on that interface.
 
@@ -7,18 +7,79 @@
 
 ## 1. Summary
 
-**One line:** an autonomous finance back office for a mid-size freight brokerage. An intake and first-hop routing harness on an ASUS AI supercomputer dispatches incoming work to independent finance agents. Those agents use their own model providers, including OpenAI and Anthropic Claude, delegate to each other over the A2A protocol, phone carriers and shippers with voice agents, and act on the books only through deterministic controls, recording every decision in an audit trail.
+**One line:** an autonomous finance back office for a mid-size freight brokerage. An intake and first-hop routing harness on an ASUS AI supercomputer dispatches incoming work to independent finance agents. Those agents call their configured model provider (OpenAI by default, Anthropic optional), delegate to each other over the A2A protocol, phone carriers and shippers with voice agents, and act on the books only through deterministic controls, recording every decision in an audit trail.
+
+**Product boundary (v1.4):** freight brokerage back-office work from delivery paperwork to carrier settlement and shipper collections. Carrier sourcing, rate negotiation, dispatch, and live shipment tracking are outside this implementation. Six frontline specialists and three supporting specialists run as nine independent A2A services. Existing service IDs remain stable; `documents` is the new service on :9109. Generic role names elsewhere in this document (AP, AR, Risk, Controller, CFO, Verification, Voice Desk, Validator) refer to the matching stable IDs in section 8.
+
+**Implementation status (October 24):** the first runnable nine-service A2A milestone is implemented,
+including durable admission/checkpoints, direct provider adapters, brokerage workflows, document
+continuation, call recovery, review delivery and scoped memory. The Agent inbox is now the default
+dashboard view: nine specialists, team and per-agent threads from recorded W2 activity, case/search
+filters, evidence inspection, local read markers and a clearly labeled capture replay. Agent
+runtimes emit a heartbeat every 15 seconds when W2 is enabled. A local live acceptance run now
+verifies all nine agents concurrently using actual OpenAI calls, authenticated A2A handoffs,
+PostgreSQL task persistence and live SpacetimeDB projections, with explicitly synthetic source
+data. The two delegated tasks completed, and a parked parent resumed successfully. No calls or
+financial actions were requested. Each live agent now has a role-specific tool registry and a bounded,
+durable model-selected tool loop. Tool activity appears in the inbox with arguments, results and status;
+existing policy-controlled workflows remain responsible for financial authorization and execution.
+Apify carrier and company-website lookups now return real public evidence through model-selected
+tools. Cartesia account resources and the local completion poller are configured; a live phone call
+has not yet been accepted end to end. Financial/Cartesia acceptance, full source ingestion, direct operator messaging,
+sandbox/telemetry/deployment hardening, and automatic instruction
+publication remain follow-ups. The inbox observes actual messages and results; it does not fabricate
+dialogue or provide arbitrary chat dispatch. This PRD describes the full target; see
+[A2A runbook](A2A-RUNBOOK.md) for current behavior and setup.
+
+**Provider setup (v1.6):** one OpenAI key supports all nine agents. The starter configuration
+uses `gpt-6-luna` for operational assessments and `gpt-6.1-sol` for Settlement Quality Review.
+The standalone assessment adapter also supports Anthropic; the v1.8 live tool loop currently
+requires OpenAI. A separate reviewer model is not cross-provider validation. Model choices
+remain subject to account access and live acceptance; credentials alone do not enable live mode.
+
+**Local acceptance (v1.7):** `live-002` completed all nine root tasks plus two delegated tasks and
+an actual reviewer warm-up task. Persisted SDK WORKING intervals confirm nine distinct agents
+active concurrently; parked intervals are excluded. The inbox subscribes to this live local
+database and labels its synthetic source case. `make live-demo` repeats a bounded run and saves
+its measured acceptance report. This verifies service concurrency and transport; it does not
+establish business-data correctness or complete the cross-host/financial/telephony acceptance.
+
+**Agent tools (v1.8):** all nine live services use model-selected tools for case evidence, role-specific
+checks, scoped database reads, A2A delegation and task-bound guarded workflows. Provider turns and tool
+results are checkpointed so a parked task resumes its selected call. Models cannot supply arbitrary SQL,
+shell commands, payment amounts or contact destinations. Final business outcomes come from validated
+workflow artifacts. SpacetimeDB tool audit events power the inbox's running/completed/failed/waiting
+states and inspection view. The existing OpenAI credential covers these tools. Live external lookups,
+email, sandbox banking and voice calls require their respective adapters/configuration; mocked W4
+integration results are not exposed as live tools. Fixture workflows remain deterministic.
+Local acceptance `tools-002` verified 38 completed tool calls across all nine concurrent agents,
+two A2A handoffs and no task/summary failures, with no calls or restricted financial writes added.
+
+**Sponsor implementation (v1.9):** focus is Cartesia and Apify; CRS and Nessie are deferred.
+The tool catalog now contains 22 distinct tools across up to 68 role grants. Apify lookups use
+case-bound USDOT/MC identifiers or an ingested public company URL, bounded actor runs, durable
+start tracking, a 24-hour cache and source citations. Public records and scraped contacts remain
+external observations and never become outreach or financial authorization automatically. The
+`sponsors-002` A2A task completed with four successful tool calls and real carrier and website
+observations in a labeled synthetic business scenario. It reused the original actor runs from
+`sponsors-001` with normalization v2, without starting new paid runs. The private acceptance report
+is `data/live/sponsor-lookups-sponsors-002.json`. Validation passed 414 backend tests and 41 frontend
+tests, with lint and the frontend production build passing. Cartesia has three hosted personas (verification, collections, approvals) and
+one provided outbound number configured. Its default completion path is the local gateway poller;
+public HTTPS and webhook credentials are only needed when hosted webhook tools are enabled.
+The configured calling window is still enforced. No phone call has been placed in this milestone;
+the first team demonstration remains pending a suitable calling window and operator agreement.
 
 **Seats it fills (the line the Hyphenate judges ask for):** *"The carrier-payables clerk, payables fraud analyst and collections specialist at a 40-person freight brokerage, reporting to the controller."*
 
 **Problem:** freight brokers lose money on carrier invoice padding (detention and lumper charges without proof), double-brokering, bank-change fraud and slow collections. The evidence is spread across the TMS, rate cons, PODs, GPS/ELD, email and the bank, and the sources disagree. Today humans reconcile all of it by hand.
 
-**What makes it real, not a demo script:**
-- Eight independently running agent services that talk over the real A2A protocol: Agent Cards, task IDs, artifacts, and tasks that park and resume.
+**Target demo characteristics (current acceptance is recorded above):**
+- Nine independently running brokerage-specialist services that talk over the real A2A protocol: Agent Cards, task IDs, artifacts, and tasks that park and resume.
 - A continuous synthetic company with planted errors and an answer key, so we can prove accuracy.
 - Our own ASUS harness classifies incoming events and dispatches the first A2A task. Independent agents then execute with their own provider adapters and scoped tools; subsequent delegations go directly between agents.
 - Real counterparties: real carriers and shippers found by scraping (Apify: FMCSA, company sites), with real contacts surfaced through an enrichment waterfall (FMCSA, our own contact-data key, context.dev, website scrape), shown unmasked. Realistic synthetic invoices are written against them.
-- Cartesia voice calls run for real, but **outreach is demo-only**: the UI shows the real person it would call, and the call actually rings a teammate playing that person. Real sandbox APIs: Nessie (bank), CRS (credit).
+- Cartesia provides live calls, but **outreach is demo-only**: the UI shows the intended counterparty, and calls ring an allowlisted teammate playing that person. The first live call remains pending acceptance. CRS credit and Nessie banking are deferred from the current implementation.
 - A Validator agent reviews every output and every bit of friction, then updates each agent's instructions and persistent memory.
 - A Git-style audit trail shown as spreadsheets: source document, which agent read it, what it did, and which cells changed.
 - Live shared state in SpacetimeDB: every agent, task, hold and audit row is visible as it happens.
@@ -26,7 +87,7 @@
 ## 2. Goals and non-goals
 
 **Goals (must ship):**
-- G1: The hero case runs live end to end. A suspicious invoice reaches AP, then Risk, then Verification, then a Voice Desk call (demo mode), then the Controller places a hold, then the CFO impact updates. The Validator reviews it, and all of it lands in the audit trail.
+- G1: The hero case runs live end to end. Carrier Settlement delegates a suspicious invoice to Accessorial Audit. Missing delivery paperwork or receipts go to POD & Document Chase; identity or payment-detail questions go to Carrier Trust & Verification. Either specialist may use Dispatcher Outreach in demo mode. Results return to Carrier Settlement, which delegates the hold decision to Settlement Approvals and the financial impact through it to Load Profitability. Settlement Quality Review reviews financial outputs, and all work lands in the audit trail. A case uses only the specialists it needs; it does not require nine serial handoffs.
 - G2: In the demo flow, the teammate's phone rings ≤ 15 s after the demo input.
 - G3: 20+ unrelated cases are processed concurrently while one case waits on a call.
 - G4: Kill any agent mid-case, restart it, and the case finishes with no duplicate work.
@@ -42,6 +103,10 @@
 
 ## 3. Prize targets
 
+Current implementation focus is **Cartesia + Apify**, alongside the already connected SpacetimeDB.
+Other product/security submission targets remain in the plan; CRS and Nessie are not required for
+the current milestone. Prize descriptions below are planning notes, not claims of completed integrations.
+
 | Tier | Track | What their judges need to see | Owner who makes it land |
 |---|---|---|---|
 | 1 | **Hyphenate** ($8k/$5k/$3k) | Real enough, would you hire it, something new, "the moment". A video that opens with the moment, a live demo (they may bring a scenario), a seats line, proof of what's real vs simulated | All; pitch by W4 |
@@ -49,8 +114,8 @@
 | 1 | **SpacetimeDB** ($2,048/$1,024/$512) | SpacetimeDB as the *core* real-time backend for agent coordination and live dashboards | W2 |
 | 1 | **Cartesia** | Voice core to the product: originality, use of Cartesia, execution and edge cases, responsibility (25% each). 2-min demo-first video, README with features used | W3 (Voice Desk) + W4 (personas) |
 | 1 | **Apify** ($5k pool + $400 Best Actor) | Meaningful use: real company and carrier scraping (FMCSA, websites), plus our own published "freight counterparty" actor | W4 |
-| 1 | **CRS** ($1k / $500 agent / fraud interview) | CRS central, live against the sandbox | W4 |
-| 1 | **Capital One Nessie** ($300/person) | Completeness, creativity, complexity | W4 |
+| deferred | **CRS** ($1k / $500 agent / fraud interview) | Original target: live credit/sanctions sandbox; outside the current milestone | W4 |
+| deferred | **Capital One Nessie** ($300/person) | Original target: sandbox deposits/transfers; outside the current milestone | W4 |
 | 1 | **Armadin security** (criteria TBD) | Isolated intake processing and agent tools, prompt-injection quarantine, SoD, tamper-evident audit | W1 + W3 |
 | 2 | **Notability** | Real process notes from sketch to build | Everyone; start now |
 | auto | **Cal Hacks: Most Technically Complex** | Comes from the main build | n/a |
@@ -62,8 +127,8 @@ Check Devpost for a cap on how many tracks we can enter.
 ## 4. The demo (3 minutes, also the video)
 1. **0:00, the moment (cold open):** the phone rings on stage. The Cartesia agent: "Hi, this is an AI assistant calling for Golden Gate Freight about load 4821. You billed two hours of detention, but our GPS shows your truck on site for 47 minutes. Can you send the receipt?" A teammate plays the carrier's dispatcher and hedges.
 2. **0:30, real-world data:** the case panel shows a *real* carrier: FMCSA authority, USDOT/MC, the registered phone, the scraped website, and the dispatcher contact from the enrichment waterfall (name, title, phone, email, source, confidence), all unmasked. A banner reads: **"Outreach: DEMO MODE. Would dial +1 775 555 0112 (FMCSA-registered, verified). Routed to the team line."**
-3. **0:50, the network (SpacetimeDB live):** delegations animate AP to Risk to Verification to Voice Desk, while 30 other cases keep flowing.
-4. **1:05, resolution and Validator:** the call ends and the transcript becomes findings. The Controller holds $300 and pays the $1,850. The Validator re-checks the entry and the CFO projection, notices friction (AP had to re-request the rate con), and writes an AP memory note. The UI shows the memory or instruction diff.
+3. **0:50, the network (SpacetimeDB live):** delegations animate Carrier Settlement → Accessorial Audit → POD & Document Chase → Dispatcher Outreach, while unrelated cases keep flowing. Identity disputes use Carrier Trust & Verification as a sibling investigative path. Financial decisions follow a separate Carrier Settlement → Settlement Approvals → Load Profitability branch, keeping depth ≤3.
+4. **1:05, resolution and Validator:** the call ends and the transcript becomes findings. Settlement Approvals holds the disputed $300. The $1,850 undisputed amount is shown as blocked while the invoice has an active hold; the demo never bypasses P-002 to propose or send it. The Validator re-checks the entry and the CFO projection, notices friction (AP had to re-request the rate con), and writes an AP memory note. The UI shows the memory or instruction diff.
 5. **1:30, audit spreadsheet:** open the AP subledger grid and click the $300 hold cell. Blame shows the source invoice PDF (page 1, line 3), read by AP in task TASK-002, the change made by the Controller in change set `a1f3c9`, and policy P-001. The history tab shows every version of that cell.
 6. **1:55, a human flag:** a judge flags a CFO forecast line as wrong. The Validator reviews the flag, updates CFO memory and re-runs the projection. The new change set appears with a diff.
 7. **2:15, recovery:** `kill -9` Risk on a new case, restart it, and the case finishes.
@@ -83,13 +148,14 @@ W1 ASUS: intake + first-hop routing harness
               |
               v
 W3 independent A2A services (separate deployment hosts)
-  Carrier AP -> Risk -> Verification -> Voice Desk
-  Shipper AR / Controller / CFO / Validator
+  Carrier Settlement -> Accessorial Audit -> POD & Document Chase -> Dispatcher Outreach
+  Carrier Trust & Verification / Shipper Billing & Collections
+  Settlement Approvals / Load Profitability / Settlement Quality Review
        |                  |                  |
        v                  v                  v
   Provider adapters   Scoped tools       Cartesia gateway
-  OpenAI / Claude     CRS / Nessie /      (public HTTPS)
-  / other providers   Apify / email
+  OpenAI live loop    Apify              (local polling;
+  / other adapters    internal tools      HTTPS tools optional)
        |
        +-- Agent-owned inference and tool loops; direct A2A delegation
 
@@ -114,7 +180,7 @@ W4 evaluator: answer key -> outcome metrics
 
 **v1.1 additions to the diagram:** a **Validator :9108** in the A2A mesh (it reviews every output, owns memory and instruction updates, and receives human flags), and a **W4 enrichment pipeline** (Apify scrape → enrichment waterfall: FMCSA, own key, context.dev → `company` and `contact` directory) that feeds Verification, the Voice Desk and the UI.
 
-**Deployment:** ASUS hosts W1 intake/routing and any models used for intake classification only. W3 agent services and their tool runtimes run on separately configured hosts and call their configured model providers directly. Redis, Postgres, SpacetimeDB, the dashboard and gateway have independently configured addresses; none is assumed to live on ASUS. A tunnel (cloudflared or ngrok) exposes `gateway:9000` over public HTTPS for Cartesia webhooks. Already-dispatched A2A tasks must continue if ASUS is unavailable; new events remain durably queued.
+**Deployment:** ASUS hosts W1 intake/routing and any models used for intake classification only. W3 agent services and their tool runtimes run on separately configured hosts and call their configured model providers directly. Redis, Postgres, SpacetimeDB, the dashboard and gateway have independently configured addresses; none is assumed to live on ASUS. Cartesia completion uses the local `gateway:9000` poller by default. A public HTTPS tunnel is only needed for optional hosted webhook tools and callbacks. Already-dispatched A2A tasks must continue if ASUS is unavailable; new events remain durably queued.
 
 ## 6. Workstreams and owners
 
@@ -122,8 +188,8 @@ W4 evaluator: answer key -> outcome metrics
 |---|---|---|---|
 | W1 | **ASUS intake/routing harness** | _name_ | Redis event consumer, input classification, first-hop routing, dispatch retries/deduplication, intake isolation, routing telemetry; optional routing-policy experiments |
 | W2 | **SpacetimeDB + dashboard** | _name_ | Module schema and reducers (ledger invariants), subscriptions, the Next.js dashboard (network graph, case tree, feeds, approvals inbox, scoreboard) |
-| W3 | **A2A mesh** | _name_ | 8 agent services (including the Validator), AgentRuntime, per-agent provider adapters and tool isolation, delegation and park/resume, review-outbox delivery, policy engine, audit/change-set writer, memory store, Voice Desk logic, webhook gateway |
-| W4 | **Real-world data, enrichment & demo outreach** | _person 4_ | Scraping real counterparties, the contact enrichment waterfall (Apify, context.dev, own key), realistic synthetic documents, simulator and answer key, the demo console and the demo-mode call and email loop, Cartesia personas, CRS/Nessie connectors, pitch, video, Devpost |
+| W3 | **A2A mesh** | _name_ | 9 agent services (six brokerage specialists plus approvals, outreach, and quality review), AgentRuntime, per-agent provider adapters and tool isolation, delegation and park/resume, review-outbox delivery, policy engine, audit/change-set writer, memory store, Voice Desk logic, webhook gateway |
+| W4 | **Real-world data, enrichment & demo outreach** | _person 4_ | Apify public-data tools and Cartesia personas now; full enrichment/ingestion, realistic synthetic documents, simulator and answer key, demo console/email, pitch, video and Devpost remain broader work; CRS/Nessie deferred |
 
 Rule: **each owner can build against mocks of the other three from hour 0.** The contracts in section 7 are what make that possible. Each owner ships a mock of their side by **Sat 3:00 AM** (a stub intake router that dispatches seeded events, a SpacetimeDB module with tables and no-op reducers, an agent that returns canned artifacts, a simulator that emits 10 fixed events).
 
@@ -155,7 +221,7 @@ Requirements:
 - **S2 Ledger invariants in reducers:** `post_journal_entry` rejects unbalanced entries, entries in locked periods, and entries where `approved_by == requested_by`. `place_hold` and `release_hold` check amounts against the invoice. `release_hold` over $5,000 requires an `approvals` row with a human approver.
 - **S3 Auth:** agents call reducers over HTTP with a service identity/token per agent. Humans use the dashboard identity. Reducers check the caller's role (for example, only `controller` may post journal entries).
 - **S4 Dashboard (Next.js + React Flow + a spreadsheet grid component) views:**
-  1. **Agent network:** 8 nodes with live status, active, queued and done counts, and an edge animation on every A2A delegation.
+  1. **Agent network:** 9 nodes with live status, active, queued and done counts, and an edge animation on every A2A delegation.
   2. **Live task feed:** newest first, filterable by agent or case.
   3. **Case drill-down:** the task tree, each task's artifacts, evidence, policy ids, model used, and call transcript and recording link.
   4. **Approvals inbox:** approve or reject with a one-time code; the decision goes to a reducer.
@@ -167,15 +233,16 @@ Requirements:
   10. **Audit spreadsheets (Git-style):** grid views of the AP and AR subledgers, the GL, holds and the CFO forecast. Click a cell for **blame** (change set, agent, task, source document and page, policy). The **history** tab lists every version of the cell. **Diff** compares any two change sets. **Log** is the per-case change-set list, like `git log`. Export to XLSX or CSV.
   11. **Validator and learning:** reviews (pass or issue), friction items, and memory and instruction diffs per agent, with version, author (Validator or human) and a revert button.
   12. **Flags and human inbox:** a flag button on every row, cell, task, call and decision. Shows flag status and what changed because of it. Approvals live here too.
+  13. **Agent inbox (default view):** a nine-agent roster, shared team thread and per-agent threads built from actual task artifacts, A2A handoffs, audit summaries, redacted calls and reviews. Case/search filters, local read markers and an evidence inspector make the work navigable. Missing/disconnected data remains explicit. A separately labeled replay uses captured local fixture execution; playback performs no live action. Direct operator messaging remains outside this milestone.
 - **S5 Performance:** UI updates < 500 ms after a reducer call; handles 2 events/s for 30 min.
 
-Done when: all 12 views run off live subscriptions, with no polling except a fallback.
+Done when: all 13 views run off live subscriptions, with no polling except a fallback. Recorded fixture replay is an explicit preview mode and does not satisfy live acceptance.
 
 ### W3: A2A mesh
 **Purpose:** the agents themselves and how they collaborate.
 
 Requirements:
-- **A1 Eight services**, each its own process with an Agent Card at `/.well-known/agent-card.json` and a JSON-RPC endpoint (a2a-sdk **1.2.3**). See the roster in section 8.
+- **A1 Nine services**, each its own process with an Agent Card at `/.well-known/agent-card.json` and a JSON-RPC endpoint (a2a-sdk **1.2.3**). See the roster in section 8.
 - **A2 Shared `AgentRuntime`:** each agent owns its LLM/tool loop and calls its configured provider directly through a provider adapter (OpenAI, Anthropic Claude, or another supported provider). Normalize structured outputs and tool-call results into the existing contracts. Each agent has instructions, knowledge and an allowlist of tools; file/code tools run in an isolated per-task sandbox on the agent execution host. Provider credentials remain in the service environment, outside prompts and tool sandboxes. High-stakes multi-model review, when configured, runs within W3 and applies P-009 on disagreement. It provides `delegate(skill, envelope, mode)` with modes `await | park | fanout`, park/resume on `INPUT_REQUIRED`, and resume via follow-up messages on the same task id.
 - **A3 Guards:** delegation depth ≤ 3, no cycles, fan-out ≤ 3, per-agent delegation allowlist, idempotency key per delegation, per-skill timeouts, retries with backoff, a reconciler loop every 5 s.
 - **A4 Handoff boundary:** W1 owns the Redis business-event consumer and first `SendMessage` on ASUS. W3 owns receiving-task deduplication and all subsequent delegation through `FreightAgent.delegate()`. W3 also runs the durable Validator/review-outbox delivery worker; this internal delivery worker is separate from ASUS intake routing. Shared A2A helpers remain under W3 ownership.
@@ -196,12 +263,12 @@ Done when: acceptance tests T1–T9 and T13–T17 (section 11) pass.
 
 - **R1 Real counterparties:** choose a real lane cluster (for example Northern California ↔ Nevada produce). Pull about 300 real carriers from FMCSA via the Apify SAFER actor: legal name, USDOT/MC, authority status, registered phone and address, fleet size. Scrape about 40 real shippers (public company sites, maps listings) via Apify: name, address, website, the AP or logistics page. Store them in Postgres `company` with `source_url` and `scraped_at`. **Decided:** the home brokerage is fictional. We simulate a brokerage's internals under the name **Golden Gate Freight** (used in materials, the voice persona and the UI). Every counterparty is real.
 - **R2 Contact enrichment waterfall (sponsor-first).** Every result stores `source`, `source_url`, `confidence` and `fetched_at`. Everything is cached, and the hero counterparties are pre-enriched by C1.
-  1. **FMCSA via Apify** (`scrapesage/fmcsa-trucking-scraper`, `makework36/fmcsa-trucking-api` or similar; pick the one that returns phone and email): the carrier's registered phone, email, address and officers. These are public records and our highest-trust source for verification calls (P-008).
-  2. **Apify Contact Details Scraper** (`vdrmota/contact-info-scraper`, about 65k users): crawl each counterparty's website for public emails, phones and social profiles. Use the Google Maps lead actors for shippers' main lines.
-  3. **context.dev** (credits from the event): company data (description, address, socials, industry), **people enrichment** from identity clues (name plus company leads to the contact's details), and company news for Risk. It shares one key with scraping (`/v1/web/scrape`, with JSON-schema extraction for AP or contact pages).
-  4. **Our own contact-data API key** (provided by the team) fills the gaps: direct dials and named people at shippers' AP departments. Apollo is optional if this covers it.
+  1. **FMCSA via Apify:** the reviewed implementation uses `humble-echidna/fmcsa-carrier-check` build `0.1.2`, with source-bound USDOT/MC input, exact identity matching, a one-result request and a 24-hour cache. Public carrier, authority and contact fields are cited observations. They still require independent review before becoming verified directory contacts (P-008).
+  2. **Apify Contact Details Scraper:** the reviewed implementation uses `vdrmota/contact-info-scraper` build `0.2.242`, restricted to the ingested public company website and one page. Public email/phone candidates remain unverified; social-profile crawling and enrichment add-ons are disabled.
+  3. **context.dev (future adapter):** company data, people enrichment and company news remain outside the current Cartesia/Apify milestone.
+  4. **Other contact-data APIs (future adapters):** direct dials and named billing contacts may fill gaps after the current milestone. No additional enrichment key is required now.
   - Merge rule: prefer FMCSA, then our key, then context.dev, then website scrape. Conflicting values are kept as alternates, and the disagreement is shown (Risk uses it as a signal).
-  - **Display: unmasked on the live site.** Showing that we find real contacts and can operate in a real business is the point. Outreach stays demo-routed (R5).
+  - **Display:** the intended counterparty directory view may show approved business contact data. The current inbox sanitizes tool results and labels synthetic business context as **Demo case** and confirmed public Apify observations as **Live external evidence**. Its inspector separates case data from tool evidence. Outreach stays demo-routed (R5).
 - **R3 Realistic synthetic documents:** generate invoices, rate confirmations, BOLs and PODs as PDFs, plus email threads, all against the real counterparties (real names, MC numbers, addresses and lanes) with synthetic loads, amounts and line items. Mark them with a small "SIMULATED" footer. Planted errors (padded detention, lumper without a receipt, duplicates, rate above contract, bank-change fraud, double-brokering, short-pay, misapplied payment) go in an `answer_key`, with clean decoys mixed in.
 - **R4 Simulator and ingest:** run a continuous event stream with a 3-month fast-forward history at boot. Ingest normalizes, timestamps and dedupes events, writes Postgres, publishes to Redis and opens SpacetimeDB cases. Train an anomaly model (IsolationForest) on clean history as the `score_anomaly` tool. The evaluator joins outcomes to the answer key and writes `metric` rows.
 - **R5 Outreach safety (hard rule):** `OUTREACH_MODE=demo` is the only mode at the event. Real contacts are resolved and shown as `intended_to`. The actual dial and send target is replaced with `DEMO_ALLOWLIST` (team phones and team inbox). Code refuses any target not on the allowlist, even if someone flips the flag. Every call and email record stores both `intended_to` and `routed_to`.
@@ -212,7 +279,7 @@ Done when: acceptance tests T1–T9 and T13–T17 (section 11) pass.
   4. The audience hears the back-and-forth on speaker. The transcript appears in the case (live if Cartesia exposes it, otherwise right after the call). The findings resume the A2A task.
   5. For email, the message lands in the team inbox, and replying resumes the task.
   6. Buttons for the preset scripts: PHONE (detention), EMAIL (bank change), SHORT-PAY (collections).
-- **R7 Integrations (as tools; section 7.6):** Cartesia persona configs and phone numbers, Apify, context.dev, our contact-data key, CRS, Nessie and email. Each tool has `MOCK_INTEGRATIONS=1` so other workstreams aren't blocked.
+- **R7 Integrations (as tools; section 7.6):** current implementation covers Cartesia persona/number configuration and real Apify carrier/company lookups. CRS and Nessie are deferred; context.dev, other enrichment and email remain future adapters. Legacy scaffolds may use `MOCK_INTEGRATIONS=1`, but live agent tools never substitute these mocks for external evidence.
 - **R8 Deliverables:** the pitch, the 3-minute video, Devpost, a README covering real vs simulated vs demo-routed data, the Cartesia features used, and the published Apify actor.
 
 Done when: the counterparty panel shows real enriched data for every hero case. The demo console runs PHONE and EMAIL end to end. T9, T10 and T16 pass.
@@ -288,7 +355,12 @@ Reducers (with the caller role that may call each):
 Mock by Sat 3 AM: the tables exist, the reducers insert rows without validation, and the dashboard shows raw tables.
 
 ### 7.5 Voice Desk ↔ Cartesia (W3 code, W4 config)
-- An agent delegates `place_call` in park mode with `{purpose: verification|collections|approvals|cash_brief, counterparty_id, questions[], facts{}}`. Allowed purposes per caller: Verification → verification, AR → collections, Controller → approvals, CFO → cash_brief.
+
+Implementation note (v1.9): local polling is the default completion transport. The configured
+hosted personas currently have no gateway tools attached. `CARTESIA_WEBHOOK_TOOLS_ENABLED=1`
+requires a genuine public HTTPS URL and webhook secret before those optional capabilities are used.
+These setup choices do not change the task, call-result, or reducer payload contracts below.
+- An agent delegates `place_call` in park mode with `{purpose: verification|collections|approvals|cash_brief, counterparty_id, questions[], facts{}}`. Allowed purposes per caller: Carrier Trust & Verification and POD & Document Chase → verification, Shipper Billing & Collections → collections, Settlement Approvals → approvals. The existing `cash_brief` purpose remains reserved; CFO → Voice Desk is not an allowed delegation edge.
 - The number comes from the verified directory only: the `contact` or `company` record with a source (FMCSA, our contact-data key, context.dev or website). Policy checks: P-008, P-011, quiet hours, ≤ 1 attempt per counterparty per hour.
 - **Demo routing:** the Voice Desk sets `intended_to` = the real number and `routed_to` = the demo allowlist number, and dials only `routed_to`. Both are written to `call` and shown in the UI.
 - `POST https://api.cartesia.ai/agents/calls`, headers `X-API-Key`, `Cartesia-Version: 2026-08-14`, body `{agent_id, from_number_id, ringing_timeout_seconds:25, outbound_calls:[{to_number, dynamic_variables:{case_id, task_id, call_token, …facts}}]}`.
@@ -298,6 +370,11 @@ Mock by Sat 3 AM: the tables exist, the reducers insert rows without validation,
 - Every persona opens with AI disclosure plus the reason for the call. Custom metrics: `disclosure_given`, `claim_confirmed`.
 
 ### 7.6 Integration tools (W4 implements as Python functions in `integrations/`, W3 calls them)
+
+Implementation note (v1.9): `integrations/apify.py` supplies asynchronous, bounded adapters to the
+agent tool registry for public carrier records and company websites. The signatures below remain
+the broader workstream contract; CRS/Nessie are deferred and other unfinished adapters remain
+explicitly unavailable. Scraped contacts require independent verification before directory promotion.
 ```python
 fmcsa_lookup(usdot:str|None, mc:str|None) -> {legal_name, authority_status, phone, insurance_on_file, oos_rate, …}  # Apify, cached 24h
 crs_business_credit(name, state) -> {score, liens, judgments, filings}   # CRS sandbox
@@ -341,23 +418,29 @@ Rules:
 
 ## 8. Agent roster
 
-| Agent | Port | Skills (Agent Card) | Key tools | May delegate to | Hard limits |
-|---|---|---|---|---|---|
-| Carrier AP | 9101 | process_carrier_invoice, propose_payment, answer_payment_status | three_way_match, get_rate_con, get_pod, propose_payment | Risk, Controller, Verification | Proposes only; never pays |
-| Shipper AR | 9102 | reconcile_customer_payment, chase_overdue, set_credit_limit | match_payment (Nessie), crs_business_credit | Controller, Verification, Voice Desk (collections), CFO | No write-offs |
-| CFO | 9103 | assess_financial_impact, cash_forecast | forecast_cash, load_margin | AR, AP, Controller | Read-only on the ledger |
-| Risk & Compliance | 9104 | investigate_charge, screen_bank_change, screen_counterparty | score_anomaly, detect_duplicates, fmcsa_lookup, crs_ofac, gps_dwell | Verification, Controller | Recommends holds; can't place them |
-| Controller | 9105 | review_hold, check_already_paid, reconcile, approve_entry | place_hold, release_hold, post_journal_entry, request_approval | CFO, Verification, Voice Desk (approvals) | Only ledger writer; >$5k release needs a human |
-| Verification (external checks) | 9106 | verify_claim, verify_bank_change, verify_dispute | compare_documents, send_email, crs_idv | Voice Desk (verification) | Contacts only verified channels |
-| Validator | 9108 | review_output, review_flag | recompute/tie-out checks, history and tool-log reader, upsert_memory, publish_instruction_version | none (writes memory and instructions only) | Can't change policy, limits, permissions or allowlists; can't touch the ledger |
-| Voice Desk | 9107 | place_call, handle_inbound_call | Cartesia, transcript extraction | Router (inbound dispute → event) | Directory numbers only; demo allowlist dialing only; AI disclosure |
+Six frontline specialists and three supporting specialists; **nine independently running agents total**. Display names identify brokerage jobs, while service IDs preserve existing integrations.
 
+| Agent (service ID) | Port | Skills (Agent Card) | Work it owns | May delegate to | Hard limits |
+|---|---|---|---|---|---|
+| Carrier Settlement (`carrier_ap`) | 9101 | process_carrier_invoice, propose_payment, answer_payment_status | Invoice/rate/POD matching, approved accessorials, duplicate detection, payment readiness | risk, controller, verification, documents | Proposes only; never pays; held invoices remain blocked |
+| Shipper Billing & Collections (`shipper_ar`) | 9102 | reconcile_customer_payment, chase_overdue, set_credit_limit | Billing documentation, deposit matching, short-pay disputes and collections | controller, verification, voice_desk, cfo, documents | No write-offs; credit limit is a recommendation until a persistence contract is agreed |
+| Load Profitability (`cfo`) | 9103 | assess_financial_impact, cash_forecast | Margin per load, unrecovered charges, collections timing and cash exposure | shipper_ar, carrier_ap, controller | Read-only on the ledger; writes forecasts only |
+| Accessorial Audit (`risk`) | 9104 | investigate_charge, screen_bank_change, screen_counterparty | Detention, lumper, layover and other disputed charges; duplicate/fraud signals and escalation | verification, controller, documents | Recommends holds; cannot place them |
+| Carrier Trust & Verification (`verification`) | 9106 | verify_claim, verify_bank_change, verify_dispute | Carrier identity, authority/insurance evidence, verified channels and payment-detail changes; legacy claim skills remain supported | voice_desk | No financial or bank-detail mutation; verified contact channels only |
+| POD & Document Chase (`documents`) | 9109 | collect_documents, check_document_packet | Missing signed PODs/BOLs, rate confirmations and receipts; packet completeness, follow-up and resuming dependent work | voice_desk | Evidence collection only; cannot approve charges, payment or carrier identity |
+| Settlement Approvals (`controller`) | 9105 | review_hold, check_already_paid, reconcile, approve_entry | Holds, reconciliations, exact-action approvals and balanced journal posting | cfo, verification, voice_desk, documents | Only ledger writer; requester cannot approve; threshold rules remain enforced |
+| Dispatcher Outreach (`voice_desk`) | 9107 | place_call, handle_inbound_call | Calls for documents, verification, collections and approvals; transcript-to-findings | none; inbound disputes become intake events | Directory numbers and demo allowlist only; AI disclosure; no payment approvals |
+| Settlement Quality Review (`validator`) | 9108 | review_output, review_flag | Financial checks, friction review, scoped lessons, instruction revisions and bounded corrections | none; corrective requests use review outbox | Cannot change policy, limits, permissions or allowlists; cannot touch ledger |
+
+The new `documents` role is added to service provisioning and W2 task/audit/heartbeat permissions, with the same delegation graph as Python. Financial reducer permissions are unchanged. Both document recovery and carrier verification may place verification-purpose calls, but neither may delegate to the other to evade the depth limit.
 Every agent folder contains `card.py`, `instructions.md`, `knowledge/`, `tools.py` and `main.py`.
 
 ## 9. Controls (deterministic, in code and again in reducers)
 P-001 invoice > contract + 2% → hold the delta · P-002 no payment on a held invoice · P-003 payment > $5,000 → human approval · P-004 bank change → out-of-band verification on the directory or FMCSA phone, plus IDV for owner-operators · P-005 requester ≠ approver · P-006 journal debits = credits, period open · P-007 duplicate (carrier, load, amount within 14 days) → reject · P-008 external contact only to verified channels · P-009 ensemble disagreement on a high-stakes call → human approval · P-010 untrusted text can't authorize an action · P-011 at the event, outreach goes only to `DEMO_ALLOWLIST` targets · P-012 the Validator and memory system can't change policy, limits, permissions or allowlists; instruction changes are versioned and revertible.
 
-## 10. Hero case data (fixed IDs; W4 seeds them, everyone tests with them)
+## 10. Hero case data (regression fixture; W4 seeds it, everyone tests with it)
+
+These fixed values are one regression fixture, not production defaults. Agents must process arbitrary supported case IDs, carriers, invoice amounts, contract terms and evidence through the same code. No handler may branch on these IDs or return the answer key. Missing-document, clean, disputed-charge, duplicate, bank-change and short-pay cases must be covered independently.
 - `CASE-4821` / `LOAD-4821`, lane Stockton CA → Reno NV, carrier `C-311` "Sierra Haul LLC" (USDOT 3141592, owner-operator), shipper `S-07` "Bay Produce Co".
 - Contract and rate con **$1,850**. Invoice **$2,150** = $1,850 + **$300 detention (2 h)**, no receipt.
 - GPS geofence at the receiver: arrived 14:02, departed 14:49 (**47 min**). Free time 2 h, so no detention is owed.
@@ -365,7 +448,7 @@ P-001 invoice > contract + 2% → hold the delta · P-002 no payment on a held i
 - Bank-change demo: carrier `C-77` "Rapid Ridge Transport" emails new bank details the day before a **$9,400** payment.
 
 ## 11. Acceptance tests (shared definition of done)
-- T1: All 8 Agent Cards resolve and validate.
+- T1: All 9 Agent Cards resolve and validate.
 - T2: The hero case produces ≥ 5 A2A tasks under one context_id, each with an artifact, and the audit hash chain verifies.
 - T3: Trigger to ring ≤ 15 s (measure 5 times).
 - T4: 20 concurrent cases plus 1 waiting on a call: all finish.
@@ -384,15 +467,17 @@ P-001 invoice > contract + 2% → hold the delta · P-002 no payment on a held i
 - T17: A human flag on a CFO forecast row is resolved by the Validator, with a visible diff and a re-run.
 - T18: Stop ASUS after AP accepts a task: downstream AP -> Risk -> Verification and case completion continue. New events remain in Redis and dispatch after ASUS restarts.
 - T19: Re-deliver the same intake event, including after a lost acceptance response: one initial A2A task is created and one event-to-task mapping is retained.
-- T20: Dispatch to at least two independently hosted agents using different providers (e.g. OpenAI and Claude); demonstrate direct provider calls and direct A2A delegation.
+- T20: Dispatch to at least two independently hosted agents; demonstrate direct provider calls and direct A2A delegation. The initial setup may use OpenAI for both with separate operational/reviewer models. Repeat with different providers when optional Anthropic credentials are available; report that cross-provider extension separately.
+- T21: POD & Document Chase receives a delegated missing-document task, records the required evidence, and resumes the waiting settlement task without duplicate outreach. Its service identity cannot perform financial mutations.
+- T22: Run varied amounts, counterparties, line items and case IDs through clean, document-missing, disputed-charge, duplicate, bank-change and short-pay scenarios. Outcomes must follow the records and policy, not the hero fixture.
 
 ## 12. Timeline (PDT; deadline **Sun 9:00 AM**; judging 10:30 AM–12:30 PM)
 
 | Time | Checkpoint | W1 Harness | W2 SpacetimeDB/UI | W3 A2A | W4 World/integrations |
 |---|---|---|---|---|---|
-| Fri 11:45 PM – Sat 3 AM | **C0: contracts frozen, mocks up** | Redis intake + mock first-hop dispatch | Module with tables; raw UI | 8 services boot with cards; provider adapters; stub decisions; AP→Risk→Verification over A2A | Seeded world; 10 fixed events; Cartesia number provisioned; API keys |
-| Sat 3 AM – 9 AM | **C1: spine end to end** | Typed routing, validated classification, P0 lane | Reducers with invariants; network + feed views | Park/resume, joins, reconciler, policy, audit to SpacetimeDB | Continuous generator, ingest → Redis, hero triggers, Apify + Nessie tools |
-| Sat 9 AM – 3 PM | **C2: hero case live with a real call** | Dispatch deduplication/recovery, intake isolation, routing telemetry | Case drill-down, approvals inbox, ledger | Voice Desk + webhook gateway, provider/tool isolation, precedents, "ask why" | Personas + webhook tools, CRS, email, anomaly model, answer key |
+| Fri 11:45 PM – Sat 3 AM | **C0: contracts frozen, mocks up** | Redis intake + mock first-hop dispatch | Module with tables; raw UI | 9 services boot with cards; provider adapters; stub decisions; AP→Risk→Verification over A2A | Seeded world; 10 fixed events; Cartesia number provisioned; API keys |
+| Sat 3 AM – 9 AM | **C1: spine end to end** | Typed routing, validated classification, P0 lane | Reducers with invariants; network + feed views | Park/resume, joins, reconciler, policy, audit to SpacetimeDB | Continuous generator, ingest → Redis, hero triggers, Apify carrier/company tools; Nessie deferred |
+| Sat 9 AM – 3 PM | **C2: hero case live with a real call** | Dispatch deduplication/recovery, intake isolation, routing telemetry | Case drill-down, approvals inbox, ledger | Voice Desk + local completion poller, optional webhook tools, provider/tool isolation, precedents, "ask why" | Cartesia personas and team-call acceptance, anomaly model, answer key; CRS deferred; email future |
 | Sat 3 PM – 9 PM | **C3: feature freeze** | Classification fallback, backpressure, injection quarantine | Scoreboard, harness panel, injector UI, polish | Provider pinning, crash recovery, T1–T9 and T18–T20 green, inbound line | Evaluator, judge injector, history replay, Apify actor published |
 | Sat 9 PM – Sun 3 AM | **C4: hardening** | Load test at 2 events/s | Performance, backup polling | Bug fixes only | Record backup video; write README and Devpost |
 | Sun 3 AM – 9 AM | **C5: rehearse and submit** | All | All | All | Submit by **8:00 AM** (1 h buffer) |
@@ -427,7 +512,7 @@ Resolved in v1.2: the home company is fictional "Golden Gate Freight" with real 
 3. Per-agent provider/model assignments, deployment URLs, credentials and fallback limits. Agent-owned tool loops and direct A2A delegation are decided. — W3
 4. Routing-policy RL experiment: allowed equivalent actions, reward weights, feedback attribution and held-out baseline; proposed until implemented and evaluated. — W1 + W4
 5. Email provider for the team inbox and reply resume. — W4
-6. Which FMCSA actor returns phone and email reliably; context.dev credit amount. — W4
+6. Verify broader FMCSA coverage with the selected `humble-echidna/fmcsa-carrier-check` actor and validate website contact candidates before directory promotion. context.dev remains a future adapter. — W4
 7. Other sponsor credits worth using for data (check the live site and Slack). — W4
 
 ## Change log
@@ -435,3 +520,11 @@ Resolved in v1.2: the home company is fictional "Golden Gate Freight" with real 
 - v1.1 (Sat 12:30 AM): dropped Fetch.ai and Coinbase. Person 4 = real-world data, enrichment and demo outreach. Demo-only outreach with intended_to and routed_to. Added the Validator agent (:9108) with memory and instruction learning, the Git-style audit with spreadsheet blame, diff and history, and human flags. Renamed the external-check agent from Validation to Verification.
 - v1.2 (Sat 1:00 AM): fictional "Golden Gate Freight" with real counterparties; enrichment waterfall (FMCSA via Apify, our own key, context.dev, Apify website scrape); contacts unmasked on the live site.
 - v1.3 (Sat Oct 24): corrected ASUS to intake and first-hop routing only. Independent A2A services own provider calls (including OpenAI/Claude), tools and downstream delegation. Updated deployment diagram, W1/W3 ownership, integration boundary, telemetry, recovery tests and timeline. Existing task envelopes and reducer permissions remain unchanged. Routing RL is explicitly proposed and separate from Validator instruction/memory updates; earlier local-model harness endpoints require implementation migration.
+
+- v1.4 (Sat Oct 24): adopted nine brokerage-specific agents: six frontline specialists plus Settlement Approvals, Dispatcher Outreach and Settlement Quality Review. Added `documents` (:9109) for POD/document recovery; retained existing service IDs and envelope shapes. Updated Python/W2 delegation and role registries together, separated document collection from carrier trust checks, preserved financial controls and depth ≤3, corrected the demo’s held-invoice payment wording, and required varied-case tests. This is the implementation target; live provider/voice/data acceptance is reported separately from fixture coverage.
+
+- v1.5 (Sat Oct 24): implemented the Agent inbox as the default dashboard view, with nine specialists, team/per-agent activity threads, case/search filters, local read markers and evidence inspection. Added a reproducible capture of actual nine-service fixture A2A execution, explicitly separated from live activity and actions. Added 15-second runtime heartbeats. The observation inbox is implemented; arbitrary operator chat and live provider/W2/Cartesia acceptance remain pending. No shared envelope or financial authorization contract changed.
+- v1.6 (Sat Oct 24): made OpenAI the default provider for all nine services, selected Luna for operational assessments and Sol for the separate reviewer, and made Anthropic an optional explicit override. Updated provider setup and T20 to distinguish initial OpenAI-only acceptance from the later cross-provider extension. Live acceptance remains pending.
+- v1.7 (Sat Oct 24): provisioned isolated local PostgreSQL and SpacetimeDB plus authenticated nine-agent services. Verified concurrent live OpenAI inference, two A2A handoffs and parked-parent continuation on explicitly synthetic data. Added repeatable live workload/acceptance reports, live inbox counts and source labels, task-state normalization at SQL/WebSocket boundaries, and schema-constrained evidence citations. Financial execution, real source data, telephony and cross-host acceptance remain separate.
+- v1.8 (Sat Oct 24): added role-specific tool registries and durable model-selected tool execution for all nine services, with policy-guarded workflow actions and authenticated A2A delegation. Added sanitized tool-call lifecycle records and inbox inspection. Expanded live acceptance to require completed tool calls from every specialist. Existing envelopes and reducer contracts are unchanged; external integration credentials do not substitute for missing adapters.
+- v1.9 (Sat Oct 24): narrowed sponsor implementation to Cartesia and Apify, with CRS/Nessie deferred. Added real source-bound Apify carrier and website tools, durable run tracking, bounded spend/time, cache and external-evidence outcome checks. Provisioned three Cartesia personas and one outbound number, added shared readiness checks and a local polling gateway, and verified real Apify observations through A2A in a synthetic business scenario. No live phone call has been placed; calling-window and demo-routing controls remain active. The catalog now has 22 tools across up to 68 role grants. Existing shared payload contracts are unchanged.

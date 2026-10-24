@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { TABLES, emptySnapshot, type Row } from "@/lib/data";
+import { TABLES, emptySnapshot, normalize, type Row } from "@/lib/data";
 export const dynamic = "force-dynamic";
 type SqlResult = {
   schema: { elements: { name: string | { some: string } }[] };
@@ -51,8 +51,8 @@ export async function GET(request: NextRequest) {
       );
       tables[name] = result.rows.map(
         (values) =>
-          Object.fromEntries(
-            columns.map((column, i) => [column, values[i]]),
+          normalize(
+            Object.fromEntries(columns.map((column, i) => [column, values[i]])),
           ) as Row,
       );
     }

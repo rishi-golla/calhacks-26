@@ -1,0 +1,271 @@
+{
+  "fixture": true,
+  "cases": {
+    "CASE-4821": {
+      "case_id": "CASE-4821",
+      "load_id": "LOAD-4821",
+      "lane": "Stockton, CA -> Reno, NV",
+      "brokerage": "Golden Gate Freight (fictional)",
+      "carrier": {
+        "id": "C-311",
+        "name": "TBD: real carrier from FMCSA (W4)",
+        "usdot": null
+      },
+      "shipper": {
+        "id": "S-07",
+        "name": "TBD: real shipper (W4)"
+      },
+      "contract_rate": 1850.0,
+      "invoice_amount": 2150.0,
+      "line_items": [
+        {
+          "desc": "Linehaul",
+          "amount": 1850.0
+        },
+        {
+          "desc": "Detention 2h",
+          "amount": 300.0,
+          "kind": "detention",
+          "receipt_required": true,
+          "receipt_ref": null
+        }
+      ],
+      "detention_hours_claimed": 2,
+      "free_time_min": 120,
+      "gps": {
+        "arrived": "14:02",
+        "departed": "14:49"
+      },
+      "gps_dwell_min": 47,
+      "receipt_attached": false,
+      "invoice_id": "INV-4821",
+      "carrier_id": "C-311",
+      "shipper_id": "S-07",
+      "shipper_invoice_id": "AR-4821",
+      "shipper_invoice_amount": 2600,
+      "shipper_paid_amount": 0,
+      "paid_amount": 0,
+      "period": "2026-10",
+      "claim_type": "detention",
+      "required_documents": [
+        "rate_confirmation",
+        "pod"
+      ],
+      "evidence_refs": [
+        "fixture:INV-4821",
+        "fixture:RATE-4821",
+        "fixture:POD-4821",
+        "fixture:GPS-4821"
+      ],
+      "documents": [
+        {
+          "kind": "rate_confirmation",
+          "ref": "fixture:RATE-4821",
+          "page": 1,
+          "load_id": "LOAD-4821"
+        },
+        {
+          "kind": "pod",
+          "ref": "fixture:POD-4821",
+          "page": 1,
+          "load_id": "LOAD-4821",
+          "signed": true
+        }
+      ]
+    },
+    "CASE-CLEAN": {
+      "case_id": "CASE-CLEAN",
+      "load_id": "LOAD-CLEAN",
+      "lane": "Stockton, CA -> Reno, NV",
+      "brokerage": "Golden Gate Freight (fictional)",
+      "carrier": {
+        "id": "C-311",
+        "name": "TBD: real carrier from FMCSA (W4)",
+        "usdot": null
+      },
+      "shipper": {
+        "id": "S-07",
+        "name": "TBD: real shipper (W4)"
+      },
+      "contract_rate": 1275.5,
+      "invoice_amount": 1275.5,
+      "line_items": [
+        {
+          "kind": "linehaul",
+          "amount": 1275.5
+        }
+      ],
+      "detention_hours_claimed": 0,
+      "free_time_min": 120,
+      "gps": {
+        "arrived": "14:02",
+        "departed": "14:49"
+      },
+      "gps_dwell_min": 47,
+      "receipt_attached": true,
+      "invoice_id": "INV-CLEAN",
+      "carrier_id": "C-311",
+      "shipper_id": "S-07",
+      "shipper_invoice_id": "AR-4821",
+      "shipper_invoice_amount": 1600,
+      "shipper_paid_amount": 0,
+      "paid_amount": 0,
+      "period": "2026-10",
+      "claim_type": "detention",
+      "required_documents": [
+        "rate_confirmation",
+        "pod"
+      ],
+      "evidence_refs": [
+        "fixture:INV-CLEAN",
+        "fixture:RATE-CLEAN",
+        "fixture:POD-CLEAN"
+      ],
+      "documents": [
+        {
+          "kind": "rate_confirmation",
+          "ref": "fixture:RATE-CLEAN",
+          "load_id": "LOAD-CLEAN"
+        },
+        {
+          "kind": "pod",
+          "ref": "fixture:POD-CLEAN",
+          "load_id": "LOAD-CLEAN",
+          "signed": true
+        }
+      ]
+    },
+    "CASE-SHORT": {
+      "case_id": "CASE-SHORT",
+      "load_id": "LOAD-CLEAN",
+      "lane": "Stockton, CA -> Reno, NV",
+      "brokerage": "Golden Gate Freight (fictional)",
+      "carrier": {
+        "id": "C-311",
+        "name": "TBD: real carrier from FMCSA (W4)",
+        "usdot": null
+      },
+      "shipper": {
+        "id": "S-07",
+        "name": "TBD: real shipper (W4)"
+      },
+      "contract_rate": 1275.5,
+      "invoice_amount": 1275.5,
+      "line_items": [
+        {
+          "kind": "linehaul",
+          "amount": 1275.5
+        }
+      ],
+      "detention_hours_claimed": 0,
+      "free_time_min": 120,
+      "gps": {
+        "arrived": "14:02",
+        "departed": "14:49"
+      },
+      "gps_dwell_min": 47,
+      "receipt_attached": true,
+      "invoice_id": "INV-SHORT",
+      "carrier_id": "C-311",
+      "shipper_id": "S-07",
+      "shipper_invoice_id": "AR-SHORT",
+      "shipper_invoice_amount": 1600,
+      "shipper_paid_amount": 900,
+      "paid_amount": 0,
+      "period": "2026-10",
+      "claim_type": "detention",
+      "required_documents": [
+        "rate_confirmation",
+        "pod"
+      ],
+      "evidence_refs": [
+        "fixture:INV-CLEAN",
+        "fixture:RATE-CLEAN",
+        "fixture:POD-CLEAN"
+      ],
+      "documents": [
+        {
+          "kind": "rate_confirmation",
+          "ref": "fixture:RATE-CLEAN",
+          "load_id": "LOAD-CLEAN"
+        },
+        {
+          "kind": "pod",
+          "ref": "fixture:POD-CLEAN",
+          "load_id": "LOAD-CLEAN",
+          "signed": true
+        }
+      ],
+      "overdue": true,
+      "deposits": [
+        {
+          "id": "DEP-SHORT",
+          "shipper_id": "S-07",
+          "invoice_id": "AR-SHORT",
+          "amount": 900
+        }
+      ]
+    }
+  },
+  "companies": {
+    "C-311": {
+      "id": "C-311",
+      "name": "Fixture Carrier",
+      "phone": "+15555550100",
+      "source": "fixture",
+      "verified": true,
+      "authority_status": "ACTIVE",
+      "insurance_verified": true,
+      "owner_operator": true,
+      "fixture_call_result": {
+        "reached": true,
+        "findings": {
+          "claim_confirmed": false,
+          "receipt_provided": false,
+          "summary": "Fixture dispatcher cannot supply supporting receipt."
+        }
+      },
+      "source_url": "fixture://directory/C-311",
+      "confidence": 1.0
+    },
+    "S-07": {
+      "id": "S-07",
+      "name": "Fixture Shipper",
+      "phone": "+15555550101",
+      "source": "fixture",
+      "verified": true,
+      "authority_status": "ACTIVE",
+      "insurance_verified": true,
+      "source_url": "fixture://directory/S-07",
+      "confidence": 1.0
+    }
+  },
+  "contacts": {
+    "C-311": [
+      {
+        "id": "CT-CARRIER",
+        "company_id": "C-311",
+        "name": "Fixture Dispatcher",
+        "phone": "+15555550100",
+        "email": "dispatcher@example.test",
+        "source": "fixture",
+        "verified": true,
+        "source_url": "fixture://directory/C-311",
+        "confidence": 1.0
+      }
+    ],
+    "S-07": [
+      {
+        "id": "CT-SHIPPER",
+        "company_id": "S-07",
+        "name": "Fixture AP Desk",
+        "phone": "+15555550101",
+        "email": "ap@example.test",
+        "source": "fixture",
+        "verified": true,
+        "source_url": "fixture://directory/S-07",
+        "confidence": 1.0
+      }
+    ]
+  }
+}

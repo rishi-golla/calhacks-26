@@ -6,7 +6,7 @@ Every payload requires a unique `write_id`. Retry the **same payload and write_i
 
 All legacy money fields (`amount`, `exposure_usd`, `debit`, `credit`, `paid_amount`, `contract_amount`) are **USD**, accept at most two decimals, and use integer cents for control checks and sums. `$9,400` is `9400`. Timestamps are UTC ISO strings. Missing optional strings are `""`; JSON-valued columns such as `scope`, `artifact_json`, `findings_json`, and `checks_json` are canonical JSON strings.
 
-Authentication comes only from the actual SpacetimeDB sender identity. The init lifecycle provisions the database publisher as admin. Admin is an infrastructure role; it does not bypass financial role checks. Provision distinct service identities and a human identity. Roles: `admin`, `human`, `ingest`, `harness`, `evaluator`, `router`, `carrier_ap`, `shipper_ar`, `cfo`, `risk`, `controller`, `verification`, `voice_desk`, `validator`.
+Authentication comes only from the actual SpacetimeDB sender identity. The init lifecycle provisions the database publisher as admin. Admin is an infrastructure role; it does not bypass financial role checks. Provision distinct service identities and a human identity. Roles: `admin`, `human`, `ingest`, `harness`, `evaluator`, `router`, `carrier_ap`, `shipper_ar`, `cfo`, `risk`, `controller`, `verification`, `voice_desk`, `validator`, `documents`. The `documents` role owns POD/document collection tasks and may delegate verification-purpose outreach to `voice_desk`; it has no financial-write permissions.
 
 | Reducer | Role | Payload besides `write_id` |
 |---|---|---|

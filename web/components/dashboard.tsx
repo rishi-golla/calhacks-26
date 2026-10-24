@@ -1,6 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   ArrowUpRight,
@@ -17,6 +17,7 @@ import {
   LayoutDashboard,
   ListTree,
   Menu,
+  MessagesSquare,
   Play,
   Radio,
   RefreshCw,
@@ -31,6 +32,7 @@ import { CasesView, LedgerView, Overview } from "./operations";
 import { InboxView, LearningView } from "./human-views";
 import { CounterpartiesView, DemoView, HarnessView } from "./support-views";
 import { Dialog, Submit, type FlagTarget } from "./ui";
+import AgentInbox from "./agent-inbox";
 const AuditWorkspace = dynamic(() => import("./audit-workspace"), {
   ssr: false,
   loading: () => <div className="loading">Loading audit workspace…</div>,
@@ -51,10 +53,16 @@ function databaseHostLabel(serverUrl: string): string {
 }
 const views = [
   {
+    id: "agents",
+    label: "Agent inbox",
+    icon: MessagesSquare,
+    group: "WORKSPACE",
+    description: "Follow all nine specialists as they work together.",
+  },
+  {
     id: "overview",
     label: "Overview",
     icon: LayoutDashboard,
-    group: "WORKSPACE",
     description: "A live picture of your autonomous back office.",
   },
   {
@@ -123,10 +131,13 @@ function DashboardBody() {
     mutate,
   } = useLive();
   const hostLabel = databaseHostLabel(serverUrl);
-  const [view, setView] = useState("overview");
+  const [view, setView] = useState("agents");
   const [caseId, setCaseId] = useState("");
   const [query, setQuery] = useState("");
   const [mobile, setMobile] = useState(false);
+  const [narrow, setNarrow] = useState(false);
+  const menuTrigger = useRef<HTMLElement | null>(null);
+  const navigation = useRef<HTMLElement | null>(null);
   const [connectionInfo, setConnectionInfo] = useState(false);
   const [toast, setToast] = useState<{
     message: string;
@@ -147,9 +158,37 @@ function DashboardBody() {
     const timer = setTimeout(() => setToast(null), 10000);
     return () => clearTimeout(timer);
   }, [toast]);
+  useEffect(() => {
+    const media = window.matchMedia(
+      `(max-width: ${view === "agents" ? 800 : 760}px)`,
+    );
+    const update = () => setNarrow(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [view]);
+  useEffect(() => {
+    if (!narrow) return;
+    if (mobile)
+      navigation.current
+        ?.querySelector<HTMLButtonElement>(".nav-item")
+        ?.focus();
+    else menuTrigger.current?.focus();
+  }, [mobile, narrow]);
+  const openNavigation = () => {
+    menuTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setMobile(true);
+  };
   const navigate = (id: string) => {
     setView(id);
     setMobile(false);
+    if (narrow)
+      requestAnimationFrame(() =>
+        document.getElementById("main-content")?.focus(),
+      );
   };
   const openCase = (id: string) => {
     setCaseId(id);
@@ -193,7 +232,7 @@ function DashboardBody() {
     }
   };
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${view === "agents" ? "agent-mode" : ""}`}>
       <a className="skip-link" href="#main-content">
         Skip to main content
       </a>
@@ -204,7 +243,12 @@ function DashboardBody() {
           onClick={() => setMobile(false)}
         />
       )}
-      <aside className={`sidebar ${mobile ? "open" : ""}`}>
+      <aside
+        ref={navigation}
+        inert={narrow && !mobile}
+        aria-hidden={narrow && !mobile}
+        className={`sidebar ${mobile ? "open" : ""}`}
+      >
         <a
           className="brand"
           href="#"
@@ -238,6 +282,8 @@ function DashboardBody() {
               <button
                 className={`nav-item ${view === item.id ? "active" : ""}`}
                 aria-current={view === item.id ? "page" : undefined}
+                aria-label={item.label}
+                title={item.label}
                 onClick={() => navigate(item.id)}
               >
                 <item.icon size={17} />
@@ -264,6 +310,7 @@ function DashboardBody() {
           </div>
           <button
             className="identity-button"
+            aria-label="Database connection and identity"
             onClick={() => setConnectionInfo(true)}
           >
             <span className="user-avatar">{human ? "HC" : "OB"}</span>
@@ -341,7 +388,14 @@ function DashboardBody() {
             </button>
           </div>
         </header>
-        <main id="main-content">
+        <main id="main-content" tabIndex={-1}>
+          {view === "agents" && (
+            <AgentInbox
+              openCase={openCase}
+              navigate={navigate}
+              openMenu={openNavigation}
+            />
+          )}
           <div className="page-heading">
             <div>
               <div className="page-kicker">

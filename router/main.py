@@ -1,10 +1,15 @@
-"""First-hop router: Redis Streams `events` -> owning agent's A2A skill (PRD 7.3). No orchestration."""
+"""First-hop router: acknowledge Redis only after durable A2A admission."""
 import asyncio
 import json
 import logging
 import os
+import socket
 
 import redis.asyncio as redis
+
+from common.a2a_transport import send_task
+from common.config import SKILL_OWNER
+from common.envelope import DelegationMeta, TaskEnvelope
 
 ROUTES = {
     "carrier_invoice.received": "process_carrier_invoice",
@@ -17,21 +22,73 @@ ROUTES = {
 log = logging.getLogger("router")
 
 
-async def main() -> None:
-    r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+def route_event(event: dict) -> tuple[str, TaskEnvelope, DelegationMeta]:
+    """W1 owns classification/case resolution; this bridge never invents a case."""
+    skill = ROUTES.get(event.get("type"))
+    if not skill:
+        raise ValueError("event needs an owning intake route")
+    payload = event.get("payload", {})
+    if not isinstance(payload, dict):
+        raise TypeError("event payload must be an object")
+    case_id = event.get("case_id") or payload.get("case_id")
+    if not isinstance(case_id, str) or not 1 <= len(case_id) <= 36:
+        raise ValueError("intake must resolve a case_id before routing")
+    event_id = event.get("event_id")
+    if not isinstance(event_id, str) or not event_id:
+        raise ValueError("event_id is required for durable deduplication")
+    env = TaskEnvelope(task_type=skill, case_id=case_id, subject=payload,
+                       evidence_refs=payload.get("evidence_refs", []), priority=event.get("priority", "P2"))
+    meta = DelegationMeta(case_id=case_id, from_agent="router", priority=env.priority,
+                          correlation_id=case_id, causation_id=event_id,
+                          idempotency_key=f"event:{event_id}")
+    return SKILL_OWNER[skill], env, meta
+
+
+async def process_entry(client, entry_id, fields) -> None:
     try:
-        await r.xgroup_create("events", "router", id="0", mkstream=True)
-    except redis.ResponseError:
-        pass
-    while True:
-        resp = await r.xreadgroup("router", "router-1", {"events": ">"}, count=10, block=2000)
-        for _stream, entries in resp or []:
+        event = json.loads(fields.get(b"json", fields.get("json", "")))
+        if not isinstance(event, dict):
+            raise TypeError("event must be an object")
+        agent, env, meta = route_event(event)
+    except (ValueError, TypeError) as error:
+        # Keep malformed/unclassified intake visible; atomic DLQ+ack avoids message loss.
+        async with client.pipeline(transaction=True) as pipeline:
+            pipeline.xadd("events:dead_letter", {"entry_id": entry_id, "reason": str(error),
+                                                "json": fields.get(b"json", fields.get("json", ""))})
+            pipeline.xack("events", "router", entry_id)
+            await pipeline.execute()
+        return
+    accepted = await send_task(agent, env, meta)
+    if not accepted.id or accepted.context_id != env.case_id:
+        raise ValueError("agent acceptance did not preserve the case")
+    await client.xack("events", "router", entry_id)
+    log.info("event %s admitted as %s by %s", event["event_id"], accepted.id, agent)
+
+
+async def main() -> None:
+    client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+    consumer = os.getenv("ROUTER_CONSUMER", f"{socket.gethostname()}-{os.getpid()}")
+    try:
+        try:
+            await client.xgroup_create("events", "router", id="0", mkstream=True)
+        except redis.ResponseError as error:
+            if "BUSYGROUP" not in str(error):
+                raise
+        cursor = "0-0"
+        while True:
+            # Recover entries whose process died before acknowledging acceptance.
+            claimed = await client.xautoclaim("events", "router", consumer,
+                                               min_idle_time=30_000, start_id=cursor, count=10)
+            cursor, pending = claimed[:2]
+            fresh = await client.xreadgroup("router", consumer, {"events": ">"}, count=10, block=2000)
+            entries = [*pending, *(entry for _, group in fresh or [] for entry in group)]
             for entry_id, fields in entries:
-                ev = json.loads(fields[b"json"])
-                skill = ROUTES.get(ev["type"])
-                log.info("event %s -> %s", ev["type"], skill)
-                # TODO(W3): build TaskEnvelope and SendMessage to SKILL_OWNER[skill]
-                await r.xack("events", "router", entry_id)
+                try:
+                    await process_entry(client, entry_id, fields)
+                except Exception as error:  # noqa: BLE001 -- unacknowledged entry retries through XAUTOCLAIM
+                    log.warning("intake %s remains pending: %s", entry_id, type(error).__name__)
+    finally:
+        await client.aclose()
 
 
 if __name__ == "__main__":

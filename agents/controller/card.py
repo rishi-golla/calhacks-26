@@ -1,2 +1,2 @@
-"""Skill descriptions for the controller Agent Card. Skills/ports come from common.config."""
-DESCRIPTIONS: dict[str, str] = {}
+"""Settlement Approvals Agent Card descriptions."""
+DESCRIPTIONS = {'review_hold': 'Evaluate source evidence, place or release invoice holds, and request exact-action human approvals.', 'check_already_paid': 'Check recorded paid amounts before any settlement action.', 'reconcile': 'Recompute source journal totals and expose reconciliation differences.', 'approve_entry': 'Post an existing balanced journal request made by a different authorized requester.'}

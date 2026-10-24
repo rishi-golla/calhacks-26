@@ -228,6 +228,16 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
     load_id = load["load_id"]
     invoice_number = fields["invoice_number"]
     invoice_id = f"INV-{usdot or ''}-{invoice_number}"
+    prior = _read_json(db.execute("SELECT json FROM invoices WHERE invoice_id=?", (invoice_id,)).fetchone())
+    if prior and prior.get("_trigger_event_id") != trigger.get("event_id"):
+        # The same carrier invoice number again (a re-sent email): one settlement, never a second payment.
+        prior["_resubmissions"] = sorted({*prior.get("_resubmissions", []), *refs})
+        db.execute("UPDATE invoices SET json=? WHERE invoice_id=?", (_dump(prior), invoice_id))
+        duplicate_fields = {**fields, "mismatch": "duplicate_invoice", "duplicate_of": invoice_id,
+                            "duplicate_case_id": prior["case_id"],
+                            "amount_changed": prior.get("invoice_amount") != fields["total"]}
+        return [_document_event(trigger, "carrier_invoice", "needs_review", duplicate_fields,
+                                extracted["confidence"], extracted["method"], load, prior["case_id"], refs)]
     existing = db.execute("SELECT invoice_number FROM invoices WHERE load_id=?", (load_id,)).fetchall()
     case_id = (load.get("case_id") or f"CASE-{load_id}") + (
         "-R" if any(row[0] != invoice_number for row in existing) else "")
@@ -314,7 +324,8 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
         payload["contract_rate"] is not None and payload["invoice_amount"] > payload["contract_rate"]) else "P2"
     invoice_event = _event(trigger, "carrier_invoice.received", payload, priority, refs)
     db.execute("INSERT OR REPLACE INTO invoices(invoice_id, load_id, invoice_number, json) VALUES (?,?,?,?)",
-               (invoice_id, load_id, invoice_number, _dump(payload)))
+               (invoice_id, load_id, invoice_number, _dump({**payload, "_trigger_event_id": trigger.get("event_id"),
+                      "_resubmissions": (prior or {}).get("_resubmissions", [])})))
     _record_documents(db, load, received)
     return [document, invoice_event]
 

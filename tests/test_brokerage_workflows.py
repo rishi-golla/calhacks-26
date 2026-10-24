@@ -300,3 +300,12 @@ def test_fixture_source_contains_multiple_financial_scenarios():
     data = json.loads(Path("sim/fixtures/brokerage_source.json").read_text())
     assert len(data["cases"]) >= 3
     assert len({case["invoice_amount"] for case in data["cases"].values()}) > 1
+
+
+async def test_invoice_from_a_different_carrier_is_held_not_paid():
+    source = invoice()
+    source.update(carrier_identity_mismatch=True, carrier_identity={
+        "tendered_usdot": "1111111", "invoice_usdot": "2222222", "flags": ["usdot_mismatch"]})
+    result = await run_handler(CarrierAPAgent, "process_carrier_invoice", source)
+    assert result.outcome == "hold" and result.findings["payment_blocked"] is True
+    assert "payment_proposal" not in result.findings and "P-002" in result.policy_ids

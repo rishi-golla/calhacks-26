@@ -143,7 +143,7 @@ def test_ingestion_extracts_and_routes_raw_scenario(world, scenario):
         assert review["payload"]["status"] == "needs_review"
         assert review["payload"]["fields"]["mismatch"] == "usdot"
         return
-    expected_count = 2 if scenario in ("duplicate_invoice", "duplicate_renumbered") else 1
+    expected_count = 2 if scenario == "duplicate_renumbered" else 1
     assert len(invoices) == expected_count
     delivery = next(event["payload"]["dwell_min"] for event in events
                     if event["type"] == "gps.ping" and event["payload"].get("milestone") == "delivery.departed")
@@ -171,7 +171,11 @@ def test_ingestion_extracts_and_routes_raw_scenario(world, scenario):
         assert invoice["extraction"]["method"] == "rules"
 
     if scenario == "duplicate_invoice":
-        assert invoices[0]["invoice_id"] == invoices[1]["invoice_id"]
+        # The re-sent email is held for review against the first invoice, never routed a second time.
+        duplicate = next(event["payload"] for event in derived if event["type"] == "document.extracted"
+                         and event["payload"]["fields"].get("mismatch") == "duplicate_invoice")
+        assert duplicate["fields"]["duplicate_of"] == invoices[0]["invoice_id"]
+        assert duplicate["case_id"] == invoices[0]["case_id"] and duplicate["status"] == "needs_review"
     if scenario == "duplicate_renumbered":
         assert invoices[1]["case_id"].endswith("-R")
         assert invoices[0]["bol"] == invoices[1]["bol"]
@@ -560,10 +564,12 @@ def test_offline_40_loads_follow_w1_routing_contract(world, tmp_path, monkeypatc
         and any(Path(str(name).removeprefix("doc:")).name.startswith("INV-")
                 for name in raw.get("payload", {}).get("attachments", []))
     ]
+    resent = 0
     for raw in invoice_emails:
         emitted = by_trigger[raw["event_id"]]
-        assert len(emitted) == 1
-        assert emitted[0]["type"] in {"carrier_invoice.received", "email.received"}
+        resent += not emitted  # a re-sent invoice goes to review only, never to the router twice
+        assert len(emitted) <= 1
+        assert all(event["type"] in {"carrier_invoice.received", "email.received"} for event in emitted)
 
     bank_arrivals = [raw for raw in raw_events if raw["type"] == "bank.event"]
     for raw in bank_arrivals:
@@ -572,6 +578,7 @@ def test_offline_40_loads_follow_w1_routing_contract(world, tmp_path, monkeypatc
         assert emitted[0]["type"] in {"shipper_payment.received", "bank.event"}
 
     answer_entries = [json.loads(line) for line in (root / "answer_key.jsonl").read_text().splitlines()]
+    assert resent == sum(item["scenario"] == "duplicate_invoice" for item in answer_entries)
     double_load_id = next(item["load_id"] for item in answer_entries
                           if item["scenario"] == "double_brokering")
     double_invoice = next(

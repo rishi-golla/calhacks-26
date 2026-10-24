@@ -34,6 +34,11 @@ class CarrierAPAgent(FreightAgent):
         if duplicates:
             return await finish(self, env, task_id, outcome="reject", findings={"match": match,
                                 "duplicate_invoice_ids": duplicates}, policy_ids=["P-007"], evidence_refs=refs)
+        if source.get("carrier_identity_mismatch"):
+            # The invoice names a different carrier than the one tendered: possible double brokering.
+            return await finish(self, env, task_id, outcome="hold", findings={
+                "match": match, "carrier_identity": source.get("carrier_identity"), "payment_blocked": True},
+                policy_ids=["P-002"], evidence_refs=refs)
         if match["missing_documents"]:
             documents = await self.delegate("collect_documents", child_envelope(
                 env, "collect_documents", required_documents=match["missing_documents"]), meta, task_id,

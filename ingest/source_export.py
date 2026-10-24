@@ -29,6 +29,9 @@ LINE_KINDS = (("linehaul", "linehaul"), ("fuel", "fuel_surcharge"), ("detention"
               ("stop off", "extra_stop"), ("driver assist", "driver_assist"), ("quickpay", "quickpay_discount"))
 # Accessorials the rate confirmation pays only against a receipt (detention log or lumper receipt).
 RECEIPT_DOCUMENT = {"detention": "detention_log", "lumper": "lumper_receipt"}
+# Ingest flags that mean the invoice names a different carrier than the one tendered (double brokering).
+# remit_to_mismatch is a payee question (factoring) and goes through the bank-change path instead.
+IDENTITY_FLAGS = ("usdot_mismatch", "carrier_mismatch")
 BANK_CHANGE_FIELDS = ("requested_via", "requested_by", "registered_email", "sender_matches_registered", "channel",
                       "new_payee", "new_account_last4", "new_routing_last4", "effective_date",
                       "next_payment_amount", "urgency_language", "source_email")
@@ -109,7 +112,14 @@ def _payable(invoice: dict, invoices: list[dict], documents: list[dict]) -> dict
                  "amount": other.get("invoice_amount"),
                  "issued_at": _iso(other.get("invoice_date")) or _iso(other.get("date"))}
                 for other in invoices if other["invoice_id"] != invoice["invoice_id"]]
+    identity_flags = [flag for flag in invoice.get("ingest_flags") or [] if flag in IDENTITY_FLAGS]
+    identity = {"tendered_carrier_id": invoice.get("carrier_id"), "tendered_usdot": (invoice.get("carrier") or {}).get("usdot"),
+                "invoice_usdot": invoice.get("invoice_carrier_usdot"),
+                "invoice_carrier_name": ((invoice.get("extraction") or {}).get("fields") or {}).get("carrier_name"),
+                "flags": identity_flags} if identity_flags else None
     return {"invoice_id": invoice["invoice_id"], "invoice_number": invoice.get("invoice_number"),
+            "carrier_identity_mismatch": bool(identity_flags), "carrier_identity": identity,
+            "resubmission_refs": invoice.get("_resubmissions"),
             "invoice_amount": invoice.get("invoice_amount"), "line_items": line_items, "issued_at": issued_at,
             "period": issued_at[:7] if issued_at else None, "claim_type": claim,
             "detention_hours_claimed": invoice.get("detention_hours_claimed"),

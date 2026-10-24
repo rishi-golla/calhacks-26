@@ -161,3 +161,27 @@ def test_case_is_exported_before_its_event_reaches_the_router(world, tmp_path):
     finally:
         db.close()
     assert ok and seen == [True]
+
+
+def test_double_brokered_invoice_is_exported_as_an_identity_conflict(world):
+    _gen, load, events = _run(world, "double_brokering")
+    case = _export(events)["cases"][load["case_id"]]
+    assert case["carrier_identity_mismatch"] is True
+    identity = case["carrier_identity"]
+    assert identity["tendered_usdot"] == load["carrier"]["usdot"] != identity["invoice_usdot"]
+    assert "usdot_mismatch" in identity["flags"]
+
+
+@pytest.mark.parametrize("scenario", ["clean", "factoring_unverified", "decoy_quickpay"])
+def test_matching_carriers_are_not_identity_conflicts(world, scenario):
+    _gen, load, events = _run(world, scenario)
+    case = _export(events)["cases"][load["case_id"]]
+    assert case["carrier_identity_mismatch"] is False and "carrier_identity" not in case
+
+
+def test_resent_invoice_stays_one_case_with_its_resubmission_recorded(world):
+    _gen, load, events = _run(world, "duplicate_invoice")
+    cases = _export(events)["cases"]
+    assert [case_id for case_id in cases if case_id.startswith(load["case_id"])] == [
+        load["case_id"], f"{load['case_id']}-AR"]
+    assert cases[load["case_id"]]["resubmission_refs"]

@@ -75,13 +75,14 @@ def run(data_dir: str | Path = "data") -> dict:
             by_load[load_id].append(doc)
         ref, kind = doc.get("ref", ""), doc.get("type", "")
         pdf = docs_dir / doc.get("pdf", f"{ref}.pdf")
+        pdf_text = None
         if not pdf.exists():
             add("V1", load_id, ref, "PDF is missing")
         else:
             try:
-                text = "\n".join(page.extract_text() or "" for page in PdfReader(str(pdf)).pages)
+                pdf_text = "\n".join(page.extract_text() or "" for page in PdfReader(str(pdf)).pages)
                 identifier = doc.get("invoice_number") or doc.get("load_id") or doc.get("bol")
-                if not identifier or str(identifier) not in text or "SIMULATED" not in text:
+                if not identifier or str(identifier) not in pdf_text or "SIMULATED" not in pdf_text:
                     add("V1", load_id, ref, "primary identifier or SIMULATED footer missing")
             except (OSError, ValueError, PdfReadError) as exc:
                 add("V1", load_id, ref, f"PDF unreadable: {exc}")
@@ -95,9 +96,8 @@ def run(data_dir: str | Path = "data") -> dict:
                     amount = round(float(line["qty"]) * float(line["rate"]), 2)
                     if round(float(line.get("amount", 0)), 2) != amount:
                         add("V2", load_id, ref, f"{line.get('desc')} amount does not equal qty × rate")
-            if pdf.exists():
-                text = "\n".join(page.extract_text() or "" for page in PdfReader(str(pdf)).pages)
-                section = re.search(r"Description\s+Qty\s+Rate\s+Amount(.*?)TOTAL\s+DUE", text,
+            if pdf_text is not None:
+                section = re.search(r"Description\s+Qty\s+Rate\s+Amount(.*?)TOTAL\s+DUE", pdf_text,
                                     re.IGNORECASE | re.DOTALL)
                 number = r"[\d,]+(?:\.\d+)?"
                 row_pattern = re.compile(

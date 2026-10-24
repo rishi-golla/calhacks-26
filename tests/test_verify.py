@@ -175,6 +175,23 @@ def test_verifier_detects_missing_shipper_invoice(generated_data, tmp_path):
                for item in report["unexpected_violations"])
 
 
+def test_corrupt_invoice_pdf_reports_v1_without_crashing(generated_data, tmp_path):
+    root = _copy_data(generated_data, tmp_path / "corrupt-invoice-pdf")
+    clean_load = next(item["load_id"] for item in
+                      (json.loads(line) for line in (root / "answer_key.jsonl").read_text().splitlines())
+                      if item["scenario"] == "clean")
+    invoice = next(json.loads(path.read_text()) for path in (root / "docs").glob("*.json")
+                   if (doc := json.loads(path.read_text())).get("load_id") == clean_load
+                   and doc.get("type") == "carrier_invoice")
+    pdf_path = root / "docs" / invoice.get("pdf", f"{invoice['ref']}.pdf")
+    pdf_path.write_bytes(b"not a valid PDF")
+
+    report = verify.run(root)
+    assert (root / "verify_report.json").is_file()
+    assert any(item["rule"] == "V1" and item["doc_ref"] == invoice["ref"] for item in report["violations"])
+    assert not any(item["rule"] == "V2" and item["doc_ref"] == invoice["ref"] for item in report["violations"])
+
+
 def test_verifier_detects_counterparty_phone_mutation(generated_data, tmp_path):
     root = _copy_data(generated_data, tmp_path / "phone-mutation")
     clean_load = next(item["load_id"] for item in

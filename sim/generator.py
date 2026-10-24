@@ -36,10 +36,44 @@ NEEDS_HUMAN = {"detention_unsupported", "shipper_short_pay", "bank_change", "fac
 STREAM = "events"
 FIRST = ["Maria", "James", "Luis", "Ashley", "Darnell", "Priya", "Tom", "Keisha", "Raj", "Elena", "Mike", "Grace"]
 LAST = ["Garcia", "Nguyen", "Johnson", "Patel", "Kim", "Lopez", "Brown", "Singh", "Martinez", "Chen", "Davis"]
+_INVOICE_REGISTRIES: dict[pathlib.Path, dict[str, str]] = {}
 
 
 def data_dir() -> pathlib.Path:
     return pathlib.Path(os.getenv("SIM_DATA_DIR", "data"))
+
+
+def _load_rng(load: dict) -> random.Random:
+    return random.Random(f"{os.getenv('SIM_SEED', '7')}:{load['load_id']}")
+
+
+def _reserve_invoice_number(carrier: dict, rnd: random.Random, load_id: str,
+                            force_new: bool = False) -> str:
+    registry_path = data_dir() / "invoice_registry.json"
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    registry = _INVOICE_REGISTRIES.get(registry_path)
+    if registry is None:
+        registry = json.loads(registry_path.read_text()) if registry_path.exists() else {}
+        for path in (data_dir() / "docs").glob("*.json"):
+            try:
+                doc = json.loads(path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            if doc.get("type") == "carrier_invoice" and doc.get("invoice_number"):
+                registry[doc["invoice_number"]] = doc.get("load_id", "existing")
+        _INVOICE_REGISTRIES[registry_path] = registry
+    if not force_new:
+        existing = next((number for number, owner in registry.items() if owner == load_id), None)
+        if existing:
+            return existing
+    while True:
+        number = docs.invoice_number(carrier, rnd.randrange(1, 1_000_000_000))
+        if number not in registry:
+            registry[number] = load_id
+            temporary = registry_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(registry, sort_keys=True))
+            temporary.replace(registry_path)
+            return number
 
 
 def _now() -> datetime:
@@ -70,11 +104,16 @@ def directory_entry(world: dict, cid: str) -> dict:
 
 
 def new_load(world: dict, rnd: random.Random, quick: bool = False) -> dict:
+    load_id = _id("LD")
+    rnd = _load_rng({"load_id": load_id})
     lanes = world["lanes"]
     if quick:
         lanes = sorted(lanes, key=lambda lane: lane["transit_hours"])[:max(1, (len(lanes) + 2) // 3)]
-    lane = rnd.choice(lanes)
-    load_id = _id("LD")
+    lane = dict(rnd.choice(lanes))
+    fsc_rate = round(world["fsc_per_mile"], 3)
+    lane["fsc"] = round(lane["miles"] * fsc_rate, 2)
+    lane["contract_rate"] = round(lane["linehaul"] + lane["fsc"], 2)
+    lane["shipper_fsc"] = lane["fsc"]
     n = int(load_id[-6:], 16) % 900_000
     other_carriers = [c for c in world["carriers"] if c["id"] != lane["carrier_id"]]
     return {"load_id": load_id, "case_id": f"CASE-{load_id}", "lane": lane,
@@ -82,7 +121,7 @@ def new_load(world: dict, rnd: random.Random, quick: bool = False) -> dict:
             "alternate_carrier": directory_entry(world, rnd.choice(other_carriers)["id"]) if other_carriers else None,
             "consignee": directory_entry(world, lane["consignee_id"]),
             "contract_rate": lane["contract_rate"], "free_time_min": lane["free_time_min"],
-            "shipper_rate": lane["shipper_linehaul"] + lane["shipper_fsc"], "fsc_per_mile": world["fsc_per_mile"],
+            "shipper_rate": lane["shipper_linehaul"] + lane["shipper_fsc"], "fsc_per_mile": fsc_rate,
             "pro": f"{100000 + n}", "bol": f"BOL{rnd.randint(10**7, 10**8 - 1)}",
             "po": f"PO-{rnd.randint(400000, 999999)}", "seal": f"SL{rnd.randint(100000, 999999)}",
             "trailer": f"{rnd.randint(1000, 9999)}", "weight_lb": rnd.randrange(18000, 44000, 250),
@@ -120,13 +159,14 @@ def plan(load: dict, scenario: str, rnd: random.Random) -> dict:
         claimed_h, receipt = math.ceil((dwell - free) / 60), True
     else:
         dwell, claimed_h = rnd.randint(25, 110), 0
-    fsc = lane["fsc"]
+    fsc_rate = round(load["fsc_per_mile"], 3)
+    fsc = round(lane["miles"] * fsc_rate, 2)
     lines = [{"desc": "Linehaul", "amount": lane["linehaul"]},
-             {"desc": "Fuel surcharge", "qty": lane["miles"], "rate": load["fsc_per_mile"], "amount": fsc}]
+             {"desc": "Fuel surcharge", "qty": lane["miles"], "rate": fsc_rate, "amount": fsc}]
     bump = lambda pct, choices: max(rnd.choice(choices), round(lane["contract_rate"] * pct / 5) * 5)
     planted: dict = {}
     if claimed_h:
-        amt = claimed_h * lane["detention_rate_hr"]
+        amt = round(claimed_h * lane["detention_rate_hr"], 2)
         lines.append({"desc": f"Detention {claimed_h}h", "qty": claimed_h, "rate": lane["detention_rate_hr"],
                       "amount": amt})
         planted = {"field": "detention", "claimed_h": claimed_h, "gps_dwell_min": dwell, "free_time_min": free}
@@ -135,21 +175,21 @@ def plan(load: dict, scenario: str, rnd: random.Random) -> dict:
     if scenario == "decoy_quickpay":
         load["carrier"]["terms"] = "QuickPay 2% / 2 days"
         discount = round(lane["contract_rate"] * 0.02, 2)
-        lines.append({"desc": "QuickPay discount 2%", "amount": -discount})
+        lines.append({"desc": "QuickPay discount 2%", "qty": 1, "rate": -discount, "amount": -discount})
         planted = {"field": "quickpay_discount", "discount": discount}
     if scenario == "rate_mismatch":
         extra = bump(0.06, [150, 200, 250, 350])
         lines[0]["amount"] = lane["linehaul"] + extra
         planted = {"field": "linehaul", "billed": lines[0]["amount"], "contract": lane["linehaul"], "delta": extra}
     elif scenario == "fsc_error":
-        wrong = round(lane["miles"] * rnd.uniform(1.25, 1.45) * load["fsc_per_mile"], 2)
-        wrong = max(wrong, round(fsc + lane["contract_rate"] * 0.05, 2))
-        lines[1]["amount"], lines[1]["qty"] = wrong, round(wrong / load["fsc_per_mile"])
+        wrong_qty = lane["miles"] + math.ceil(lane["contract_rate"] * 0.05 / fsc_rate)
+        wrong = round(wrong_qty * fsc_rate, 2)
+        lines[1]["amount"], lines[1]["qty"] = wrong, wrong_qty
         planted = {"field": "fuel_surcharge", "billed": wrong, "contract": fsc, "billed_miles": lines[1]["qty"],
                    "lane_miles": lane["miles"]}
     elif scenario == "lumper_no_receipt":
         amt = float(max(rnd.randrange(125, 400, 5), round(lane["contract_rate"] * 0.05)))
-        lines.append({"desc": "Lumper (reimbursable)", "amount": amt})
+        lines.append({"desc": "Lumper (reimbursable)", "qty": 1, "rate": amt, "amount": amt})
         planted = {"field": "lumper", "billed": amt, "receipt_attached": False}
         receipt = False
     total = round(sum(li["amount"] for li in lines), 2)
@@ -197,11 +237,12 @@ def expected(load: dict, scenario: str) -> dict:
     }[scenario]
 
 
-def record_answer(load: dict, scenario: str, planted: dict | None = None) -> None:
+def record_answer(load: dict, scenario: str, planted: dict | None = None,
+                  ts: datetime | None = None) -> None:
     p = data_dir() / "answer_key.jsonl"
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a") as f:
-        f.write(json.dumps({"ts": _now().isoformat(), "case_id": load["case_id"], "load_id": load["load_id"],
+        f.write(json.dumps({"ts": (ts or _now()).isoformat(), "case_id": load["case_id"], "load_id": load["load_id"],
                             "carrier": load["carrier"]["name"], "shipper": load["shipper"]["name"],
                             "scenario": scenario, "planted": planted or {},
                             "expected": expected(load, scenario)}) + "\n")
@@ -210,6 +251,7 @@ def record_answer(load: dict, scenario: str, planted: dict | None = None) -> Non
 def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | None = None,
               t0: datetime | None = None) -> list[Step]:
     """Business-time schedule for one load. Documents are written when their step fires, never ahead of time."""
+    rnd = _load_rng(load)
     t0 = t0 or _now()
     lid, case, c, s, k = load["load_id"], load["case_id"], load["carrier"], load["shipper"], load["consignee"]
     lane, free, rate = load["lane"], load["free_time_min"], load["contract_rate"]
@@ -226,10 +268,8 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
     billed_at = depart + timedelta(hours=rnd.uniform(2, 20))
     sinv_at = depart + timedelta(hours=rnd.uniform(1, 6))
     paid_at = sinv_at + timedelta(days=rnd.uniform(1, 4))
-    seq = rnd.randint(1, 8999)
     doc_carrier = (load.get("alternate_carrier") or c) if scenario == "double_brokering" else c
-    inv_no = docs.invoice_number(doc_carrier, seq)
-    inv_id = f"INV-{doc_carrier['usdot']}-{inv_no}"
+    inv_no = _reserve_invoice_number(doc_carrier, rnd, lid)
     lines, stated = pl["lines"], pl["stated_total"]
     remit = {"name": c["name"], "address": c.get("address"), "routing_last4": f"{rnd.randint(0, 9999):04d}",
              "account_last4": f"{rnd.randint(0, 9999):04d}"}
@@ -299,8 +339,8 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                 _event("pod.received", load, {**base, "pod_ref": refs["pod"], "signed": signed}, depart, refs=out)]
     add(depart, delivered)
 
-    def invoice_payload(number: str, iid: str, at: datetime) -> tuple[dict, list[str]]:
-        doc = docs.write(iid, "carrier_invoice", {
+    def invoice_payload(number: str, doc_ref: str, at: datetime) -> tuple[dict, list[str]]:
+        doc = docs.write(doc_ref, "carrier_invoice", {
             **base, "invoice_number": number, "date": _ts(at), "terms": c.get("terms", "Net 30"),
             "due": _ts(at + timedelta(days=30)), "carrier": doc_carrier, "remit_to": remit, "line_items": lines,
             "total": stated, "origin": lane["origin"], "destination": lane["destination"]})
@@ -314,7 +354,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
         return {"mail": m}, [x for x in evidence if x]
 
     def billed() -> list[dict]:
-        out, ev_refs = invoice_payload(inv_no, inv_id, billed_at)
+        out, ev_refs = invoice_payload(inv_no, f"INV-{lid}-1", billed_at)
         refs["inv_evidence"] = json.dumps(ev_refs)
         refs["invoice_email"] = json.dumps(_email_payload(out["mail"]))
         return [_event("email.received", load, _email_payload(out["mail"]), billed_at, refs=ev_refs[:1])]
@@ -325,10 +365,10 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
                                 json.loads(refs["inv_evidence"]))])
     if scenario == "duplicate_renumbered":
         at = billed_at + timedelta(days=rnd.uniform(2, 4))
-        no2 = docs.invoice_number(c, seq + rnd.randint(3, 40))
+        no2 = _reserve_invoice_number(c, rnd, lid, force_new=True)
 
         def renumbered() -> list[dict]:
-            out, ev_refs = invoice_payload(no2, f"INV-{c['usdot']}-{no2}", at)
+            out, ev_refs = invoice_payload(no2, f"INV-{lid}-2", at)
             return [_event("email.received", load, _email_payload(out["mail"]), at, refs=ev_refs[:1])]
         add(at, renumbered)
     if scenario in ("bank_change", "factoring_unverified"):
@@ -393,7 +433,7 @@ async def stream_load(r: redis.Redis, load: dict, scenario: str, rnd: random.Ran
     clk = await clock.load(r, heartbeat=True)
     t0 = clk.now() - backdate if backdate is not None else clk.now()
     steps = lifecycle(load, scenario, rnd, overrides, t0)
-    record_answer(load, scenario, load.get("planted"))
+    record_answer(load, scenario, load.get("planted"), t0)
     for st in steps:
         wait = clk.wall_delay(st.at - clk.now())
         if wait > 0:
@@ -419,7 +459,7 @@ async def inject(scenario: str, overrides: dict | None = None, r: redis.Redis | 
     load["_event_source"] = "demo"
     clk = await clock.load(client)
     await publish(client, _event("scenario.injected", load, {
-        "scenario": scenario, "load_id": load["load_id"], "case_id": load["case_id"],
+        "injection_id": f"INJ-{uuid.uuid4().hex}", "load_id": load["load_id"],
     }, clk.now(), priority="P1"))
 
     async def run() -> None:
@@ -473,7 +513,8 @@ async def seed_hero(world: dict) -> None:
                 "arrived": _ts(arrived), "departed": _ts(departed), "pallets_received": 20, "receiver": "R. Gomez"}),
         ]
         invoice = f"INV-3141592-H{load_id[-4:]}"
-        invoice_ref = docs.write(invoice, "carrier_invoice", {**common, "invoice_number": invoice, "date": _ts(departed),
+        invoice_ref = docs.write(f"INV-{load_id}-1", "carrier_invoice",
+            {**common, "invoice_number": invoice, "date": _ts(departed),
             "terms": "Net 30", "due": _ts(departed + timedelta(days=30)), "carrier": carrier,
             "remit_to": {"name": carrier["name"], "address": "", "routing_last4": "0000", "account_last4": "0000"},
             "line_items": [{"desc": "Linehaul", "amount": 1850.0},
@@ -483,7 +524,7 @@ async def seed_hero(world: dict) -> None:
         at = departed + timedelta(hours=2)
         message = mail.write(carrier["email"], "ap@goldengatefreight.example", f"Invoice {invoice}",
                              "Please see attached invoice and signed POD.", at,
-                             attachments=[invoice, f"POD-{load_id}"])
+                             attachments=[f"INV-{load_id}-1", f"POD-{load_id}"])
         tms = {**common, "carrier": carrier, "shipper": shipper, "consignee": consignee, "contract_rate": 1850.0,
                "free_time_min": 120, "operator_overrides": {}, "pickup_appt": _ts(loaded),
                "delivery_appt": _ts(arrived)}
@@ -580,6 +621,7 @@ async def offline(loads: int, root: pathlib.Path, seed: int = 7) -> None:
     root.mkdir(parents=True, exist_ok=True)
     os.environ["SIM_DATA_DIR"] = str(root)
     os.environ["WORLD_FILE"] = str(root / "world.json")
+    os.environ["SIM_SEED"] = str(seed)
     from integrations import directory
     if not (root / "world.json").exists() or directory.load().get("schema") != WORLD_SCHEMA:
         directory.save(offline_world())
@@ -593,7 +635,7 @@ async def offline(loads: int, root: pathlib.Path, seed: int = 7) -> None:
         load = new_load(world, rnd)
         start = now - timedelta(days=rnd.uniform(3, max(3, history_days)))
         steps = lifecycle(load, scenario, rnd, t0=start)
-        record_answer(load, scenario, load.get("planted"))
+        record_answer(load, scenario, load.get("planted"), start)
         for step in steps:
             for event in step.make():
                 await publish(None, event)

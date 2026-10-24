@@ -16,9 +16,9 @@ here is on their inference path.
 - `.env` (gitignored, mode 600) on the router host: `SPACETIME_*` for the harness/router identities and
   `A2A_TOKEN_ROUTER`. `make router` does not read it, so start the router with
   `set -a; . ./.env; set +a; make router`.
-- A2A tokens are shared secrets: `harness/infra/a2a_tokens.sh` writes all eleven (9 agents, router, gateway)
-  to `~/.config/freightops/a2a-tokens.env`. Every agent host needs that whole file; it refuses to overwrite,
-  because rotating one value breaks every peer.
+- A2A tokens are shared secrets, identical on every host. The team set ships in the private team bundle
+  (`data/team-release/a2a.env`, see its README); the router needs `A2A_TOKEN_ROUTER` from it.
+  `harness/infra/a2a_tokens.sh` only generates a set for a fresh, separate deployment.
 
 ## Run
 ```bash

@@ -2,7 +2,7 @@ PY := .venv/bin/python
 SIM_DATA_DIR ?= data
 SPACETIME_DB ?= freightops
 SPACETIME_URL ?= http://127.0.0.1:3000
-.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest verify-data review-worker live-agents live-demo live-gateway
+.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest source verify-data review-worker live-agents live-demo live-gateway
 
 setup:            ## create venv + install
 	python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -19,6 +19,8 @@ router:           ## Redis -> first-hop A2A
 	$(PY) -m router.main
 ingest:           ## Consume Redis raw; publish routable events and extracted documents
 	$(PY) -m ingest.main
+source:           ## re-export the agent source dataset from data/ingest.db (ingest keeps it current)
+	$(PY) -m ingest.source_export
 world:            ## refresh real carriers (FMCSA) + shippers (SEC EDGAR) -> data/world.json
 	$(PY) -m sim.world --refresh
 sim:              ## publish raw simulator arrivals to Redis `raw`

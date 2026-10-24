@@ -79,3 +79,16 @@ async def test_failed_admission_is_not_acknowledged(tmp):
     client.xack.assert_not_awaited()
     await consumer._handle(client, None, None, None, b"1-0", event(), **kw)
     client.xack.assert_awaited_once_with("events", "router", b"1-0")
+
+
+def test_route_event_is_the_deterministic_first_hop(tmp):
+    from router.main import route_event
+    value = event()
+    value["payload"]["remit_email"] = "billing@example-carrier.com"
+    agent, env, meta = route_event(value, Vault(tmp / "v.sqlite"))
+    assert agent == "carrier_ap" and env.case_id == "case-900" and env.task_type == "process_carrier_invoice"
+    assert meta.idempotency_key == "event:event-123" and meta.from_agent == "router" and meta.visited == []
+    assert env.subject["invoice_amount"] == 987.32
+    assert env.subject["remit_email"].startswith("[[EMAIL_")      # rules-layer redaction still applies
+    with pytest.raises(ValueError, match="resolve a case_id"):
+        route_event({**value, "payload": {"invoice_amount": 1.0}, "case_hint": "LOAD-900"})

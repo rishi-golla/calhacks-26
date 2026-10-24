@@ -8,16 +8,17 @@ from harness.pool import Pool, Unavailable
 
 ROUTES: dict[str, str] = {
     "carrier_invoice.received": "process_carrier_invoice",
+    # A POD lands at delivery, before the carrier bills: it wakes a waiting document chase (W4, main 104f5ce)
+    # instead of opening settlement for an invoice that does not exist yet.
+    "pod.received": "receive_document",
     "shipper_payment.received": "reconcile_customer_payment",
     "bank.event": "reconcile_customer_payment",
     "bank_change.requested": "screen_bank_change",
     "voice.inbound.dispute": "process_carrier_invoice",
 }
-# pod.received is parked here until W3's Carrier AP handles a POD with no invoice (three_way_match needs
-# invoice_amount); PRD 7.3 routes it to AP.
-NOT_ROUTED = {"gps.ping", "load.tendered", "load.dispatched", "load.delivered", "pod.received"}
+NOT_ROUTED = {"gps.ping", "load.tendered", "load.dispatched", "load.delivered"}
 # Skills a classifier may choose for a first hop. Anything else -> triage.
-CLASSIFIER_ALLOWLIST = (*sorted(set(ROUTES.values())), "answer_payment_status")
+CLASSIFIER_ALLOWLIST = (*sorted(set(ROUTES.values()) - {"receive_document"}), "answer_payment_status")
 MIN_CONFIDENCE = 0.6
 
 CLASSIFY_SCHEMA = {"type": "object", "properties": {

@@ -379,6 +379,16 @@ class RuntimeStore:
             ).order_by(tasks.c.updated_at).limit(100))).scalars().all()
         return [row for task_id in ids if (row := await self.get(task_id)) is not None]
 
+    async def waiting_on(self, agent: str, wait_key: str) -> list[dict]:
+        """Open executions of one agent parked on a business wait key, e.g. documents:<case>."""
+        await self.initialize()
+        async with self.engine.connect() as conn:
+            ids = (await conn.execute(select(tasks.c.id).where(
+                tasks.c.agent == agent, tasks.c.wait_key == wait_key,
+                tasks.c.status.in_(("queued", "working", "waiting")),
+            ).order_by(tasks.c.updated_at))).scalars().all()
+        return [row for task_id in ids if (row := await self.get(task_id)) is not None]
+
     async def queue_projection(self, agent: str, payload: dict) -> None:
         await self.initialize()
         try:

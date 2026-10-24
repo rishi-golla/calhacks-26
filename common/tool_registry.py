@@ -71,7 +71,8 @@ async def read_load_record(ctx: ToolContext, arguments: dict) -> dict:
               "invoice_amount", "contract_rate", "shipper_invoice_amount", "paid_amount",
               "shipper_paid_amount", "period", "lane", "issued_at", "overdue", "claim_type",
               "dispute", "bank_change_requested", "line_items", "required_documents", "documents",
-              "gps_dwell_min", "gps", "free_time_min", "detention_hours_claimed")
+              "gps_dwell_min", "gps", "free_time_min", "detention_hours_claimed",
+              "carrier_identity_mismatch", "carrier_identity")
     return _with_refs(source, ctx, {key: source[key] for key in fields if key in source})
 
 

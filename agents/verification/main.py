@@ -4,6 +4,7 @@ from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
 from common.source_repository import SourceRepository, SourceUnavailable
+from common.voice_context import build_voice_context, verification_questions
 
 
 class VerificationAgent(FreightAgent):
@@ -57,16 +58,12 @@ class VerificationAgent(FreightAgent):
                                 evidence_refs=list(dict.fromkeys(refs + stored["evidence_refs"])),
                                 policy_ids=["P-004", "P-008"] if env.task_type == "verify_bank_change"
                                 else ["P-008"])
-        questions = {
-            "verify_claim": ["What supports the additional charge?", "Can you provide the receipt and timestamps?"],
-            "verify_bank_change": ["Did your authorized representative request a payment-detail change?"],
-            "verify_dispute": ["Please describe the disputed load and supporting evidence."],
-        }[env.task_type]
+        context = await build_voice_context(source, repository, purpose="verification")
+        questions = verification_questions(context, env.task_type)
         call = TaskEnvelope(task_type="place_call", case_id=env.case_id, evidence_refs=refs,
                             priority=env.priority, deadline_s=env.deadline_s,
                             subject={"purpose": "verification", "counterparty_id": company_id,
-                                     "questions": questions, "facts": {"load_id": source.get("load_id"),
-                                     "invoice_id": source.get("invoice_id"), "claim_type": env.task_type}})
+                                     "questions": questions, "facts": context})
         results = await self.delegate("place_call", call, meta, task_id, invocation_key="verified_callback")
         call_result = results[-1].get("findings", {}) if results else {}
         if "call_result" in call_result:

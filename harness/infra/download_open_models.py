@@ -21,6 +21,7 @@ MODELS = [  # (short name, repo, dir under ~/models)
     ("apertus", "swiss-ai/Apertus-8B-Instruct-2509", "apertus-8b-instruct"),    # C: cross-check
     ("olmo3", "allenai/Olmo-3-7B-Instruct", "olmo3-7b-instruct"),               # A candidate
     ("olmo2", "allenai/OLMo-2-1124-13B-Instruct", "olmo2-13b-instruct"),        # A candidate
+    ("smollm3", "HuggingFaceTB/SmolLM3-3B", "smollm3-3b"),                     # B candidate (OLMoE failed B)
 ]
 PATTERNS = ["*.json", "*.safetensors", "*.txt", "tokenizer*", "*.model", "*.jinja", "README.md", "LICENSE*"]
 ROOT = Path.home() / "models"

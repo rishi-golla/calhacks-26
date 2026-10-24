@@ -31,7 +31,8 @@ def three_way_match(subject: dict) -> dict:
     above_tolerance = invoice > contract * Decimal("1.02")
     missing = check_packet(subject)["missing"]
     line_items = subject.get("line_items", [])
-    total = sum((money(item.get("amount")) for item in line_items), Decimal(0)) if line_items else invoice
+    # Discounts and credits (QuickPay) are negative lines; the invoice total itself stays non-negative.
+    total = sum((money(item.get("amount"), signed=True) for item in line_items), Decimal(0)) if line_items else invoice
     totals_match = total == invoice
     return {"matched": not above_tolerance and not missing and totals_match,
             "invoice_amount": number(invoice), "contract_rate": number(contract), "delta": number(delta),

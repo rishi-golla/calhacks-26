@@ -7,6 +7,7 @@ from harness.ingest.routing import CLASSIFIER_ALLOWLIST, NOT_ROUTED, ROUTES, tab
 @pytest.mark.parametrize(("etype", "skill"), [
     ("carrier_invoice.received", "process_carrier_invoice"),
     ("voice.inbound.dispute", "process_carrier_invoice"),
+    ("pod.received", "receive_document"),
     ("shipper_payment.received", "reconcile_customer_payment"),
     ("bank.event", "reconcile_customer_payment"),
     ("bank_change.requested", "screen_bank_change"),
@@ -16,15 +17,14 @@ def test_typed_events_route(etype, skill):
     assert r.status == "routed" and r.skill == skill
 
 
-@pytest.mark.parametrize("etype", ["gps.ping", "load.tendered", "load.dispatched", "load.delivered",
-                                   "pod.received"])
+@pytest.mark.parametrize("etype", ["gps.ping", "load.tendered", "load.dispatched", "load.delivered"])
 def test_not_routed(etype):
     r = table_route(etype, {})
     assert r.status == "not_routed" and r.skill is None
 
 
-def test_pod_parked_until_ap_handles_invoiceless_pods():
-    assert "pod.received" in NOT_ROUTED and "pod.received" not in ROUTES
+def test_pod_wakes_the_document_chase_not_settlement():
+    assert ROUTES["pod.received"] == "receive_document" and "pod.received" not in NOT_ROUTED
 
 
 def test_scenario_follows_generated_type():
@@ -40,4 +40,4 @@ def test_unlabeled_go_to_classifier(etype, payload):
 
 
 def test_classifier_allowlist_is_first_hop_skills_only():
-    assert set(CLASSIFIER_ALLOWLIST) == {*ROUTES.values(), "answer_payment_status"}
+    assert set(CLASSIFIER_ALLOWLIST) == {*ROUTES.values(), "answer_payment_status"} - {"receive_document"}

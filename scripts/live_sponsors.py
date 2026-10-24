@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import copy
+import hashlib
 import json
 import os
 import re
@@ -26,7 +27,6 @@ def prepare() -> Path:
     target = os.environ.get("DEMO_ALLOWLIST_PHONES", "").split(",")[0].strip()
     for case_id, carrier_id, title in (
         (LOOKUP_CASE, "PUBLIC-JBHUNT", "[Live synthetic] Apify public carrier and website check"),
-        (VOICE_CASE, "DEMO-TEAM", "[Live synthetic] Cartesia team phone test"),
     ):
         record = copy.deepcopy(base)
         record.update(case_id=case_id, carrier_id=carrier_id, title=title,
@@ -36,29 +36,41 @@ def prepare() -> Path:
         for document in record["documents"]:
             document["load_id"] = record["load_id"]
         dataset["cases"][case_id] = record
+    team = json.loads((ROOT / "sim/fixtures/team_call_source.json").read_text())
+    for key in ("cases", "companies", "contacts"):
+        dataset.setdefault(key, {}).update(copy.deepcopy(team[key]))
     dataset["companies"]["PUBLIC-JBHUNT"] = {
         "id": "PUBLIC-JBHUNT", "name": "J B HUNT TRANSPORT INC", "usdot": "80806",
         "website": "https://www.jbhunt.com/", "source": "fmcsa", "source_url": PUBLIC_SOURCE,
         "verified": False,
     }
-    dataset["companies"]["DEMO-TEAM"] = {
-        "id": "DEMO-TEAM", "name": "FreightOps operator-provided team demo", "phone": target,
-        "source": "operator", "source_url": "operator://explicit-team-demo-destination",
-        "verified": True, "timezone": os.getenv("OUTREACH_TIMEZONE", "America/Los_Angeles"),
-    }
-    destination = ROOT / "data/live/sponsor-source.json"
-    save_private(destination, json.dumps(dataset, indent=2) + "\n")
+    dataset["companies"]["DEMO-TEAM"]["phone"] = target
+    # Preserve prior source artifacts so an already-running demo retains its evidence.
+    encoded = json.dumps(dataset, indent=2) + "\n"
+    fingerprint = hashlib.sha256(encoded.encode()).hexdigest()[:16]
+    destination = ROOT / "data/live" / f"sponsor-source-{fingerprint}.json"
+    if not destination.exists():
+        save_private(destination, encoded)
+    elif destination.read_text() != encoded:
+        raise ValueError("the immutable sponsor source artifact does not match its fingerprint")
     admin = LocalAdmin(os.environ["SPACETIME_URL"], os.environ["SPACETIME_DB"])
     try:
         for case_id in (LOOKUP_CASE, VOICE_CASE):
             record = dataset["cases"][case_id]
+            # The original receipt/case load remains stable across scenario refreshes.
+            title = ("[Live synthetic] Cartesia team phone test" if case_id == VOICE_CASE else record["title"])
             admin.call("ingest", "open_case", {"write_id": f"sponsor-case:v1:{case_id}",
-                "case_id": case_id, "load_id": record["load_id"], "title": record["title"],
+                "case_id": case_id, "load_id": record["load_id"], "title": title,
                 "priority": "P2", "exposure_usd": 0})
         for company_id in ("PUBLIC-JBHUNT", "DEMO-TEAM"):
             company = dataset["companies"][company_id]
             admin.call("ingest", "upsert_company", {k: v for k, v in company.items()
                        if k in {"id", "name", "phone", "source_url", "website", "usdot"}})
+        invoice = dataset["cases"][VOICE_CASE]
+        admin.call("ingest", "upsert_invoice", {"write_id": f"sponsor-invoice:gg1042:v1:{invoice['invoice_id']}",
+            "id": invoice["invoice_id"], "case_id": VOICE_CASE, "carrier_id": invoice["carrier_id"],
+            "load_id": invoice["load_id"], "amount": invoice["invoice_amount"],
+            "contract_amount": invoice["contract_rate"], "issued_at": invoice["issued_at"]})
         if target:
             admin.call("admin", "set_demo_target", {"phone": target, "enabled": True,
                        "label": "Operator-provided FreightOps team demo"})

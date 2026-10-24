@@ -5,6 +5,33 @@ import { Check, LoaderCircle, Phone } from "lucide-react";
 import { DemoPhoneClient, demoPhoneAction } from "@/lib/demo-phone";
 import "./demo-phone.css";
 
+const DEMO_GUIDE = [
+  {
+    say: "Which load is this? Where was it going?",
+    expect: "GG-1042, from Oakland to Sacramento, California. You’re the Sierra Valley Transport dispatcher.",
+  },
+  {
+    say: "What was the appointment time and what are you disputing?",
+    expect: "Delivery was October 23 at 9:00 a.m. PDT. The carrier billed $250 detention; the provisional calculation is $125, pending signed backup.",
+  },
+  {
+    say: "Driver checked in at 8:45 and left at 12:15. We billed $250 detention.",
+    expect: "Two free hours start at the 9:00 appointment. From 11:00 to 12:15 is 75 billable minutes at $100/hour: $125. Ask for the signed detention receipt.",
+  },
+  {
+    say: "What paperwork do you already have?",
+    expect: "The signed proof of delivery, signed rate confirmation, and an unsigned detention log are present. The signed detention receipt is missing.",
+  },
+  {
+    say: "Where can I send it?",
+    expect: "No email or upload channel is configured for this demo. The agent should acknowledge that and never invent an address or link.",
+  },
+  {
+    say: "Has this invoice been paid?",
+    expect: "The agent should check the payment record and report the $1,225 invoice as unpaid, without promising or approving payment.",
+  },
+];
+
 export function DemoPhone() {
   const [client] = useState(() => new DemoPhoneClient({
     fetcher: (url, options) => fetch(url, options),
@@ -69,6 +96,28 @@ export function DemoPhone() {
         {action.retry && !error ? <p>Your saved call request is awaiting confirmation. Retry will use the same request.</p> : null}
         {error ? <p className="error-text">{error}</p> : null}
       </div>
+      <details className="demo-phone-guide">
+        <summary>Demo call guide <span>What to say</span></summary>
+        <div className="demo-phone-guide-body">
+          <span className="demo-phone-guide-badge">Fictional demo data</span>
+          <p>You play the dispatcher at Sierra Valley Transport. Use these prompts in any order.</p>
+          <dl className="demo-phone-guide-facts">
+            <div><dt>Load</dt><dd>GG-1042 · Oakland → Sacramento, CA</dd></div>
+            <div><dt>Delivery</dt><dd>October 23, 2026 · 9:00 a.m. PDT</dd></div>
+            <div><dt>Freight</dt><dd>18 pallets of packaged food · dry van · 36,000 lb</dd></div>
+            <div><dt>Invoice</dt><dd>$975 linehaul + $250 detention = $1,225 · unpaid</dd></div>
+          </dl>
+          <ol>
+            {DEMO_GUIDE.map((line) => (
+              <li key={line.say}>
+                <strong>“{line.say}”</strong>
+                <p><span className="demo-phone-guide-label">Listen for:</span> {line.expect}</p>
+              </li>
+            ))}
+          </ol>
+          <p className="demo-phone-guide-note">This call gathers facts and requests missing evidence. It does not approve or send a payment.</p>
+        </div>
+      </details>
     </section>
   );
 }

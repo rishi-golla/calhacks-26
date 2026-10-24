@@ -8,7 +8,8 @@ import time
 
 from common.a2a_transport import send_task
 from common.config import SKILL_OWNER
-from common.envelope import DelegationMeta, TaskEnvelope
+from common.envelope import TaskEnvelope
+from harness.ingest.firsthop import first_hop_meta
 from harness.ingest.vault import DATA_DIR
 
 log = logging.getLogger("harness.dispatch")
@@ -55,10 +56,7 @@ class Dispatcher:
         agent = SKILL_OWNER.get(skill)
         if agent is None:
             raise DispatchError(f"no owner for skill {skill}")
-        # Same identity conventions as W3's bridge: the agent dedupes on event:<id>; the case is the correlation.
-        meta = DelegationMeta(case_id=env.case_id, from_agent="router", delegation_depth=0, visited=[],
-                              idempotency_key=f"event:{event_id}", correlation_id=env.case_id,
-                              causation_id=event_id, priority=env.priority)
+        meta = first_hop_meta(event_id, env)
         try:
             task = await send_task(agent, env, meta)
         except Exception as e:  # card/skill mismatch, missing credential, transport: all retried via reclaim

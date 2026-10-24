@@ -29,11 +29,20 @@ class CarrierAPAgent(FreightAgent):
                                           "paid_amount": source.get("paid_amount", 0)}, evidence_refs=refs)
         if env.task_type not in {"process_carrier_invoice", "propose_payment"}:
             raise ValueError("unsupported Carrier Settlement skill")
+        if source.get("invoice_amount") is None and not source.get("invoice_id"):
+            # Delivery evidence can precede the carrier's bill; there is nothing to settle yet.
+            return await finish(self, env, task_id, outcome="unverified", findings={
+                "awaiting_invoice": True, "load_id": source.get("load_id")}, evidence_refs=refs)
         match = three_way_match(source)
         duplicates = duplicate_invoices(source)
         if duplicates:
             return await finish(self, env, task_id, outcome="reject", findings={"match": match,
                                 "duplicate_invoice_ids": duplicates}, policy_ids=["P-007"], evidence_refs=refs)
+        if source.get("carrier_identity_mismatch"):
+            # The invoice names a different carrier than the one tendered: possible double brokering.
+            return await finish(self, env, task_id, outcome="hold", findings={
+                "match": match, "carrier_identity": source.get("carrier_identity"), "payment_blocked": True},
+                policy_ids=["P-002"], evidence_refs=refs)
         if match["missing_documents"]:
             documents = await self.delegate("collect_documents", child_envelope(
                 env, "collect_documents", required_documents=match["missing_documents"]), meta, task_id,

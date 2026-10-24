@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 from harness.ingest.consumer import main
+from harness.ingest.firsthop import route_event  # noqa: F401 -- deterministic first hop, kept as a public helper
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")

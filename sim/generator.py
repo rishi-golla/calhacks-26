@@ -68,8 +68,11 @@ def directory_entry(world: dict, cid: str) -> dict:
     return {k: c[k] for k in keep if k in c}
 
 
-def new_load(world: dict, rnd: random.Random) -> dict:
-    lane = rnd.choice(world["lanes"])
+def new_load(world: dict, rnd: random.Random, quick: bool = False) -> dict:
+    lanes = world["lanes"]
+    if quick:
+        lanes = sorted(lanes, key=lambda lane: lane["transit_hours"])[:max(1, (len(lanes) + 2) // 3)]
+    lane = rnd.choice(lanes)
     load_id = _id("LD")
     n = int(load_id[-6:], 16) % 900_000
     return {"load_id": load_id, "case_id": f"CASE-{load_id}", "lane": lane,
@@ -368,13 +371,13 @@ async def publish(r: redis.Redis, ev: dict) -> None:
     await r.xadd(STREAM, {"json": json.dumps(ev)}, maxlen=20_000, approximate=True)
 
 
-async def stream_load(r: redis.Redis, load: dict, scenario: str, rnd: random.Random, speed: float = 1.0,
+async def stream_load(r: redis.Redis, load: dict, scenario: str, rnd: random.Random,
                       overrides: dict | None = None) -> None:
     clk = await clock.load(r, heartbeat=True)
     steps = lifecycle(load, scenario, rnd, overrides, clk.now())
     record_answer(load, scenario, load.get("planted"))
     for st in steps:
-        wait = clk.wall_delay(st.at - clk.now()) / speed
+        wait = clk.wall_delay(st.at - clk.now())
         if wait > 0:
             await asyncio.sleep(wait)
         for ev in st.make():
@@ -382,9 +385,9 @@ async def stream_load(r: redis.Redis, load: dict, scenario: str, rnd: random.Ran
             await publish(r, ev)
 
 
-async def run_load(r: redis.Redis, world: dict, rnd: random.Random, scenario: str, speed: float = 1.0) -> dict:
+async def run_load(r: redis.Redis, world: dict, rnd: random.Random, scenario: str) -> dict:
     load = new_load(world, rnd)
-    await stream_load(r, load, scenario, rnd, speed)
+    await stream_load(r, load, scenario, rnd)
     return load
 
 
@@ -402,17 +405,16 @@ async def main() -> None:
     world = ensure()
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     rnd = random.Random()
-    speed = float(os.getenv("SIM_SPEED", "1"))
     interval = float(os.getenv("SIM_LOAD_INTERVAL_S", "20"))
     max_open = int(os.getenv("SIM_MAX_OPEN_HUMAN_ITEMS", "3"))
     running: set[asyncio.Task] = {asyncio.create_task(heartbeat(r))}
     print(f"sim: {len(world['carriers'])} carriers, {len(world['shippers'])} shippers; new load every ~{interval}s; "
-          f"1 wall s = {clock.ratio() / 60:.0f} business min")
+          f"1 wall second = {clock.ratio() / 60:.0f} business minutes")
     while True:
         sc = pick(rnd)
         if sc in NEEDS_HUMAN and open_human_items() >= max_open:
             sc = "clean"  # don't bury the operator in parked calls
-        t = asyncio.create_task(run_load(r, world, rnd, sc, speed))
+        t = asyncio.create_task(run_load(r, world, rnd, sc))
         running.add(t)
         t.add_done_callback(running.discard)
         print(f"sim: started {sc}")

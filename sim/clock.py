@@ -1,5 +1,5 @@
 """Shared business clock for the simulation. Business time runs SIM_TIME_RATIO times faster than wall time
-(default 600: one wall second = ten business minutes), so a 20 h transit plays out in ~2 minutes and every
+(default 1800: one wall second = thirty business minutes), so a 20 h transit plays out in ~40 seconds and every
 document, GPS ping and bank line carries a consistent business timestamp. The anchor lives in Redis so the
 simulator and gateway agree; if the simulator was down the clock resumes from where it stopped instead of
 jumping ahead."""
@@ -14,7 +14,7 @@ STALE_S = 30
 
 
 def ratio() -> float:
-    return float(os.getenv("SIM_TIME_RATIO", "600"))
+    return float(os.getenv("SIM_TIME_RATIO", "1800"))
 
 
 @dataclass

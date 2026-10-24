@@ -214,11 +214,10 @@ async def inject(scenario: str, body: Inject | None = None):
         raise HTTPException(404, f"scenario must be one of {sorted(SCENARIOS)}")
     body = body or Inject()
     rnd = random.Random()
-    load = new_load(ensure(), rnd)
+    load = new_load(ensure(), rnd, quick=True)
     ov = {"verification_channel": body.channel, "force_human_approval": body.force_human_approval,
           "demo_target": body.demo_target}
-    task = asyncio.create_task(stream_load(_redis(), load, scenario, rnd,
-                                           float(os.getenv("SIM_INJECT_SPEED", "3")), ov))
+    task = asyncio.create_task(stream_load(_redis(), load, scenario, rnd, ov))
     _bg.add(task)
     task.add_done_callback(_bg.discard)
     return {"case_id": load["case_id"], "load_id": load["load_id"], "carrier": load["carrier"]["name"],

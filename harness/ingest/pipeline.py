@@ -72,7 +72,7 @@ def document_text(payload: dict) -> str:
 
 
 async def _llm_json(pool: Pool, system: str, user: str, schema: dict, task_type: str, event: dict,
-                    max_tokens: int = 1200) -> tuple[dict, dict]:
+                    max_tokens: int = 900) -> tuple[dict, dict]:
     body = {"model": "auto", "temperature": 0, "max_tokens": max_tokens,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "response_format": {"type": "json_schema", "json_schema": {"name": task_type, "schema": schema}},

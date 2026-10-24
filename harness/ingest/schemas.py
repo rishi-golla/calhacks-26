@@ -5,27 +5,28 @@ S: dict[str, Any] = {"type": ["string", "null"]}
 N: dict[str, Any] = {"type": ["number", "null"]}
 B: dict[str, Any] = {"type": ["boolean", "null"]}
 AMOUNTS = {"type": "array", "items": {"type": "object", "properties": {"desc": S, "amount": N},
-                                      "required": ["desc", "amount"]}}
+                                      "required": ["desc", "amount"], "additionalProperties": False}}
 PII = {"type": "array", "description": "personal names of people and street addresses, copied verbatim",
        "items": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["name", "address"]},
                                                   "text": {"type": "string"}},
-                 "required": ["kind", "text"]}}
+                 "required": ["kind", "text"], "additionalProperties": False}}
 
 
 def _obj(**props: Any) -> dict:
     props["pii"] = PII
-    return {"type": "object", "properties": props, "required": list(props)}
+    # Closed schemas keep the model from inventing extra keys, which costs tokens and latency.
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
 SCHEMAS: dict[str, dict] = {
     "carrier_invoice": _obj(invoice_id=S, load_id=S, carrier_id=S, carrier_name=S, invoice_date=S,
-                            invoice_amount=N, contract_rate=N, line_items=AMOUNTS,
+                            invoice_amount=N, line_items=AMOUNTS,
                             detention_hours_claimed=N, receipt_attached=B),
     "pod": _obj(load_id=S, carrier_id=S, delivered_at=S, receiver=S, signed_by=S, exceptions=S),
     "shipper_payment": _obj(payment_id=S, shipper_id=S, shipper_name=S, amount=N, remittance_ref=S,
                             invoices_applied={"type": "array", "items": {
                                 "type": "object", "properties": {"invoice_id": S, "amount": N},
-                                "required": ["invoice_id", "amount"]}}),
+                                "required": ["invoice_id", "amount"], "additionalProperties": False}}),
     "bank_event": _obj(amount=N, direction={"type": ["string", "null"], "enum": ["credit", "debit", None]},
                        counterparty=S, reference=S, posted_at=S),
     "bank_change": _obj(carrier_id=S, carrier_name=S, requested_by=S, channel=S, effective_date=S,
@@ -46,4 +47,5 @@ DOC_TYPE: dict[str, str] = {
 }
 
 # Amount fields cross-checked between the structured payload and what model A read from the document.
-AMOUNT_FIELDS = ("invoice_amount", "contract_rate", "amount", "amount_disputed", "next_payment_amount")
+# contract_rate is deliberately absent: invoices don't state it, so the model would read the linehaul line.
+AMOUNT_FIELDS = ("invoice_amount", "amount", "amount_disputed", "next_payment_amount")

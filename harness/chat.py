@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import math
 import re
 import time
 
@@ -19,10 +20,23 @@ class BadRequest(Exception):
     pass
 
 
+def _finite(text: str) -> float:
+    v = float(text)
+    if not math.isfinite(v):
+        raise ValueError(f"non-finite number {text[:20]}")
+    return v
+
+
+def _no_constants(name: str) -> float:
+    raise ValueError(f"{name} is not valid JSON")
+
+
 def parse_json(content: str | None) -> object:
+    """Strict JSON: NaN/Infinity (or numbers that overflow to inf) can't be re-serialized, so they count
+    as invalid output and go through the normal retry/fallback instead of a 500."""
     if content is None:
         raise ValueError("empty content")
-    return json.loads(_FENCE.sub("", content.strip()))
+    return json.loads(_FENCE.sub("", content.strip()), parse_constant=_no_constants, parse_float=_finite)
 
 
 def check_format(content: str | None, fmt: dict | None) -> tuple[object | None, str | None]:

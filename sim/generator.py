@@ -26,10 +26,12 @@ from common import store
 from sim import bank, clock, docs, events, geo, mail
 from sim.world import ensure
 
-SCENARIOS = {"clean": 0.40, "detention_unsupported": 0.10, "detention_supported": 0.06, "shipper_short_pay": 0.08,
-             "bank_change": 0.05, "duplicate_invoice": 0.06, "duplicate_renumbered": 0.04, "rate_mismatch": 0.06,
-             "fsc_error": 0.05, "math_error": 0.04, "lumper_no_receipt": 0.03, "factoring_unverified": 0.02,
-             "pod_unsigned": 0.01}
+SCENARIOS = {"clean": 0.40, "decoy_detention_supported_small": 0.06, "decoy_quickpay": 0.06,
+             "detention_unsupported": 0.04, "detention_supported": 0.04, "shipper_short_pay": 0.04,
+             "bank_change": 0.04, "duplicate_invoice": 0.04, "duplicate_renumbered": 0.04,
+             "rate_mismatch": 0.04, "fsc_error": 0.04, "math_error": 0.03, "lumper_no_receipt": 0.03,
+             "factoring_unverified": 0.03, "pod_unsigned": 0.03, "double_brokering": 0.02,
+             "misapplied_payment": 0.02}
 # Scenarios that end in a parked call/email waiting on a human playing the counterparty.
 NEEDS_HUMAN = {"detention_unsupported", "shipper_short_pay", "bank_change", "factoring_unverified"}
 STREAM = "events"
@@ -75,8 +77,10 @@ def new_load(world: dict, rnd: random.Random, quick: bool = False) -> dict:
     lane = rnd.choice(lanes)
     load_id = _id("LD")
     n = int(load_id[-6:], 16) % 900_000
+    other_carriers = [c for c in world["carriers"] if c["id"] != lane["carrier_id"]]
     return {"load_id": load_id, "case_id": f"CASE-{load_id}", "lane": lane,
             "carrier": directory_entry(world, lane["carrier_id"]), "shipper": directory_entry(world, lane["shipper_id"]),
+            "alternate_carrier": directory_entry(world, rnd.choice(other_carriers)["id"]) if other_carriers else None,
             "consignee": directory_entry(world, lane["consignee_id"]),
             "contract_rate": lane["contract_rate"], "free_time_min": lane["free_time_min"],
             "shipper_rate": lane["shipper_linehaul"] + lane["shipper_fsc"], "fsc_per_mile": world["fsc_per_mile"],
@@ -112,8 +116,8 @@ def plan(load: dict, scenario: str, rnd: random.Random) -> dict:
     receipt: bool | None = None
     if scenario == "detention_unsupported":
         dwell, claimed_h, receipt = rnd.randint(35, 80), 2, False
-    elif scenario == "detention_supported":
-        dwell = rnd.randint(200, 290)
+    elif scenario in ("detention_supported", "decoy_detention_supported_small"):
+        dwell = free + 10 if scenario == "decoy_detention_supported_small" else rnd.randint(200, 290)
         claimed_h, receipt = math.ceil((dwell - free) / 60), True
     else:
         dwell, claimed_h = rnd.randint(25, 110), 0
@@ -127,6 +131,13 @@ def plan(load: dict, scenario: str, rnd: random.Random) -> dict:
         lines.append({"desc": f"Detention {claimed_h}h", "qty": claimed_h, "rate": lane["detention_rate_hr"],
                       "amount": amt})
         planted = {"field": "detention", "claimed_h": claimed_h, "gps_dwell_min": dwell, "free_time_min": free}
+    if scenario == "decoy_detention_supported_small":
+        planted = {"field": "supported_detention", "claimed_h": claimed_h, "gps_dwell_min": dwell}
+    if scenario == "decoy_quickpay":
+        load["carrier"]["terms"] = "QuickPay 2% / 2 days"
+        discount = round(lane["contract_rate"] * 0.02, 2)
+        lines.append({"desc": "QuickPay discount 2%", "amount": -discount})
+        planted = {"field": "quickpay_discount", "discount": discount}
     if scenario == "rate_mismatch":
         extra = bump(0.06, [150, 200, 250, 350])
         lines[0]["amount"] = lane["linehaul"] + extra
@@ -150,6 +161,12 @@ def plan(load: dict, scenario: str, rnd: random.Random) -> dict:
         planted = {"field": "total", "stated_total": stated, "sum_of_lines": total, "delta": err}
     if scenario == "pod_unsigned":
         planted = {"field": "pod_signature", "pod_signed": False}
+    if scenario == "double_brokering":
+        planted = {"field": "carrier_identity", "tendered_carrier": load["carrier"]["id"],
+                   "hauler": (load.get("alternate_carrier") or load["carrier"])["id"]}
+    if scenario == "misapplied_payment":
+        planted = {"field": "bank_reference", "expected": f"SINV-{load['load_id']}",
+                   "billed": round(sum(x["amount"] for x in lines), 2)}
     if scenario == "duplicate_renumbered":
         planted = {"field": "duplicate", "same_bol": load["bol"], "same_load": load["load_id"]}
     if scenario in ("bank_change", "factoring_unverified"):
@@ -162,6 +179,8 @@ def plan(load: dict, scenario: str, rnd: random.Random) -> dict:
 def expected(load: dict, scenario: str) -> dict:
     return {
         "clean": {"carrier_ap": "approve", "shipper_ar": "reconciled"},
+        "decoy_detention_supported_small": {"carrier_ap": "approve_with_receipt"},
+        "decoy_quickpay": {"carrier_ap": "approve_quickpay"},
         "detention_unsupported": {"carrier_ap": "short_pay_detention_after_verification", "risk": "suspicious"},
         "detention_supported": {"carrier_ap": "approve_with_human_review", "risk": "clear"},
         "shipper_short_pay": {"shipper_ar": "short_pay_collections_call"},
@@ -174,6 +193,8 @@ def expected(load: dict, scenario: str) -> dict:
         "lumper_no_receipt": {"carrier_ap": "hold_request_lumper_receipt"},
         "factoring_unverified": {"risk": "block_until_noa_verified"},
         "pod_unsigned": {"carrier_ap": "hold_missing_signed_pod"},
+        "double_brokering": {"carrier_ap": "hold_carrier_identity"},
+        "misapplied_payment": {"shipper_ar": "misapplied_payment"},
     }[scenario]
 
 
@@ -207,11 +228,15 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
     sinv_at = depart + timedelta(hours=rnd.uniform(1, 6))
     paid_at = sinv_at + timedelta(days=rnd.uniform(1, 4))
     seq = rnd.randint(1, 8999)
-    inv_no = docs.invoice_number(c, seq)
-    inv_id = f"INV-{c['usdot']}-{inv_no}"
+    doc_carrier = (load.get("alternate_carrier") or c) if scenario == "double_brokering" else c
+    inv_no = docs.invoice_number(doc_carrier, seq)
+    inv_id = f"INV-{doc_carrier['usdot']}-{inv_no}"
     lines, stated = pl["lines"], pl["stated_total"]
     remit = {"name": c["name"], "address": c.get("address"), "routing_last4": f"{rnd.randint(0, 9999):04d}",
              "account_last4": f"{rnd.randint(0, 9999):04d}"}
+    if scenario == "double_brokering":
+        remit = {"name": doc_carrier["name"], "address": doc_carrier.get("address"),
+                 "routing_last4": "0000", "account_last4": "0000"}
     if scenario == "factoring_unverified":
         remit = {"name": f"{rnd.choice(['Apex', 'Summit', 'Triumph', 'Keystone'])} Freight Capital LLC",
                  "address": "PO Box 4410, Dallas, TX 75201", "routing_last4": f"{rnd.randint(0, 9999):04d}",
@@ -262,10 +287,10 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
     def delivered() -> list[dict]:
         signed = scenario != "pod_unsigned"
         refs["pod"] = docs.write(f"POD-{lid}", "proof_of_delivery", {
-            **tms, "carrier": c, "consignee": k, "arrived": _ts(arrive), "departed": _ts(depart),
+            **tms, "carrier": doc_carrier, "consignee": k, "arrived": _ts(arrive), "departed": _ts(depart),
             "pallets_received": load["pallets"], "receiver": _person(rnd) if signed else None})
         out = [refs["pod"]]
-        if scenario == "detention_supported":
+        if scenario in ("detention_supported", "decoy_detention_supported_small"):
             refs["det"] = docs.write(f"DET-{lid}", "detention_log", {
                 "load_id": lid, "bol": load["bol"], "consignee": k, "appt": _ts(delivery_appt),
                 "arrived": _ts(arrive), "departed": _ts(depart), "dwell_min": pl["dwell"], "clerk": _person(rnd)})
@@ -278,7 +303,7 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
     def invoice_payload(number: str, iid: str, at: datetime) -> tuple[dict, list[str]]:
         doc = docs.write(iid, "carrier_invoice", {
             **base, "invoice_number": number, "date": _ts(at), "terms": c.get("terms", "Net 30"),
-            "due": _ts(at + timedelta(days=30)), "carrier": c, "remit_to": remit, "line_items": lines,
+            "due": _ts(at + timedelta(days=30)), "carrier": doc_carrier, "remit_to": remit, "line_items": lines,
             "total": stated, "origin": lane["origin"], "destination": lane["destination"]})
         attach = [doc] + [refs[x] for x in ("pod", "det") if x in refs]
         sender = c.get("email") or f"billing@{c['usdot']}.carrier.example"
@@ -341,10 +366,11 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
     def paid() -> list[dict]:
         short = rnd.choice([150, 225, 300, 450]) if scenario == "shipper_short_pay" else 0
         amount = round(sh_total - short, 2)
-        txn = bank.post("ach_credit", amount, s["name"], sinv, paid_at)
+        bank_reference = f"SINV-MISSING-{lid}" if scenario == "misapplied_payment" else sinv
+        txn = bank.post("ach_credit", amount, s["name"], bank_reference, paid_at)
         m = mail.write(f"remittance@{(s.get('ticker') or 'shipper').lower()}.remit.example", mail.AR_INBOX,
-                       f"Remittance advice - {s['name']} - {sinv}",
-                       f"Payment of ${amount:,.2f} sent via ACH for invoice {sinv} (PO {load['po']})."
+                       f"Remittance advice - {s['name']} - {bank_reference}",
+                       f"Payment of ${amount:,.2f} sent via ACH for invoice {bank_reference} (PO {load['po']})."
                        + (f"\nDeduction ${short:,.2f}: rate dispute." if short else ""), paid_at)
         return [_event("email.received", load, _email_payload(m), paid_at),
                 _event("bank.event", load, {"file": txn["file"], "account": txn["account"],

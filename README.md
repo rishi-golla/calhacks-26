@@ -38,7 +38,8 @@ make test
 - **Counterparties are real.** Carriers come from FMCSA's Company Census (active, for-hire, general freight, with a
   registered phone and email); shippers come from SEC EDGAR (manufacturing, wholesale and retail filers). `make world`
   refreshes `data/world.json`. Contacts are shown unmasked; outreach still only reaches the demo allowlist.
-- **Events are real-time, on a business clock.** Every ~20s a new load starts on a real lane (Census-geocoded
+- **Events are real-time, on a business clock.** The simulator backfills 12 already-mid-lifecycle loads at startup,
+  then starts a new load every ~8s on a real lane (Census-geocoded
   facilities, real mileage, FSC, accessorial schedule). Business time runs `SIM_TIME_RATIO`x wall time (default
   1 s = 30 min), so tender -> pickup -> transit -> delivery -> invoice -> shipper payment plays out in minutes with
   consistent timestamps. Console-injected loads use the shortest lanes to reach invoices faster. Each load produces

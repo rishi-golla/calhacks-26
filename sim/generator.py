@@ -372,9 +372,10 @@ async def publish(r: redis.Redis, ev: dict) -> None:
 
 
 async def stream_load(r: redis.Redis, load: dict, scenario: str, rnd: random.Random,
-                      overrides: dict | None = None) -> None:
+                      overrides: dict | None = None, backdate: timedelta | None = None) -> None:
     clk = await clock.load(r, heartbeat=True)
-    steps = lifecycle(load, scenario, rnd, overrides, clk.now())
+    t0 = clk.now() - backdate if backdate is not None else clk.now()
+    steps = lifecycle(load, scenario, rnd, overrides, t0)
     record_answer(load, scenario, load.get("planted"))
     for st in steps:
         wait = clk.wall_delay(st.at - clk.now())
@@ -385,9 +386,10 @@ async def stream_load(r: redis.Redis, load: dict, scenario: str, rnd: random.Ran
             await publish(r, ev)
 
 
-async def run_load(r: redis.Redis, world: dict, rnd: random.Random, scenario: str) -> dict:
+async def run_load(r: redis.Redis, world: dict, rnd: random.Random, scenario: str,
+                   backdate: timedelta | None = None) -> dict:
     load = new_load(world, rnd)
-    await stream_load(r, load, scenario, rnd)
+    await stream_load(r, load, scenario, rnd, backdate=backdate)
     return load
 
 
@@ -405,11 +407,24 @@ async def main() -> None:
     world = ensure()
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     rnd = random.Random()
-    interval = float(os.getenv("SIM_LOAD_INTERVAL_S", "20"))
+    interval = float(os.getenv("SIM_LOAD_INTERVAL_S", "8"))
     max_open = int(os.getenv("SIM_MAX_OPEN_HUMAN_ITEMS", "3"))
+    warm_start_loads = int(os.getenv("SIM_WARM_START_LOADS", "12"))
     running: set[asyncio.Task] = {asyncio.create_task(heartbeat(r))}
     print(f"sim: {len(world['carriers'])} carriers, {len(world['shippers'])} shippers; new load every ~{interval}s; "
           f"1 wall second = {clock.ratio() / 60:.0f} business minutes")
+    warm_human = 0
+    for _ in range(warm_start_loads):
+        sc = pick(rnd)
+        if sc in NEEDS_HUMAN:
+            if warm_human >= max_open:
+                sc = "clean"
+            else:
+                warm_human += 1
+        t = asyncio.create_task(run_load(r, world, rnd, sc, timedelta(hours=rnd.uniform(0, 96))))
+        running.add(t)
+        t.add_done_callback(running.discard)
+        print(f"sim: warm-started {sc}")
     while True:
         sc = pick(rnd)
         if sc in NEEDS_HUMAN and open_human_items() >= max_open:

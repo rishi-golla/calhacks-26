@@ -1,6 +1,6 @@
 import json
 import random
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -145,3 +145,14 @@ def test_gps_breadcrumbs_follow_the_lane(world):
     pings = [e["payload"] for e in evs if e["type"] == "gps.ping"]
     assert pings[0]["lat"] == load["shipper"]["lat"] and pings[-1]["lat"] == load["consignee"]["lat"]
     assert pings[-1]["milestone"] == "delivery.departed" and pings[-1]["dwell_min"] > 0
+
+
+def test_backdated_lifecycle_has_immediate_events(world):
+    from sim import generator as g
+    rnd = random.Random(3)
+    load = g.new_load(world, rnd)
+    now = datetime.now(UTC)
+    steps = g.lifecycle(load, "clean", rnd, t0=now - timedelta(hours=96))
+    ready = [step for step in steps if step.at <= now]
+    assert ready
+    assert any(event["type"] == "load.tendered" for step in ready for event in step.make())

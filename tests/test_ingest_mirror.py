@@ -1,4 +1,5 @@
 """Ingest mirrors cases, invoices and the directory into SpacetimeDB before routing (W4 task 2)."""
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -172,6 +173,39 @@ async def test_replaying_the_raw_stream_creates_no_duplicates_or_rejections(worl
     assert case["priority"] == "P1" and case["exposure_usd"] > 0 and case["title"].endswith(load["load_id"])
     assert spacetime.row("upsert_contact", f"CT-{load['carrier']['id']}")["source"] == "fmcsa"
     assert spacetime.row("upsert_contact", f"CT-{load['shipper']['id']}")["source"] == "sec_edgar"
+
+
+@pytest.mark.parametrize("preset", ["phone", "bank_change", "short_pay"])
+async def test_demo_case_is_mirrored_at_the_priority_ingest_routes_it(world, monkeypatch, preset):
+    from sim import clock, demo
+    from tests.test_demo_sim import FakeRedis as RawRedis
+    from tests.test_demo_sim import FrozenClock, StopStreaming
+
+    directory.save(offline_world())
+    monkeypatch.setenv("DEMO_ALLOWLIST_PHONES", "+15105550101")
+    clk = FrozenClock()
+
+    async def frozen(_r, heartbeat=False):
+        return clk
+
+    monkeypatch.setattr(clock, "load", frozen)
+    raw = RawRedis()
+    started = await demo.start_demo(demo.DemoRequest(preset), raw)
+    try:
+        await asyncio.gather(*generator._BACKGROUND)
+    except StopStreaming:
+        pass
+    log: list = []
+    spacetime = FakeSpacetime(log)
+    db = connect()
+    try:
+        assert all(await _process(raw.raw, db, spacetime, FakeRedis(log)))
+    finally:
+        db.close()
+    routed = next(entry[2] for entry in log if entry[0] == "xadd" and entry[2]["type"] == started.trigger_event)
+    assert routed["priority"] == "P0"
+    assert spacetime.row("open_case", started.case_id)["priority"] == "P0"
+    assert not spacetime.rejected
 
 
 async def test_failed_write_leaves_the_entry_unacked_and_the_retry_resends_identical_writes(world):

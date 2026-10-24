@@ -119,8 +119,11 @@ def title(case_id: str, case: dict) -> str:
     return f"{text} on {case['load_id']}" if case.get("load_id") else text
 
 
-def case_payload(case_id: str, case: dict) -> dict:
-    payload = {"case_id": case_id, "title": title(case_id, case), "priority": priority(case_id, case),
+def case_payload(case_id: str, case: dict, routed_priority: str | None = None) -> dict:
+    """`routed_priority` is the priority of the event routing this case; the more urgent of it and the case's own
+    wins, so a demo case ingest raised to P0 shows as P0."""
+    urgency = sorted(p for p in (priority(case_id, case), routed_priority) if p in ("P0", "P1", "P2", "P3"))
+    payload = {"case_id": case_id, "title": title(case_id, case), "priority": urgency[0],
                "exposure_usd": exposure(case_id, case)}
     if case.get("load_id"):
         payload["load_id"] = case["load_id"]
@@ -247,12 +250,13 @@ class Mirror:
             # The next case or directory sync for this company carries the cached alternates again.
             log.warning("enriched contacts for %s not mirrored yet (%s)", company["id"], type(error).__name__)
 
-    async def case(self, dataset: dict, case_id: str, event_payload: dict | None = None) -> None:
+    async def case(self, dataset: dict, case_id: str, event_payload: dict | None = None,
+                   routed_priority: str | None = None) -> None:
         case = dataset.get("cases", {}).get(case_id)
         if case is None:
             # Routed before ingest knew its load (for example a POD for an untendered load).
             case = {"load_id": (event_payload or {}).get("load_id")}
-        await self.write("open_case", case_id, case_payload(case_id, case))
+        await self.write("open_case", case_id, case_payload(case_id, case, routed_priority))
         if invoice := invoice_payload(case_id, case):
             await self.write("upsert_invoice", invoice["id"], invoice)
         for kind, key in (("carrier", "carrier_id"), ("shipper", "shipper_id")):
@@ -260,12 +264,15 @@ class Mirror:
                 await self.company(dataset, case[key], kind, case.get(kind))
 
     async def cases(self, dataset: dict, events: list[dict]) -> None:
-        payloads = {}
+        payloads, priorities = {}, {}
         for event in events:
             payload = event.get("payload") or {}
-            payloads.setdefault(event.get("case_id") or payload.get("case_id"), payload)
+            case_id = event.get("case_id") or payload.get("case_id")
+            payloads.setdefault(case_id, payload)
+            if event.get("type") in ROUTES:
+                priorities.setdefault(case_id, event.get("priority"))
         for case_id in routed_case_ids(events):
-            await self.case(dataset, case_id, payloads.get(case_id))
+            await self.case(dataset, case_id, payloads.get(case_id), priorities.get(case_id))
 
     async def directory(self, companies: dict, contacts: dict, kinds: dict[str, str]) -> int:
         """Push every directory company and contact; returns how many companies failed."""

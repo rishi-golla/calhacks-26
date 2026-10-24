@@ -135,6 +135,16 @@ async def test_clean_invoice_prepares_explicit_fixture_proposal():
     assert result.model_used == "fixture/deterministic"
 
 
+async def test_settlement_without_an_invoice_waits_instead_of_failing():
+    source = invoice()
+    for field in ("invoice_id", "invoice_amount", "line_items"):
+        source.pop(field)
+    result = await run_handler(CarrierAPAgent, "process_carrier_invoice", source)
+    assert result.outcome == "unverified"
+    assert result.findings["awaiting_invoice"] is True
+    assert "payment_proposal" not in result.findings
+
+
 async def test_held_invoice_never_proposes_partial_payment():
     source = invoice()
     source["holds"] = [{"id": "HOLD", "status": "active", "amount": 5}]

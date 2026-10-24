@@ -138,6 +138,7 @@ function DashboardBody() {
   } = useLive();
   const hostLabel = databaseHostLabel(serverUrl);
   const [view, setView] = useState("home");
+  const [chatOpen, setChatOpen] = useState(true);
   const [caseId, setCaseId] = useState("");
   const [query, setQuery] = useState("");
   const [mobile, setMobile] = useState(false);
@@ -257,19 +258,25 @@ function DashboardBody() {
         ref={navigation}
         cases={data.case}
         caseId={caseId}
-        currentView={view}
+        currentView={view === "home" && chatOpen && !caseId ? "chat" : view}
         collapsed={sidebarCollapsed}
         narrow={narrow}
         mobileOpen={mobile}
         onToggleCollapsed={() => setSidebarCollapsed((collapsed) => !collapsed)}
         onNewChat={() => {
           setCaseId("");
+          setChatOpen(true);
           setNewChatId((value) => value + 1);
           navigate("home");
         }}
-        onHome={() => navigate("home")}
+        onHome={() => {
+          setCaseId("");
+          setChatOpen(false);
+          navigate("home");
+        }}
         onSelectCase={(selectedCase) => {
           setCaseId(selectedCase);
+          setChatOpen(false);
           navigate("home");
         }}
         onCloseMobile={() => setMobile(false)}
@@ -341,19 +348,23 @@ function DashboardBody() {
         </header>
         <main id="main-content" tabIndex={-1}>
           {view === "home" &&
-            (caseId ? (
-              <Workflow
-                caseId={caseId}
-                onClearCase={() => setCaseId("")}
-                onOpenMenu={openNavigation}
-              />
-            ) : (
+            (chatOpen && !caseId ? (
               <SearchChat
                 key={newChatId}
                 onSelectCase={(selectedCase) => {
                   setCaseId(selectedCase);
+                  setChatOpen(false);
                   navigate("home");
                 }}
+              />
+            ) : (
+              <Workflow
+                caseId={caseId}
+                onClearCase={() => {
+                  setCaseId("");
+                  setChatOpen(false);
+                }}
+                onOpenMenu={openNavigation}
               />
             ))}
           {view === "agents" && (

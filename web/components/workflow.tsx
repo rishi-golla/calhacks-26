@@ -221,7 +221,7 @@ export default function Workflow({
   const [tabs, setTabs] = useState<Record<string, Tab>>({});
   const [leaving, setLeaving] = useState<string[]>([]);
   const followed = caseId || latestCase(data);
-  const scoped = useMemo(() => scope(data, followed), [data, followed]);
+  const scoped = useMemo(() => scope(data, caseId), [data, caseId]);
   const mine = manual[followed] ?? { add: [], remove: [] };
   const visible = useMemo(() => {
     const s = activeSteps(scoped);
@@ -510,10 +510,11 @@ export default function Workflow({
     if (submitter?.value === "approved" || submitter?.value === "rejected")
       void approvalDecision.decide(submitter.value as ApprovalDecision);
   };
-  const caseTitle = followed
-    ? str(
-        data.case.find((r) => r.case_id === followed)?.title || followed,
-      ).replace(/^\[W2 fixture\]\s*/, "")
+  const caseTitle = caseId
+    ? str(data.case.find((r) => r.case_id === caseId)?.title || caseId).replace(
+        /^\[W2 fixture\]\s*/,
+        "",
+      )
     : "";
   const hidden = STEPS.filter((s) => !visible.has(s.id));
   return (
@@ -527,19 +528,18 @@ export default function Workflow({
           <Menu size={18} />
         </button>
         <strong>{caseTitle || "Workflow"}</strong>
-        {followed &&
-          (caseId ? (
-            <button
-              className="wf-chip"
-              aria-label={`Clear case ${followed}`}
-              onClick={onClearCase}
-            >
-              <span className="wf-case-id">{followed}</span>
-              <X size={12} />
-            </button>
-          ) : (
-            <span className="wf-sub">{followed}</span>
-          ))}
+        {caseId ? (
+          <button
+            className="wf-chip"
+            aria-label={`Clear case ${caseId}`}
+            onClick={onClearCase}
+          >
+            <span className="wf-case-id">{caseId}</span>
+            <X size={12} />
+          </button>
+        ) : (
+          <span className="wf-sub">All cases</span>
+        )}
         <span className="wf-spacer" />
         <span className={`wf-status-chip ${allLive ? "live" : ""}`}>
           <i />

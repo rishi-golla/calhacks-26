@@ -763,19 +763,40 @@ function writeInstruction(m: Mutation, agent: string, diff: string, reason: stri
   m.capture('instruction_version', row.id, null, row);
 }
 
+function checkInstructionVersion(m: Mutation, agent: string): void {
+  if (m.p.expected_version === undefined || m.p.expected_version === null) throw new Error('expected_version is required');
+  const latest = [...m.ctx.db.instruction_version.agent.filter(agent)]
+    .reduce((max, row) => Math.max(max, row.version), 0);
+  if (uint(m.p, 'expected_version') !== latest) throw new Error('instruction version conflict');
+}
+
+// Automated learning is append-only and uses a code-owned advisory template.
+// No source, flag or model text can remove instructions or introduce permissions.
+function validateAutomatedInstruction(diff: string): void {
+  const match = /^--- a\/instructions\.md\n\+\+\+ b\/instructions\.md\n@@ -(\d+),0 \+(\d+),2 @@\n\+\n\+Before completing a result, cite the source records and recheck monetary totals in exact cents\.\n$/.exec(diff);
+  if (!match || Number(match[2]) !== Number(match[1]) + 1) {
+    throw new Error('P-012: validator instructions must use the approved append-only template');
+  }
+}
+
 export const publishInstruction: Handler = m => {
   const { ctx, p, actor } = m;
   const source_ref = text(p, 'source_ref');
   if (actor.role === 'validator' && !ctx.db.review.id.find(source_ref) && !ctx.db.flag.id.find(source_ref)) throw new Error('validator instruction changes must cite an existing review or flag');
-  writeInstruction(m, choice(p, 'agent', AGENTS), text(p, 'diff', undefined, 32000), text(p, 'reason'), source_ref);
+  const agent = choice(p, 'agent', AGENTS);
+  checkInstructionVersion(m, agent);
+  const diff = text(p, 'diff', undefined, 32000);
+  if (actor.role === 'validator') validateAutomatedInstruction(diff);
+  writeInstruction(m, agent, diff, text(p, 'reason'), source_ref);
 };
 
 export const revertInstruction: Handler = m => {
   const { ctx, p } = m;
   const agent = choice(p, 'agent', AGENTS);
   const version = uint(p, 'version');
-  const target = must(ctx.db.instruction_version.id.find(`${agent}:${version}`), 'instruction version does not exist');
-  writeInstruction(m, agent, target.diff, text(p, 'reason'), target.id, version);
+  checkInstructionVersion(m, agent);
+  const target = version === 0 ? null : must(ctx.db.instruction_version.id.find(`${agent}:${version}`), 'instruction version does not exist');
+  writeInstruction(m, agent, target?.diff ?? '', text(p, 'reason'), target?.id ?? `${agent}:0`, version);
 };
 
 export const raiseFlag: Handler = m => {

@@ -39,8 +39,8 @@ Authentication comes only from the actual SpacetimeDB sender identity. The init 
 | `upsert_contact` | ingest | `id`, `company_id`, `name`, optional `title`, `phone`, `email`, `linkedin_url`, `source`, `source_url`, `confidence`, `alternates_json` |
 | `add_review` | validator | `id`, `target_task_id`, `case_id`, `verdict` (`pass` or `issue`), `checks_json`, `friction_json`, `actions` |
 | `upsert_memory` | validator, human | `id`, `agent`, `scope` (object with carrier_id/lane/claim_type/skill only), `text`, `source_ref`, `active` |
-| `publish_instruction_version` | validator, human | `agent`, `diff`, `reason`, `source_ref`; version assigned atomically |
-| `revert_instruction_version` | human | `agent`, `version` (version to reactivate), `reason`; creates a new compensating version |
+| `publish_instruction_version` | validator, human | `agent`, `diff`, `reason`, `source_ref`, `expected_version`; compare-and-swap against latest version (0 initially); validator patches restricted to approved append-only advisory template |
+| `revert_instruction_version` | human | `agent`, `version` (snapshot to restore, 0 for checked-in baseline), `reason`, `expected_version`; compare-and-swap creates a new compensating version |
 | `raise_flag` | human | `id`, `target_ref`, `kind` (`wrong`, `unclear`, `policy`, `praise`, `other`), `note`, optional `case_id` |
 | `resolve_flag` | validator | `id`, `status` (`reviewing`, `resolved`, `rejected`), `resolution_ref` |
 | `claim_outbox` | router | `id`, optional `lease_seconds` (max 300) |
@@ -63,3 +63,21 @@ New calls normally allow one attempt per company per hour, including failed atte
 Outbox kinds are `review_output` and `review_flag` for the Validator, and `review_followup` for the original task's agent. Dispatch using the row's `target_agent`. Followup payloads include `target_task_id`, `case_id`, `agent`, `actions` (`reopen_case` / `rerun_task`), and `review_id`; only one corrective request is queued per original task to bound retry loops. Human-owned cases do not receive automatic corrective followups. Acknowledge delivery after successful handoff; revised output and execution status belong to a new task. Delivery acknowledgement is not evidence that execution completed.
 
 Instruction history is append-only except for the active marker. A normal row (`reverts_version = 0`) contains a diff relative to the preceding effective version. A revert row creates a new version whose effective content is the **fully reconstructed content of `reverts_version`**. Its copied `diff` is display context only; W3 must not apply that copied patch to the latest text. Reconstruct versions in ascending order, preserving the effective text for each version, and use the target snapshot for revert rows. Policy code, approval thresholds, tool permissions and delegation allowlists remain outside this version stream and are never mutable through lesson reducers.
+
+### Instruction learning and rollback
+
+Validator publishes code-generated evidence/cents reminders after deterministic review failures.
+The patch and base version are durably checkpointed before publication. The reducer rejects a
+stale or missing `expected_version`; it never rebases automatically over human edits. When
+the version advanced between planning and publication, Validator re-plans once from the new
+history: an already-present reminder is reported as `superseded`, and the review still resolves
+its flag. Replays with the same write ID retain the original receipt. New tasks load the reconstructed latest
+instructions; already-running tasks retain their checkpointed instruction version.
+
+Automated patches can only append the approved advisory template. Model output, flag text and
+source documents cannot delete base instructions or introduce new policy/permission text.
+Human rollback restores a selected snapshot (including version 0) as a new immutable version,
+with the same concurrency check. Financial policies and role/delegation permissions are unchanged.
+
+Deploy the updated module before restarting Validator or using the updated rollback UI. Older
+modules do not enforce the new precondition. This change adds no tables or A2A envelope fields.

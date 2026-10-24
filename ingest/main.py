@@ -339,7 +339,8 @@ def _bank_change(trigger: dict, message: dict, db: sqlite3.Connection) -> list[d
     routing_last4_match = re.search(r"\bRouting\s+\*{4}(\d{4})", message.get("body", ""), re.IGNORECASE)
     routing_number = routing_match.group(1) if routing_match else None
     next_payment_match = re.search(
-        r"\b(?:next payment|scheduled payment|payment amount)\s*(?:is|:)?\s*\$?([\d,]+(?:\.\d{2})?)",
+        r"\b(?:next payment(?: amount)?|scheduled payment(?: amount)?|payment amount)"
+        r"\s*(?:is|:)?\s*\$?([\d,]+(?:\.\d{2})?)",
         message.get("body", ""), re.IGNORECASE)
     next_payment = float(next_payment_match.group(1).replace(",", "")) if next_payment_match else (
         invoice.get("invoice_amount") if invoice else None)

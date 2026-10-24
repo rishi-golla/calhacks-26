@@ -2,11 +2,31 @@
 Incoming shipper ACH/wires are type 165/195; outgoing carrier ACH is 455."""
 import os
 import pathlib
+import random
 import uuid
 from datetime import datetime
 
 ACCOUNT = "GGF-OPERATING-0042"
 TYPE_CODES = {"ach_credit": "165", "wire_credit": "195", "ach_debit": "455"}
+ABA_ROUTING_NUMBERS = ("121000358", "021000021", "011000015", "026009593", "322271627")
+
+
+def aba_valid(routing_number: str) -> bool:
+    if len(routing_number) != 9 or not routing_number.isdigit():
+        return False
+    return sum(int(digit) * (3, 7, 1)[index % 3] for index, digit in enumerate(routing_number)) % 10 == 0
+
+
+assert all(aba_valid(routing_number) for routing_number in ABA_ROUTING_NUMBERS)
+
+
+def random_routing_number(rnd: random.Random) -> str:
+    return rnd.choice(ABA_ROUTING_NUMBERS)
+
+
+def random_account_number(rnd: random.Random) -> str:
+    length = rnd.randint(10, 12)
+    return str(rnd.randrange(10 ** (length - 1), 10 ** length))
 
 
 def bank_dir() -> pathlib.Path:

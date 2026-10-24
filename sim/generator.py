@@ -381,11 +381,13 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
         def bank_change() -> list[dict]:
             real = c.get("email") or f"billing@{c['usdot']}.carrier.example"
             sender = mail.lookalike(real) if scenario == "bank_change" else real
-            new_account_last4 = f"{rnd.randint(0, 9999):04d}"
+            routing_number = bank.random_routing_number(rnd)
+            account_number = bank.random_account_number(rnd)
             m = mail.write(sender, mail.AP_INBOX, f"URGENT: updated remittance details - {c['name']}",
                            "Hi AP team,\n\nWe have changed banks. Effective immediately please send all payments, "
-                           f"including invoice {inv_no}, to the new account below.\nRouting ****{remit['routing_last4']}"
-                           f" / Account ****{new_account_last4}\n\nThank you,\nAccounting", at,
+                           f"including invoice {inv_no}, to the new account below. The next payment amount is "
+                           f"${stated:,.2f}.\nRouting number: {routing_number}\nAccount number: {account_number}"
+                           "\n\nThank you,\nAccounting", at,
                            reply_to=sender)
             return [_event("email.received", load, _email_payload(m), at)]
         add(at, bank_change)
@@ -570,9 +572,13 @@ async def seed_hero(world: dict) -> None:
         record_answer(load, "detention_unsupported", {"field": "detention", "claimed_h": 2,
                       "gps_dwell_min": 47, "free_time_min": 120})
     bank_change_at = _now()
+    hero_rng = _load_rng({"load_id": "LOAD-C-77-BANK"})
+    routing_number = bank.random_routing_number(hero_rng)
+    account_number = bank.random_account_number(hero_rng)
     msg = mail.write("accounts@rapid-ridge.example", "ap@goldengatefreight.example",
                      "Remittance details - Rapid Ridge Transport",
-                     "We changed banks. Invoice INV-RR-9400, new account details: Account ****9400.",
+                     "We changed banks effective immediately. Invoice INV-RR-9400, next payment amount: "
+                     "$9,400.00.\nRouting number: " + routing_number + "\nAccount number: " + account_number,
                      bank_change_at)
     await publish(None, _event("email.received", {"case_id": "CASE-C-77-BANK"},
                                 _email_payload(msg), bank_change_at))

@@ -14,7 +14,7 @@ from ingest import main as ingest_main
 from ingest.documents import classify, extract_invoice_rules, read_email
 from ingest.main import _invoice_email, connect, handle
 from integrations import edgar, fmcsa
-from sim import docs, generator
+from sim import bank, docs, generator
 from sim import mail as sim_mail
 from sim.generator import SCENARIOS
 from sim.world import price_lane
@@ -136,8 +136,11 @@ def test_ingestion_extracts_and_routes_raw_scenario(world, scenario):
     assert all(event["source"] == "sim" and event["ts"].endswith("Z") and event["sim_ts"].endswith("Z")
                and "occurred_at" not in event for event in derived)
     if scenario == "double_brokering":
+        assert len(invoices) == 1
+        assert "usdot_mismatch" in invoices[0]["ingest_flags"]
+        assert invoices[0]["invoice_carrier_usdot"] != load["carrier"]["usdot"]
         review = next(event for event in derived if event["type"] == "document.extracted")
-        assert not invoices and review["payload"]["status"] == "needs_review"
+        assert review["payload"]["status"] == "needs_review"
         assert review["payload"]["fields"]["mismatch"] == "usdot"
         return
     expected_count = 2 if scenario in ("duplicate_invoice", "duplicate_renumbered") else 1
@@ -164,7 +167,7 @@ def test_ingestion_extracts_and_routes_raw_scenario(world, scenario):
         assert invoice["remit_to"]["name"] == sidecar["remit_to"]["name"]
         assert invoice["gps_dwell_min"] == delivery
         assert invoice["free_time_min"] == load["free_time_min"]
-        assert invoice["carrier"]["usdot"] == sidecar["carrier"]["usdot"]
+        assert invoice["carrier"]["usdot"] == load["carrier"]["usdot"]
         assert invoice["extraction"]["method"] == "rules"
 
     if scenario == "duplicate_invoice":
@@ -181,13 +184,15 @@ def test_ingestion_extracts_and_routes_raw_scenario(world, scenario):
                           if event["type"] == "email.received"
                           and event["payload"]["mail_id"] == change["source_email"])
         bank_mail = read_email(generator.data_dir() / "mail" / f"{mail_event['payload']['mail_id']}.eml")
-        account = re.search(r"Account \*{4}(\d{4})", bank_mail["body"])
-        assert account and change["new_account_last4"] == account.group(1)
+        account = re.search(r"Account number: (\d{10,12})", bank_mail["body"])
+        assert account and change["new_account_last4"] == account.group(1)[-4:]
+        assert change["new_account"] == account.group(1)
+        assert bank.aba_valid(change["new_routing"])
 
     if scenario == "misapplied_payment":
         assert not any(event["type"] == "shipper_payment.received" for event in derived)
-        assert any(event["type"] == "document.extracted" and event["payload"]["status"] == "needs_review"
-                   for event in derived)
+        assert any(event["type"] == "bank.event" and
+                   event["payload"]["reference"].startswith("SINV-MISSING-") for event in derived)
         return
     payment = next(event["payload"] for event in derived if event["type"] == "shipper_payment.received")
     assert payment["chase"] == (scenario == "shipper_short_pay")
@@ -362,12 +367,13 @@ def test_unclassified_pdf_email_emits_review_event(world):
     finally:
         db.close()
 
-    assert len(derived) == 1
-    assert derived[0]["type"] == "document.extracted"
-    assert derived[0]["payload"]["kind"] == "other"
-    assert derived[0]["payload"]["status"] == "needs_review"
-    assert derived[0]["payload"]["fields"] == {
+    document = next(event for event in derived if event["type"] == "document.extracted")
+    email_event = next(event for event in derived if event["type"] == "email.received")
+    assert document["payload"]["kind"] == "other"
+    assert document["payload"]["status"] == "needs_review"
+    assert document["payload"]["fields"] == {
         "subject": "Unclassified document", "attachments": [Path(pod_ref.removeprefix("doc:") + ".pdf").name]}
+    assert email_event["payload"]["text"]
 
 
 def test_invoice_usdot_mismatch_needs_review(world):
@@ -382,9 +388,11 @@ def test_invoice_usdot_mismatch_needs_review(world):
     finally:
         db.close()
 
-    assert len(derived) == 1 and derived[0]["type"] == "document.extracted"
-    assert derived[0]["payload"]["status"] == "needs_review"
-    assert derived[0]["payload"]["fields"]["mismatch"] == "usdot"
+    document = next(event for event in derived if event["type"] == "document.extracted")
+    invoice_event = next(event for event in derived if event["type"] == "carrier_invoice.received")
+    assert document["payload"]["status"] == "needs_review"
+    assert document["payload"]["fields"]["mismatch"] == "usdot"
+    assert "usdot_mismatch" in invoice_event["payload"]["ingest_flags"]
 
 
 def test_foreign_receipts_and_pod_are_not_matched_to_invoice_load(world):
@@ -443,9 +451,11 @@ def test_conflicting_invoice_load_id_and_bol_needs_review(world):
     finally:
         db.close()
 
-    assert len(derived) == 1 and derived[0]["type"] == "document.extracted"
-    assert derived[0]["payload"]["status"] == "needs_review"
-    assert derived[0]["payload"]["fields"]["mismatch"] == "load_id/bol"
+    document = next(event for event in derived if event["type"] == "document.extracted")
+    email_event = next(event for event in derived if event["type"] == "email.received")
+    assert document["payload"]["status"] == "needs_review"
+    assert document["payload"]["fields"]["mismatch"] == "load_id/bol"
+    assert email_event["payload"]["text"]
 
 
 def test_invoice_without_line_items_needs_review(world):
@@ -461,6 +471,122 @@ def test_invoice_without_line_items_needs_review(world):
     finally:
         db.close()
 
-    assert len(derived) == 1 and derived[0]["type"] == "document.extracted"
-    assert derived[0]["payload"]["status"] == "needs_review"
-    assert derived[0]["payload"]["fields"]["mismatch"] == "no_line_items"
+    document = next(event for event in derived if event["type"] == "document.extracted")
+    email_event = next(event for event in derived if event["type"] == "email.received")
+    assert document["payload"]["status"] == "needs_review"
+    assert document["payload"]["fields"]["mismatch"] == "no_line_items"
+    assert email_event["payload"]["text"]
+
+
+def test_offline_40_loads_follow_w1_routing_contract(world, tmp_path, monkeypatch):
+    root = tmp_path / "offline-flow"
+    asyncio.run(generator.offline(40, root, seed=7))
+    monkeypatch.setenv("SIM_DATA_DIR", str(root))
+    monkeypatch.setenv("WORLD_FILE", str(root / "world.json"))
+    raw_events = [json.loads(line) for line in (root / "events.jsonl").read_text().splitlines()]
+    db = connect()
+    try:
+        async def consume():
+            output = []
+            by_trigger = {}
+            for raw in raw_events:
+                derived = await handle(raw, db)
+                routable = [event for event in derived if event["type"] != "document.extracted"]
+                by_trigger[raw["event_id"]] = routable
+                output.extend(routable)
+            return output, by_trigger
+
+        routed, by_trigger = asyncio.run(consume())
+    finally:
+        db.close()
+
+    route_types = {
+        "carrier_invoice.received", "pod.received", "voice.inbound.dispute",
+        "shipper_payment.received", "bank.event", "bank_change.requested",
+    }
+    not_routed = {"gps.ping", "load.tendered", "load.dispatched", "load.delivered"}
+    allowed_types = route_types | not_routed | {"email.received", "scenario.injected"}
+    assert all(event["type"] in allowed_types for event in routed)
+    assert not any(event["type"] in {"document.extracted", "shipper_invoice.issued"} for event in routed)
+    passthrough = {"load.tendered", "load.dispatched", "gps.ping", "load.delivered", "pod.received"}
+    for raw in raw_events:
+        if raw["type"] in passthrough:
+            emitted = by_trigger[raw["event_id"]]
+            assert len(emitted) == 1 and emitted[0]["event_id"] == raw["event_id"]
+        elif raw["type"] == "shipper_invoice.issued":
+            assert by_trigger[raw["event_id"]] == []
+
+    invoice_emails = [
+        raw for raw in raw_events
+        if raw["type"] == "email.received"
+        and any(Path(str(name).removeprefix("doc:")).name.startswith("INV-")
+                for name in raw.get("payload", {}).get("attachments", []))
+    ]
+    for raw in invoice_emails:
+        emitted = by_trigger[raw["event_id"]]
+        assert len(emitted) == 1
+        assert emitted[0]["type"] in {"carrier_invoice.received", "email.received"}
+
+    bank_arrivals = [raw for raw in raw_events if raw["type"] == "bank.event"]
+    for raw in bank_arrivals:
+        emitted = by_trigger[raw["event_id"]]
+        assert len(emitted) == 1
+        assert emitted[0]["type"] in {"shipper_payment.received", "bank.event"}
+
+    answer_entries = [json.loads(line) for line in (root / "answer_key.jsonl").read_text().splitlines()]
+    double_load_id = next(item["load_id"] for item in answer_entries
+                          if item["scenario"] == "double_brokering")
+    double_invoice = next(
+        event for raw in invoice_emails
+        if raw.get("case_hint") == f"CASE-{double_load_id}"
+        or any(double_load_id in str(name) for name in raw.get("payload", {}).get("attachments", []))
+        for event in by_trigger[raw["event_id"]]
+        if event["type"] == "carrier_invoice.received"
+    )
+    assert "usdot_mismatch" in double_invoice["payload"]["ingest_flags"]
+
+    email_routed_types = {"carrier_invoice.received", "bank_change.requested", "email.received"}
+    for event in routed:
+        payload = event["payload"]
+        if event["type"] in email_routed_types:
+            assert payload["text"].strip()
+            assert all(key in payload for key in ("from", "to", "subject", "date", "evidence_refs"))
+            assert event["evidence_refs"] == payload["evidence_refs"]
+        if event["type"] == "shipper_payment.received":
+            assert sum(item["amount"] for item in payload["invoices_applied"]) == payload["amount"]
+
+    reserved = {"event_type", "doc_type", "needs_review", "review_notes", "redacted_tokens"}
+
+    def assert_no_reserved_keys(value):
+        if isinstance(value, dict):
+            assert not (reserved & value.keys())
+            for nested in value.values():
+                assert_no_reserved_keys(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                assert_no_reserved_keys(nested)
+
+    for event in routed:
+        assert_no_reserved_keys(event["payload"])
+
+    injection = {"event_id": "INJECT-CONTRACT-1", "type": "scenario.injected",
+                 "ts": "2026-01-01T00:00:00Z", "sim_ts": "2026-01-01T00:00:00Z",
+                 "case_hint": "CASE-INJECT-CONTRACT-1", "payload": {"load_id": "LOAD-INJECT-CONTRACT-1"}}
+    db = connect()
+    try:
+        injected = asyncio.run(handle(injection, db))
+    finally:
+        db.close()
+    assert len(injected) == 1
+    assert injected[0]["event_id"] == injection["event_id"]
+    assert injected[0]["payload"]["generated_type"] == "load.tendered"
+
+    found_routing_numbers = []
+    found_account_numbers = []
+    for email_path in (root / "mail").glob("*.eml"):
+        body = read_email(email_path)["body"]
+        found_routing_numbers.extend(re.findall(r"Routing number:\s*(\d{9})", body))
+        found_account_numbers.extend(re.findall(r"Account number:\s*(\d{10,12})", body))
+    assert found_routing_numbers
+    assert all(bank.aba_valid(number) for number in found_routing_numbers)
+    assert all(10 <= len(number) <= 12 for number in found_account_numbers)

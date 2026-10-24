@@ -2,13 +2,14 @@ from common.policy import check
 
 
 def test_invoice_over_contract_needs_approval():
-    d = check("evaluate_invoice", "carrier_ap", {"contract_rate": 1850, "invoice_amount": 2150})
+    d = check("evaluate_invoice", "carrier_ap", {
+        "contract_rate": 1850, "invoice_amount": 2150, "pod_signed": True})
     assert d.result == "needs_approval" and "P-001" in d.policy_ids
 
 
 def test_duplicate_invoice_needs_approval():
     d = check("evaluate_invoice", "carrier_ap", {
-        "contract_rate": 1000, "invoice_amount": 1000, "duplicate_of": "INV-1"})
+        "contract_rate": 1000, "invoice_amount": 1000, "pod_signed": True, "duplicate_of": "INV-1"})
     assert d.result == "needs_approval" and d.policy_ids == ["P-007"]
     assert d.reason == "duplicate of INV-1 (same load/BOL)"
 
@@ -19,9 +20,15 @@ def test_unsigned_pod_needs_approval():
     assert d.result == "needs_approval" and d.policy_ids == ["P-013"]
 
 
+def test_missing_pod_status_needs_approval():
+    d = check("evaluate_invoice", "carrier_ap", {"contract_rate": 1000, "invoice_amount": 1000})
+    assert d.result == "needs_approval" and d.policy_ids == ["P-013"]
+
+
 def test_accessorial_without_receipt_needs_approval():
     payload = {"contract_rate": 1000, "invoice_amount": 1000,
-               "line_items": [{"desc": "Detention 2h", "amount": 150}], "receipt_attached": False}
+               "pod_signed": True, "line_items": [{"desc": "Detention 2h", "amount": 150}],
+               "receipt_attached": False}
     d = check("evaluate_invoice", "carrier_ap", payload)
     assert d.result == "needs_approval" and d.policy_ids == ["P-014"]
     assert check("evaluate_invoice", "carrier_ap", {**payload, "receipt_attached": True}).result == "allow"
@@ -29,7 +36,7 @@ def test_accessorial_without_receipt_needs_approval():
 
 def test_remit_to_without_noa_needs_approval():
     payload = {"contract_rate": 1000, "invoice_amount": 1000, "carrier": {"name": "Carrier"},
-               "remit_to": {"name": "Factor"}}
+               "remit_to": {"name": "Factor"}, "pod_signed": True}
     d = check("evaluate_invoice", "carrier_ap", payload)
     assert d.result == "needs_approval" and d.policy_ids == ["P-004"]
     assert check("evaluate_invoice", "carrier_ap", {
@@ -37,14 +44,24 @@ def test_remit_to_without_noa_needs_approval():
 
 
 def test_clean_contract_priced_invoice_is_allowed():
-    d = check("evaluate_invoice", "carrier_ap", {"contract_rate": 1000, "invoice_amount": 1000})
+    d = check("evaluate_invoice", "carrier_ap", {
+        "contract_rate": 1000, "invoice_amount": 1000, "pod_signed": True})
     assert d.result == "allow"
+
+
+def test_layover_requires_receipt():
+    payload = {"contract_rate": 1000, "invoice_amount": 1000, "pod_signed": True,
+               "line_items": [{"desc": "Layover", "amount": 200}], "receipt_attached": False}
+    d = check("evaluate_invoice", "carrier_ap", payload)
+    assert d.result == "needs_approval" and "P-014" in d.policy_ids
+    d = check("evaluate_invoice", "carrier_ap", {**payload, "receipt_attached": True})
+    assert "P-014" not in d.policy_ids and d.result == "allow"
 
 
 def test_invoice_policy_returns_all_matching_ids():
     d = check("evaluate_invoice", "carrier_ap", {
-        "contract_rate": 1000, "invoice_amount": 1100, "line_items": [{"desc": "lumper"}],
-        "receipt_attached": False})
+        "contract_rate": 1000, "invoice_amount": 1100, "pod_signed": True,
+        "line_items": [{"desc": "lumper"}], "receipt_attached": False})
     assert d.result == "needs_approval" and d.policy_ids == ["P-014", "P-001"]
 
 

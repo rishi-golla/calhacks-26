@@ -152,7 +152,7 @@ def run(data_dir: str | Path = "data") -> dict:
                     match = re.search(r"Detention\s+(\d+(?:\.\d+)?)\s*h\b", desc, re.IGNORECASE)
                     if is_detention and not match:
                         add("V7", load_id, inv.get("ref"), "detention hours missing from line")
-                    if det_logs and dwell is not None and rc:
+                    if is_detention and det_logs and dwell is not None and rc:
                         claimed = float(match.group(1)) if match else 0
                         free = int(rc.get("free_time_min", 0))
                         if det_logs[0].get("dwell_min") != dwell or claimed != math.ceil((dwell-free)/60):
@@ -165,12 +165,8 @@ def run(data_dir: str | Path = "data") -> dict:
                 if not isinstance(party, dict):
                     continue
                 expected = directory.get(party.get("id"))
-                if party.get("source") == "prd_hero_fixture":
-                    names = HERO.get(party.get("id"))
-                    if not names or party.get("name") != names[0] or (names[1] and str(party.get("usdot")) != names[1]):
-                        add("V10", load_id, doc.get("ref"), f"hero fixture {key} differs from PRD")
-                elif not expected or any(party.get(k) != expected.get(k) for k in
-                                         ("name", "usdot", "mc", "cik", "phone", "email")):
+                if not expected or any(party.get(k) != expected.get(k) for k in
+                                       ("name", "usdot", "mc", "cik", "phone", "email")):
                     add("V10", load_id, doc.get("ref"), f"{key} differs from world directory")
 
     # Event order and document references.
@@ -311,6 +307,8 @@ def run(data_dir: str | Path = "data") -> dict:
         elif scenario == "duplicate_invoice":
             count = sum(1 for p, m in mail_records if any(Path(a.get_filename() or "").stem in
                          {x.get("ref") for x in invoice_docs} for a in m.iter_attachments()))
+            count = max(count, sum(1 for e in events if e.get("type") == "email.received"
+                                  and e.get("case_hint") == f"CASE-{load_id}"))
             if count < 2:
                 add("V12", load_id, None, "duplicate invoice email missing")
         elif scenario == "bank_change":

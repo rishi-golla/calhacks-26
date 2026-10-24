@@ -80,6 +80,8 @@ def _capture(pattern: str, text: str, flags: int = re.IGNORECASE) -> str | None:
 
 
 def extract_invoice_rules(text: str) -> dict:
+    heading = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    carrier_name = re.sub(r"\s+INVOICE\s*$", "", heading, flags=re.IGNORECASE).strip() or None
     invoice_number = _capture(r"\bInvoice\s*#\s*([^\s]+)", text)
     load_id = _capture(r"\bLoad\s*/\s*ref\s*#\s*([A-Z0-9-]+)", text)
     bol = _capture(r"\bBOL\s*#\s*([A-Z0-9-]+)", text)
@@ -102,7 +104,7 @@ def extract_invoice_rules(text: str) -> dict:
                                    "rate": _number(match.group("rate")),
                                    "amount": _number(match.group("amount"))})
     total = _capture(rf"\bTOTAL\s+DUE:\s*{MONEY}", text)
-    return {"invoice_number": invoice_number, "load_id": load_id, "bol": bol, "usdot": usdot,
+    return {"carrier_name": carrier_name, "invoice_number": invoice_number, "load_id": load_id, "bol": bol, "usdot": usdot,
             "invoice_date": invoice_date, "terms": terms, "remit_to_name": remit.group(1).strip() if remit else None,
             "line_items": line_items, "total": _number(total) if total else None}
 

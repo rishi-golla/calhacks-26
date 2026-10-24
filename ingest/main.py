@@ -135,15 +135,31 @@ def _email_needs_review(trigger: dict, message: dict) -> dict:
     return _document_event(trigger, "other", "needs_review", fields, evidence_refs=_evidence_refs(message))
 
 
-def _email_event(trigger: dict, message: dict) -> dict:
+def _email_fields(trigger: dict, message: dict) -> dict:
     refs = _evidence_refs(message)
-    payload = {**trigger.get("payload", {}),
-               "text": message.get("body") or trigger.get("payload", {}).get("snippet") or "",
+    attachments = list(message.get("attachments", []))
+    invoice = next((item for item in attachments
+                    if isinstance(item, dict) and classify(item.get("text", "")) == "carrier_invoice"), None)
+    if invoice:
+        attachments.remove(invoice)
+        attachments.insert(0, invoice)
+    text_parts = [message.get("body") or trigger.get("payload", {}).get("snippet") or ""]
+    text_parts.extend(
+        f"--- attachment: {item if isinstance(item, str) else item.get('filename', '')} ---\n"
+        f"{'' if isinstance(item, str) else item.get('text', '')}"
+        for item in attachments)
+    payload = {"text": "\n\n".join(part for part in text_parts if part)[:12000],
                "from": message.get("from") or "",
                "to": message.get("to") or "",
                "subject": message.get("subject") or "",
                "date": trigger.get("payload", {}).get("sent_at") or message.get("date"),
                "evidence_refs": refs}
+    return payload
+
+
+def _email_event(trigger: dict, message: dict) -> dict:
+    refs = _evidence_refs(message)
+    payload = {**trigger.get("payload", {}), **_email_fields(trigger, message)}
     return _event(trigger, "email.received", payload, evidence_refs=refs)
 
 
@@ -235,10 +251,15 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
     receipt_attached = True if has_receipt else False if has_accessorial_line else None
     gps_dwell_min = load.get("gps_dwell_min")
     free_time_min = load.get("free_time_min")
+    email_fields = _email_fields(trigger, message)
+    shipper = load.get("shipper") or {}
     payload = {
         "case_id": case_id, "load_id": load_id, "lane": load.get("lane"), "pro": load.get("pro"),
         "bol": load.get("bol"), "po": load.get("po"), "invoice_id": invoice_id,
         "invoice_number": invoice_number, "carrier": carrier, "shipper": load.get("shipper"),
+        "carrier_id": carrier_fields.get("id"), "carrier_name": carrier_fields.get("name"),
+        "shipper_id": shipper.get("id"), "shipper_name": shipper.get("name"),
+        "invoice_date": fields.get("invoice_date"),
         "contract_rate": load.get("contract_rate"), "invoice_amount": fields["total"], "line_items": line_items,
         "invoice_carrier_usdot": fields.get("usdot"), "ingest_flags": ingest_flags,
         "detention_hours_claimed": next(
@@ -255,7 +276,7 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
         "gps_dwell_min": gps_dwell_min, "receipt_attached": receipt_attached,
         "pod_signed": pod_signed, "remit_to": {"name": fields.get("remit_to_name")},
         "source_email": message.get("mail_id"), **(load.get("operator_overrides") or {}),
-        "extraction": extracted,
+        "extraction": extracted, **email_fields,
     }
     document_fields = {**fields, "attachments": {"pod": pod, "detention_log": detention_log,
                                                    "lumper_receipt": has_lumper_receipt},
@@ -313,6 +334,23 @@ def _bank_change(trigger: dict, message: dict, db: sqlite3.Connection) -> list[d
     account_number = account_match.group(1) if account_match else None
     account_last4 = account_number[-4:] if account_number else (
         account_last4_match.group(1) if account_last4_match else None)
+    routing_match = re.search(r"\bRouting(?:\s+number)?\s*:\s*(\d{9})\b",
+                              message.get("body", ""), re.IGNORECASE)
+    routing_last4_match = re.search(r"\bRouting\s+\*{4}(\d{4})", message.get("body", ""), re.IGNORECASE)
+    routing_number = routing_match.group(1) if routing_match else None
+    next_payment_match = re.search(
+        r"\b(?:next payment|scheduled payment|payment amount)\s*(?:is|:)?\s*\$?([\d,]+(?:\.\d{2})?)",
+        message.get("body", ""), re.IGNORECASE)
+    next_payment = float(next_payment_match.group(1).replace(",", "")) if next_payment_match else (
+        invoice.get("invoice_amount") if invoice else None)
+    urgency_match = re.search(r"\b(urgent(?:ly)?|immediately|today|as soon as possible)\b",
+                              f"{message.get('subject', '')} {message.get('body', '')}", re.IGNORECASE)
+    effective_match = re.search(r"\bEffective\s+(?:date\s*:?\s*)?(\d{4}-\d{2}-\d{2})\b",
+                                message.get("body", ""), re.IGNORECASE)
+    effective_date = effective_match.group(1) if effective_match else (
+        trigger.get("payload", {}).get("sent_at") if re.search(r"\beffective immediately\b",
+                                                               message.get("body", ""), re.IGNORECASE) else None)
+    email_fields = _email_fields(trigger, message)
     payload = {"case_id": case_id, "load_id": load_id, "lane": invoice.get("lane") if invoice else None,
                "pro": invoice.get("pro") if invoice else None,
                "bol": invoice.get("bol") if invoice else None, "po": invoice.get("po") if invoice else None,
@@ -321,9 +359,19 @@ def _bank_change(trigger: dict, message: dict, db: sqlite3.Connection) -> list[d
                "from": message.get("from"), "registered_email": registered_email,
                "sender_matches_registered": sender_matches_registered,
                "new_payee": remit_name or carrier_name, "new_account_last4": account_last4,
-               "source_email": message.get("mail_id")}
+               "carrier_id": (carrier or {}).get("id"), "carrier_name": carrier_name or None,
+               "requested_by": sender_address, "channel": "email", "effective_date": effective_date,
+               "new_routing": routing_number, "new_account": account_number,
+               "next_payment_amount": next_payment,
+               "urgency_language": urgency_match.group(0) if urgency_match else None,
+               "source_email": message.get("mail_id"), **email_fields}
+    if routing_number:
+        payload["new_routing_last4"] = routing_number[-4:]
     fields = {"carrier": carrier_name or None, "invoice_number": number_match.group(1) if number_match else None,
-              "new_account_last4": account_last4, "requested_via": requested_via,
+              "new_account_last4": account_last4,
+              "new_routing_last4": routing_number[-4:] if routing_number else (
+                  routing_last4_match.group(1) if routing_last4_match else None),
+              "requested_via": requested_via,
               "sender_matches_registered": sender_matches_registered}
     status = "extracted_unverified_sender" if not sender_matches_registered else (
         "extracted" if carrier and account_last4 else "needs_review")
@@ -351,7 +399,7 @@ def _remittance_advice(trigger: dict, message: dict, db: sqlite3.Connection) -> 
                 _email_event(trigger, message)]
     invoice["deduction_reason"] = reason
     invoice["source_email"] = message.get("mail_id")
-    invoice["remittance_text"] = message.get("body") or ""
+        invoice["remittance_text"] = message.get("body") or ""
     db.execute("UPDATE shipper_invoices SET json=? WHERE invoice_id=?", (_dump(invoice), invoice_id))
     fields = {"invoice_id": invoice_id, "deduction_reason": reason}
     case_id = f"{invoice.get('case_id')}-AR"
@@ -425,10 +473,18 @@ def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
                    "pro": invoice.get("pro"), "bol": invoice.get("bol"), "po": invoice.get("po"),
                    "invoice_id": reference, "shipper": invoice.get("shipper"), "invoice_amount": billed_amount,
                    "paid_amount": paid_amount, "chase": paid_amount < billed_amount, "remittance": "ACH",
-                   "bank_txn": txn_id, "deduction_reason": invoice.get("deduction_reason")}
+                   "bank_txn": txn_id, "deduction_reason": invoice.get("deduction_reason"),
+                   "payment_id": txn_id, "shipper_id": (invoice.get("shipper") or {}).get("id"),
+                   "shipper_name": (invoice.get("shipper") or {}).get("name"),
+                   "amount": paid_amount, "remittance_ref": reference,
+                   "invoices_applied": [{"invoice_id": reference, "amount": paid_amount}],
+                   "posted_at": trigger.get("sim_ts"), "direction": direction,
+                   "text": f"{line}\n{invoice.get('remittance_text', '')}".rstrip(),
+                   "evidence_refs": []}
         evidence_refs = list(invoice.get("_evidence_refs", []))
         if invoice.get("source_email"):
             evidence_refs.append(f"mail:{invoice['source_email']}")
+        payload["evidence_refs"] = evidence_refs
         output.append(_event(trigger, "shipper_payment.received", payload, "P2", evidence_refs))
         if txn_id:
             db.execute("INSERT OR IGNORE INTO bank_txns(txn_id) VALUES (?)", (txn_id,))

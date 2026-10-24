@@ -6,17 +6,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pypdf import PdfReader
 
 from agents.carrier_ap.tools import three_way_match
 from common import harness_client
 from ingest.documents import extract_invoice_rules, read_email
 from ingest.main import connect, handle
 from integrations import edgar, fmcsa
-from pypdf import PdfReader
 from sim import docs, generator
+from sim.generator import SCENARIOS
 from sim.world import price_lane
 from tests.test_w4_data import CARRIER_ROW, SEC_SUB
-from sim.generator import SCENARIOS
 
 
 @pytest.fixture

@@ -157,7 +157,7 @@ async def extract_invoice(text: str, case_hint: str) -> dict:
         model_used = response.get("harness", {}).get("model_used")
         parsed = json.loads(response["choices"][0]["message"]["content"] or "{}")
         if not isinstance(parsed, dict):
-            raise ValueError("invoice extraction response must be a JSON object")
+            raise TypeError("invoice extraction response must be a JSON object")
         for key in ("invoice_number", "total", "line_items", "remit_to_name"):
             value = parsed.get(key)
             if not _has_value(value):

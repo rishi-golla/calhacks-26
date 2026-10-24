@@ -145,9 +145,15 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
         "bol": load.get("bol"), "po": load.get("po"), "invoice_id": invoice_id,
         "invoice_number": invoice_number, "carrier": carrier, "shipper": load.get("shipper"),
         "contract_rate": load.get("contract_rate"), "invoice_amount": fields["total"], "line_items": line_items,
-        "detention_hours_claimed": next((float(match.group(1)) for item in line_items
-                                         if (match := re.search(r"\bDetention\s+(\d+(?:\.\d+)?)\s*h\b",
-                                                                str(item.get("desc", "")), re.IGNORECASE)), 0),
+        "detention_hours_claimed": next(
+            (
+                float(match.group(1))
+                for item in line_items
+                if (match := re.search(r"\bDetention\s+(\d+(?:\.\d+)?)\s*h\b",
+                                       str(item.get("desc", "")), re.IGNORECASE))
+            ),
+            0,
+        ),
         "free_time_min": free_time_min,
         "gps": {"delivery_dwell_min": gps_dwell_min, "free_time_min": free_time_min},
         "gps_dwell_min": gps_dwell_min, "receipt_attached": receipt_attached,

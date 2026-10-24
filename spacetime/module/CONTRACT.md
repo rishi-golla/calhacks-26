@@ -11,7 +11,7 @@ Authentication comes only from the actual SpacetimeDB sender identity. The init 
 | Reducer | Role | Payload besides `write_id` |
 |---|---|---|
 | `grant_role` | admin | `identity` (64 hex), `role`, `actor`, `active` (default true) |
-| `open_case` | ingest | `case_id`, `load_id`, `title`, `priority` (P0–P3, default P2), `exposure_usd` (default 0) |
+| `open_case` | ingest | `case_id`, `load_id` (optional until known), `title`, `priority` (P0–P3, default P2), `exposure_usd` (default 0); calling it again on an existing case refreshes title, priority and exposure only. Status and timestamps are kept, a set `load_id` is immutable, and a `human_owned` case rejects the refresh |
 | `update_case` | controller, validator, human | `case_id`, `status` (`open`, `in_progress`, `resolved`, `human_owned`), `reason` |
 | `upsert_invoice` | ingest | `id`, `case_id`, `carrier_id`, `load_id`, `amount`, `contract_amount`, `issued_at` (optional ISO); `paid_amount` is zero at ingest and cannot be overwritten |
 | `set_period` | admin, human | `period` (YYYY-MM), `status` (`open` or `locked`) |
@@ -37,7 +37,7 @@ Authentication comes only from the actual SpacetimeDB sender identity. The init 
 | `set_agent_model` | human | `agent`, `model`, `enabled` (default true) |
 | `upsert_forecast` | cfo | `id`, `case_id`, `period`, `category`, `amount` (signed), `confidence`, `assumptions_json` |
 | `upsert_company` | ingest | `id`, `kind`, `name`, optional `usdot`, `mc`, `phone`, `website`, `source_url` |
-| `upsert_contact` | ingest | `id`, `company_id`, `name`, optional `title`, `phone`, `email`, `linkedin_url`, `source`, `source_url`, `confidence`, `alternates_json` |
+| `upsert_contact` | ingest | `id`, `company_id`, `name`, optional `title`, `phone`, `email`, `linkedin_url`, `source` (`fmcsa`, `sec_edgar`, `own_key`, `context_dev`, `website`, `fixture`), `source_url`, `confidence`, `alternates_json` |
 | `add_review` | validator | `id`, `target_task_id`, `case_id`, `verdict` (`pass` or `issue`), `checks_json`, `friction_json`, `actions` |
 | `upsert_memory` | validator, human | `id`, `agent`, `scope` (object with carrier_id/lane/claim_type/skill only), `text`, `source_ref`, `active` |
 | `publish_instruction_version` | validator, human | `agent`, `diff`, `reason`, `source_ref`, `expected_version`; compare-and-swap against latest version (0 initially); validator patches restricted to approved append-only advisory template |

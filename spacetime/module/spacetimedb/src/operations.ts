@@ -189,15 +189,23 @@ export const grantRole: Handler = m => {
   m.capture('principal', key, previous, next);
 };
 
+// Ingest opens a case at its first routable event (often a POD, before the carrier bills) and refreshes
+// title, priority and exposure as source documents arrive. Status, timestamps and a set load are not ingest's.
 export const openCase: Handler = m => {
-  const { ctx, p } = m;
+  const { ctx, p, actor } = m;
+  const case_id = text(p, 'case_id');
+  const previous = ctx.db.case.case_id.find(case_id);
+  if (previous) caseFor(ctx, case_id, actor);
+  const load_id = text(p, 'load_id', previous?.load_id ?? '');
+  if (previous?.load_id && load_id !== previous.load_id) throw new Error('case load is immutable');
   const row = {
-    case_id: text(p, 'case_id'), load_id: text(p, 'load_id'), title: text(p, 'title'),
-    status: 'open', priority: choice(p, 'priority', ['P0', 'P1', 'P2', 'P3'], 'P2'),
-    exposure_usd: amount(p, 'exposure_usd', 0), opened_at: now(ctx), resolved_at: '',
+    case_id, load_id, title: text(p, 'title', previous?.title),
+    status: previous?.status ?? 'open', priority: choice(p, 'priority', ['P0', 'P1', 'P2', 'P3'], previous?.priority ?? 'P2'),
+    exposure_usd: amount(p, 'exposure_usd', previous?.exposure_usd ?? 0), opened_at: previous?.opened_at ?? now(ctx),
+    resolved_at: previous?.resolved_at ?? '',
   };
-  ctx.db.case.insert(row);
-  m.capture('case', row.case_id, null, row);
+  if (previous) ctx.db.case.case_id.update(row); else ctx.db.case.insert(row);
+  m.capture('case', row.case_id, previous, row);
 };
 
 export const updateCase: Handler = m => {
@@ -594,6 +602,9 @@ export const upsertCompany: Handler = m => {
   m.capture('company', id, previous, row);
 };
 
+// sec_edgar: a shipper's SEC registration. fixture: a labeled stand-in, never a real-world record.
+const CONTACT_SOURCES = ['fmcsa', 'sec_edgar', 'own_key', 'context_dev', 'website', 'fixture'];
+
 export const upsertContact: Handler = m => {
   const { ctx, p } = m;
   const id = text(p, 'id');
@@ -601,7 +612,7 @@ export const upsertContact: Handler = m => {
   const company_id = text(p, 'company_id', previous?.company_id);
   must(ctx.db.company.id.find(company_id), 'contact company does not exist');
   if (previous && previous.company_id !== company_id) throw new Error('contact company is immutable');
-  const row = { id, company_id, name: text(p, 'name', previous?.name), title: text(p, 'title', previous?.title ?? ''), phone: text(p, 'phone', previous?.phone ?? ''), email: text(p, 'email', previous?.email ?? ''), linkedin_url: text(p, 'linkedin_url', previous?.linkedin_url ?? ''), source: choice(p, 'source', ['fmcsa', 'own_key', 'context_dev', 'website'], previous?.source ?? 'website'), source_url: text(p, 'source_url', previous?.source_url ?? ''), confidence: probability(p, 'confidence', previous?.confidence ?? 0), alternates_json: p.alternates_json === undefined ? previous?.alternates_json ?? '[]' : json(p, 'alternates_json', []) };
+  const row = { id, company_id, name: text(p, 'name', previous?.name), title: text(p, 'title', previous?.title ?? ''), phone: text(p, 'phone', previous?.phone ?? ''), email: text(p, 'email', previous?.email ?? ''), linkedin_url: text(p, 'linkedin_url', previous?.linkedin_url ?? ''), source: choice(p, 'source', CONTACT_SOURCES, previous?.source ?? 'website'), source_url: text(p, 'source_url', previous?.source_url ?? ''), confidence: probability(p, 'confidence', previous?.confidence ?? 0), alternates_json: p.alternates_json === undefined ? previous?.alternates_json ?? '[]' : json(p, 'alternates_json', []) };
   if (row.phone) phone(row.phone);
   if (previous) ctx.db.contact.id.update(row); else ctx.db.contact.insert(row);
   m.capture('contact', id, previous, row);

@@ -271,6 +271,37 @@ test('directory and demo allowlist checks prevent substituted phone numbers', ()
   assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, { ...payload, id: 'CALL-2' }), /one call/);
 });
 
+test('ingest refreshes an open case as documents arrive but cannot move its load or status', () => {
+  const h = new Harness();
+  const open = (payload: Payload) => h.run('ingest', 'open_case', ['ingest'], op.openCase, { case_id: 'CASE-4821', ...payload });
+  open({ load_id: 'LOAD-4821', title: 'Sierra Haul LLC delivery on LOAD-4821', exposure_usd: 0 });
+  const opened = h.row('case', 'CASE-4821');
+  open({ load_id: 'LOAD-4821', title: 'Sierra Haul LLC detention on LOAD-4821', priority: 'P1', exposure_usd: 300 });
+  assert.deepEqual(h.row('case', 'CASE-4821'), { ...opened, title: 'Sierra Haul LLC detention on LOAD-4821', priority: 'P1', exposure_usd: 300 });
+  assert.throws(() => open({ load_id: 'LOAD-OTHER', title: 'moved' }), /load is immutable/);
+  h.run('controller', 'update_case', ['controller', 'validator', 'human'], op.updateCase, { case_id: 'CASE-4821', status: 'in_progress', reason: 'working' });
+  open({ load_id: 'LOAD-4821', title: 'Sierra Haul LLC detention on LOAD-4821', priority: 'P1', exposure_usd: 300.01 });
+  assert.equal(h.row('case', 'CASE-4821').status, 'in_progress');
+  assert.equal(h.row('case', 'CASE-4821').exposure_usd, 300.01);
+  h.run('human', 'update_case', ['controller', 'validator', 'human'], op.updateCase, { case_id: 'CASE-4821', status: 'human_owned', reason: 'mine' });
+  assert.throws(() => open({ title: 'refresh' }), /human_owned/);
+  // A bank change for an unknown invoice has no load yet; the load may be set once, later.
+  open({ case_id: 'CASE-C-77-BANK', title: 'Rapid Ridge Transport bank change', priority: 'P0', exposure_usd: 9400 });
+  open({ case_id: 'CASE-C-77-BANK', load_id: 'LOAD-77', title: 'Rapid Ridge Transport bank change', priority: 'P0', exposure_usd: 9400 });
+  assert.equal(h.row('case', 'CASE-C-77-BANK').load_id, 'LOAD-77');
+  assert.throws(() => open({ case_id: 'CASE-C-77-BANK', load_id: '', title: 'cleared' }), /load is immutable/);
+});
+
+test('contacts record SEC registrations and labeled fixtures under their own source', () => {
+  const h = new Harness();
+  h.run('ingest', 'upsert_company', ['ingest'], op.upsertCompany, { id: 'S-1', kind: 'shipper', name: 'Shipper', source_url: 'https://www.sec.gov/x' });
+  for (const source of ['sec_edgar', 'fixture', 'fmcsa', 'website']) {
+    h.run('ingest', 'upsert_contact', ['ingest'], op.upsertContact, { id: `CT-${source}`, company_id: 'S-1', name: 'AP', source });
+    assert.equal(h.row('contact', `CT-${source}`).source, source);
+  }
+  assert.throws(() => h.run('ingest', 'upsert_contact', ['ingest'], op.upsertContact, { id: 'CT-x', company_id: 'S-1', name: 'AP', source: 'sec' }), /source must be one of/);
+});
+
 function teamDemo() {
   const h = new Harness(); h.open('SYN-CARTESIA-TEAM-CALL');
   h.run('voice_desk', 'upsert_task', ['voice_desk'], op.upsertTask, {

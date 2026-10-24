@@ -3,6 +3,7 @@ import json
 import random
 import re
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -10,10 +11,11 @@ from pypdf import PdfReader
 
 from agents.carrier_ap.tools import three_way_match
 from common import harness_client
-from ingest.documents import extract_invoice_rules, read_email
-from ingest.main import connect, handle
+from ingest.documents import classify, extract_invoice_rules, read_email
+from ingest.main import _invoice_email, connect, handle
 from integrations import edgar, fmcsa
 from sim import docs, generator
+from sim import mail as sim_mail
 from sim.generator import SCENARIOS
 from sim.world import price_lane
 from tests.test_w4_data import CARRIER_ROW, SEC_SUB
@@ -71,6 +73,22 @@ def _invoice_sidecar(generator, events, invoice):
                             if Path(name).stem.startswith("INV-"))
     sidecar = generator.data_dir() / "docs" / f"{Path(invoice_filename).stem}.json"
     return json.loads(sidecar.read_text()), mail
+
+
+def _invoice_material(world, scenario="clean", seed=3):
+    sim_generator, load, events = _run(world, scenario, seed)
+    trigger = next(event for event in events if event["type"] == "email.received"
+                   and any(Path(name).stem.startswith("INV-")
+                           for name in event["payload"]["attachments"]))
+    message = read_email(sim_generator.data_dir() / "mail" / f"{trigger['payload']['mail_id']}.eml")
+    return sim_generator, load, events, trigger, message
+
+
+def _store_tms(db, events):
+    tms = [event for event in events if event["type"] == "load.tendered"
+           or (event["type"] == "gps.ping" and event["payload"].get("milestone") == "delivery.departed")]
+    _ingest(tms, db)
+    db.commit()
 
 
 @pytest.mark.parametrize("scenario", sorted(SCENARIOS))
@@ -183,3 +201,148 @@ def test_unsupported_detention_without_receipt_is_held_over_contract(world):
     invoice = next(event["payload"] for event in derived if event["type"] == "carrier_invoice.received")
     match = three_way_match(invoice)
     assert not match["matched"] and "P-014" in match["policy_ids"]
+
+
+def test_bank_offset_rolls_back_and_reemits_payment_on_redelivery(world):
+    _, _, events = _run(world, "shipper_short_pay")
+    bank_event = next(event for event in events if event["type"] == "bank.file_appended")
+    db = connect()
+    try:
+        _ingest(events[:events.index(bank_event)], db)
+        db.commit()
+
+        first = asyncio.run(handle(bank_event, db))
+        first_payment = next(event["payload"] for event in first
+                             if event["type"] == "shipper_payment.received")
+        offset = db.execute("SELECT offset FROM bank_offsets WHERE file=?",
+                            (bank_event["payload"]["file"],)).fetchone()
+        assert offset and offset[0] > 0
+
+        db.rollback()
+        assert db.execute("SELECT offset FROM bank_offsets WHERE file=?",
+                          (bank_event["payload"]["file"],)).fetchone() is None
+        second = asyncio.run(handle(bank_event, db))
+        second_payment = next(event["payload"] for event in second
+                              if event["type"] == "shipper_payment.received")
+        assert second_payment == first_payment
+    finally:
+        db.close()
+
+
+def test_unclassified_pdf_email_emits_review_event(world):
+    _, load, events = _run(world, "clean")
+    pod_ref = next(event["payload"]["pod_ref"] for event in events if event["type"] == "pod.received")
+    email = sim_mail.write("records@carrier.example", "ap@example.test", "Unclassified document",
+                           "Please review the attached document.", datetime.now(UTC), [pod_ref])
+    trigger = {"type": "email.received", "case_hint": load["case_id"],
+               "payload": {"mail_id": email["mail_id"], "from": email["from"], "to": email["to"],
+                           "subject": email["subject"], "sent_at": email["sent_at"],
+                           "attachments": email["attachments"]}}
+    db = connect()
+    try:
+        derived = asyncio.run(handle(trigger, db))
+    finally:
+        db.close()
+
+    assert len(derived) == 1
+    assert derived[0]["type"] == "document.extracted"
+    assert derived[0]["payload"]["kind"] == "other"
+    assert derived[0]["payload"]["status"] == "needs_review"
+    assert derived[0]["payload"]["fields"] == {
+        "subject": "Unclassified document", "attachments": [Path(pod_ref.removeprefix("doc:") + ".pdf").name]}
+
+
+def test_invoice_usdot_mismatch_needs_review(world):
+    _, _, events, trigger, message = _invoice_material(world)
+    db = connect()
+    try:
+        _store_tms(db, events)
+        invoice = next(item for item in message["attachments"]
+                       if classify(item["text"]) == "carrier_invoice")
+        invoice["text"] = re.sub(r"\bUSDOT\s+\d+", "USDOT 999999", invoice["text"], count=1)
+        derived = asyncio.run(_invoice_email(trigger, message, db))
+    finally:
+        db.close()
+
+    assert len(derived) == 1 and derived[0]["type"] == "document.extracted"
+    assert derived[0]["payload"]["status"] == "needs_review"
+    assert derived[0]["payload"]["fields"]["mismatch"] == "usdot"
+
+
+def test_foreign_receipts_and_pod_are_not_matched_to_invoice_load(world):
+    _, load, events, trigger, message = _invoice_material(world, "detention_unsupported", seed=3)
+    _, other_load, other_events, _, other_message = _invoice_material(
+        world, "detention_supported", seed=11)
+    db = connect()
+    try:
+        _store_tms(db, events)
+        _store_tms(db, other_events)
+        foreign_pod = next(item for item in other_message["attachments"]
+                           if classify(item["text"]) == "pod")
+        foreign_detention = next(item for item in other_message["attachments"]
+                                 if classify(item["text"]) == "detention_log")
+        lumper_ref = docs.write(f"LUMPER-{other_load['load_id']}", "lumper_receipt", {
+            "lumper_co": "Foreign Lumper LLC", "consignee": other_load["consignee"],
+            "receipt_no": "R-100", "date": "2026-10-25", "po": other_load["po"],
+            "carrier": other_load["carrier"], "pallets": other_load["pallets"],
+            "amount": 180.0, "unloader": "Loader"})
+        lumper_text = (docs.docs_dir() / f"{lumper_ref.removeprefix('doc:')}.pdf").read_bytes()
+        foreign_lumper = {"filename": f"{lumper_ref.removeprefix('doc:')}.pdf",
+                          "text": "\n".join(page.extract_text() or ""
+                                            for page in PdfReader(BytesIO(lumper_text)).pages)}
+        message["attachments"] = [item for item in message["attachments"] if classify(item["text"]) != "pod"]
+        message["attachments"].extend([
+            {"filename": "POD-OTHER.pdf", "text": foreign_pod["text"]},
+            {"filename": "DET-OTHER.pdf", "text": foreign_detention["text"]},
+            foreign_lumper,
+        ])
+        assert load["po"] != other_load["po"]
+        derived = asyncio.run(_invoice_email(trigger, message, db))
+    finally:
+        db.close()
+
+    invoice = next(event["payload"] for event in derived
+                   if event["type"] == "carrier_invoice.received")
+    document = derived[0]["payload"]
+    assert invoice["receipt_attached"] is False
+    assert invoice["pod_signed"] is False
+    assert set(document["fields"]["unmatched_attachments"]) == {
+        "POD-OTHER.pdf", "DET-OTHER.pdf", foreign_lumper["filename"]}
+
+
+def test_conflicting_invoice_load_id_and_bol_needs_review(world):
+    _, _, events, trigger, message = _invoice_material(world, seed=3)
+    _, other_load, other_events, _, _ = _invoice_material(world, seed=17)
+    db = connect()
+    try:
+        _store_tms(db, events)
+        _store_tms(db, other_events)
+        invoice = next(item for item in message["attachments"]
+                       if classify(item["text"]) == "carrier_invoice")
+        invoice["text"] = re.sub(r"(\bBOL\s*#\s*)[A-Z0-9-]+",
+                                 rf"\g<1>{other_load['bol']}", invoice["text"], count=1, flags=re.IGNORECASE)
+        derived = asyncio.run(_invoice_email(trigger, message, db))
+    finally:
+        db.close()
+
+    assert len(derived) == 1 and derived[0]["type"] == "document.extracted"
+    assert derived[0]["payload"]["status"] == "needs_review"
+    assert derived[0]["payload"]["fields"]["mismatch"] == "load_id/bol"
+
+
+def test_invoice_without_line_items_needs_review(world):
+    _, _, events, trigger, message = _invoice_material(world)
+    db = connect()
+    try:
+        _store_tms(db, events)
+        invoice = next(item for item in message["attachments"]
+                       if classify(item["text"]) == "carrier_invoice")
+        invoice["text"] = re.sub(r"(?s)(Description\s+Qty\s+Rate\s+Amount).*?(?=TOTAL\s+DUE)",
+                                 r"\1\n", invoice["text"], count=1)
+        derived = asyncio.run(_invoice_email(trigger, message, db))
+    finally:
+        db.close()
+
+    assert len(derived) == 1 and derived[0]["type"] == "document.extracted"
+    assert derived[0]["payload"]["status"] == "needs_review"
+    assert derived[0]["payload"]["fields"]["mismatch"] == "no_line_items"

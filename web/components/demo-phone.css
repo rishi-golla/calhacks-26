@@ -14,9 +14,6 @@
   width: 48px;
   height: 48px;
   flex-shrink: 0;
-  color: var(--dark-green);
-  background: #deeee4;
-  border-radius: 13px;
 }
 .demo-phone h2 { margin: 4px 0 7px; font-size: 21px; font-weight: 550; letter-spacing: -.5px; }
 .demo-phone p { margin: 0; color: #657e70; font-size: 12px; line-height: 1.7; }

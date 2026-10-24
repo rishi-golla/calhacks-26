@@ -3,6 +3,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Check, LoaderCircle, Phone } from "lucide-react";
 import { DemoPhoneClient, demoPhoneAction } from "@/lib/demo-phone";
+import { Mascot } from "./mascot";
 import "./demo-phone.css";
 
 export function DemoPhone() {
@@ -29,7 +30,7 @@ export function DemoPhone() {
   return (
     <section className="demo-phone panel" aria-labelledby="demo-phone-title">
       <div className="demo-phone-heading">
-        <span className="demo-phone-icon"><Phone size={22} aria-hidden="true" /></span>
+        <span className="demo-phone-icon"><Mascot id="voice_desk" size={48} working={action.active && !action.terminal} /></span>
         <div>
           <span className="eyebrow">Dispatcher Outreach · Cartesia</span>
           <h2 id="demo-phone-title">Hear your agents at work.</h2>

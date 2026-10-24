@@ -45,6 +45,7 @@ td.c{cursor:pointer}td.c:hover{background:#1d2738}.pill{padding:1px 6px;border-r
 </main><div id="toast"></div>
 <script>
 const $=id=>document.getElementById(id);let sel=null;
+const ht=new URLSearchParams(location.hash.slice(1)).get('token');if(ht){sessionStorage.tok=ht;history.replaceState(null,'',location.pathname+location.search)}
 $('tok').value=sessionStorage.tok||'';$('tok').oninput=e=>{sessionStorage.tok=e.target.value.trim();tick()};
 const toast=m=>{$('toast').textContent=m;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',3000)};
 async function api(p,body){const r=await fetch(p,{method:body?'POST':'GET',headers:{'x-gateway-token':$('tok').value.trim(),'content-type':'application/json'},body:body?JSON.stringify(body):undefined});

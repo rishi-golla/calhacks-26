@@ -5,6 +5,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PY=${PY:-.venv/bin/python}
 [ -f .env ] && { set -a; source .env; set +a; }
+if [[ -z "${GATEWAY_TOKEN:-}" ]]; then
+  export GATEWAY_TOKEN=$(python3 -c 'import secrets;print(secrets.token_urlsafe(18))')
+  echo "generated a session GATEWAY_TOKEN (set one in .env to keep it fixed)"
+fi
 export VOICE_AUTOCOMPLETE=0 MOCK_INTEGRATIONS=${MOCK_INTEGRATIONS:-0}
 docker compose up -d redis >/dev/null
 $PY -m sim.world
@@ -16,5 +20,5 @@ $PY -m gateway.app & pids+=($!)
 sleep 2
 $PY -m sim.generator & pids+=($!)
 trap 'kill ${pids[@]} 2>/dev/null' INT TERM EXIT
-echo "live: console at http://localhost:${GATEWAY_PORT:-9000}/console"
+echo "live: open http://localhost:${GATEWAY_PORT:-9000}/console#token=${GATEWAY_TOKEN}"
 wait

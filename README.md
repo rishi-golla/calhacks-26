@@ -34,7 +34,7 @@ make test
 
 ## Live data (W4)
 `make live` starts Redis, all 8 agents, the router, the gateway and the real-time simulator, then open
-`http://localhost:9000/console` and paste `GATEWAY_TOKEN`.
+the `console#token=…` link `make live` prints (it generates a token if `.env` has none).
 - **Counterparties are real.** Carriers come from FMCSA's Company Census (active, for-hire, general freight, with a
   registered phone and email); shippers come from SEC EDGAR (manufacturing, wholesale and retail filers). `make world`
   refreshes `data/world.json`. Contacts are shown unmasked; outreach still only reaches the demo allowlist.

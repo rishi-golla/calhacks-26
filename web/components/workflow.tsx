@@ -14,8 +14,9 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Menu, Plus, X } from "lucide-react";
-import { str, timestamp } from "@/lib/data";
+import { num, str, timestamp } from "@/lib/data";
 import { useLive } from "./live-provider";
+import { MASCOT_IDS, Mascot } from "./mascot";
 import { useClock } from "./ui";
 import {
   FARM,
@@ -35,6 +36,16 @@ import "./workflow.css";
 
 type Tab = { node_id: string; url: string; title: string };
 
+function mascotOf(step: Step) {
+  const owner = STEPS.find(
+    (s) =>
+      s.agent && s.operator === step.operator && MASCOT_IDS.includes(s.agent),
+  );
+  return step.agent && MASCOT_IDS.includes(step.agent)
+    ? step.agent
+    : owner?.agent;
+}
+
 function tabHost(url: string) {
   try {
     const host = new URL(url).host;
@@ -48,6 +59,7 @@ type StepData = {
   step: Step;
   events: number;
   status: string;
+  working: boolean;
   url: string;
   farm: boolean;
   tick: number;
@@ -87,6 +99,7 @@ function LiveFrame({ id, tick }: { id: string; tick: number }) {
 
 const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
   const { step, events, status, farm, tick } = data;
+  const mascot = mascotOf(step);
   return (
     <div
       className={`wf-node ${data.leaving ? "leaving" : ""}`}
@@ -104,6 +117,7 @@ const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
         <X size={12} />
       </button>
       <div className="wf-head">
+        {mascot && <Mascot id={mascot} size={34} working={data.working} />}
         <div>
           <span className="wf-agent">{step.operator}</span>
           <strong>{step.title}</strong>
@@ -197,6 +211,13 @@ export default function Workflow({
     if (state !== "live" && state !== "fallback") return "offline";
     return feeds[s.id].length ? "live" : "idle";
   };
+  const workingOf = (s: Step) => {
+    const name = mascotOf(s);
+    const rec = data.agent.find((r) => r.name === name);
+    return (
+      !!rec && now - timestamp(rec.last_seen) <= 60_000 && num(rec.active) > 0
+    );
+  };
 
   const sent = useRef(new Map<string, string>());
   const pending = useRef(new Set<string>());
@@ -275,6 +296,7 @@ export default function Workflow({
         step,
         events: feeds[id].length,
         status: statusOf(step),
+        working: workingOf(step),
         url: tabs[id]?.url || urls[id],
         farm,
         tick,
@@ -355,6 +377,7 @@ export default function Workflow({
                     setPalette(false);
                   }}
                 >
+                  {mascotOf(s) && <Mascot id={mascotOf(s)!} size={24} />}
                   <span>
                     <b>{s.title}</b>
                     <small>{s.operator}</small>
@@ -422,7 +445,16 @@ export default function Workflow({
                   <dt>Step</dt>
                   <dd>{open.title}</dd>
                   <dt>Agent</dt>
-                  <dd>{open.operator}</dd>
+                  <dd className="wf-agent-dd">
+                    {mascotOf(open) && (
+                      <Mascot
+                        id={mascotOf(open)!}
+                        size={20}
+                        working={workingOf(open)}
+                      />
+                    )}
+                    {open.operator}
+                  </dd>
                   <dt>Status</dt>
                   <dd>{statusOf(open)}</dd>
                   <dt>Events in this case</dt>

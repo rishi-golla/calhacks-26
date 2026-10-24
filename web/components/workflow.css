@@ -99,7 +99,17 @@
 }
 .wf-head {
   display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 10px 12px 8px;
+}
+.wf-head > .mascot {
+  flex-shrink: 0;
+}
+.wf-info dd.wf-agent-dd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
 }
 .wf-head > div {
   display: flex;

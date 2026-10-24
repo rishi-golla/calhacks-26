@@ -2,7 +2,7 @@
 
 Every load plays out on the shared business clock (sim/clock.py) against real counterparties and real mileage
 from data/world.json, producing the full paper trail a brokerage receives:
-  TMS     load.tendered, load.status, gps.ping (lat/lon breadcrumbs along the lane)
+  TMS     load.tendered, load.dispatched, load.status (loaded), load.delivered, gps.ping
   docs    rate con, BOL, signed POD, carrier invoice, shipper invoice, lumper receipt, detention log (PDF + JSON)
   email   raw .eml: carrier invoice with attachments, bank-change requests, shipper remittance advice
   bank    BAI2-style operating-account lines for shipper receipts
@@ -22,10 +22,8 @@ from datetime import UTC, datetime, timedelta
 
 import redis.asyncio as redis
 
-from common import store
-from sim import bank, clock, docs, events, geo, mail
-from sim import retention
-from sim.world import ensure, offline_world
+from sim import bank, clock, docs, events, geo, mail, retention
+from sim.world import WORLD_SCHEMA, ensure, offline_world
 
 SCENARIOS = {"clean": 0.40, "decoy_detention_supported_small": 0.06, "decoy_quickpay": 0.06,
              "detention_unsupported": 0.04, "detention_supported": 0.04, "shipper_short_pay": 0.04,
@@ -459,7 +457,9 @@ async def seed_hero(world: dict) -> None:
                 "bol": bol, "po": po, "pro": f"PRO-{load_id}", "fsc_per_mile": 0.0, "pallets": 20,
                 "weight_lb": 18000, "seal": "S4821", "trailer": "R-311", "driver": "Alex Rivera"}
         common = {"load_id": load_id, "case_id": case_id, "bol": bol, "po": po, "pro": load["pro"],
-                  "lane": "Stockton, CA -> Reno, NV"}
+                  "lane": "Stockton, CA -> Reno, NV", "equipment": lane["equipment"],
+                  "commodity": lane["commodity"], "weight_lb": load["weight_lb"],
+                  "pallets": load["pallets"], "miles": lane["miles"]}
         refs = [
             docs.write(f"RC-{load_id}", "rate_confirmation", {**common, "date": _ts(base_time), "carrier": carrier,
                 "shipper": shipper, "consignee": consignee, "pickup_appt": _ts(loaded), "delivery_appt": _ts(arrived),
@@ -483,7 +483,7 @@ async def seed_hero(world: dict) -> None:
         at = departed + timedelta(hours=2)
         message = mail.write(carrier["email"], "ap@goldengatefreight.example", f"Invoice {invoice}",
                              "Please see attached invoice and signed POD.", at,
-                             attachments=[f"{invoice}.pdf", f"POD-{load_id}.pdf"])
+                             attachments=[invoice, f"POD-{load_id}"])
         tms = {**common, "carrier": carrier, "shipper": shipper, "consignee": consignee, "contract_rate": 1850.0,
                "free_time_min": 120, "operator_overrides": {}, "pickup_appt": _ts(loaded),
                "delivery_appt": _ts(arrived)}
@@ -502,7 +502,6 @@ async def seed_hero(world: dict) -> None:
         record_answer(load, "detention_unsupported", {"field": "detention", "claimed_h": 2,
                       "gps_dwell_min": 47, "free_time_min": 120})
     bank_change_at = _now()
-    rapid = directory_entry(world, "C-77")
     msg = mail.write("accounts@rapid-ridge.example", "ap@goldengatefreight.example",
                      "Remittance details - Rapid Ridge Transport",
                      "We changed banks. Invoice INV-RR-9400, new account details: Account ****9400.",
@@ -516,10 +515,6 @@ async def seed_hero(world: dict) -> None:
                  bank_change_at + timedelta(days=1)))
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("seeded")
-
-
-def open_human_items() -> int:
-    return len(store.list_parked())
 
 
 async def heartbeat(r: redis.Redis) -> None:
@@ -549,6 +544,7 @@ async def main() -> None:
         backdate = timedelta(days=rnd.uniform(2, max(2, history_days)))
         await run_load(r, world, rnd, scenario, backdate=backdate)
     running: set[asyncio.Task] = {asyncio.create_task(heartbeat(r)), asyncio.create_task(retention_loop())}
+    human_running: set[asyncio.Task] = set()
     print(f"sim: {len(world['carriers'])} carriers, {len(world['shippers'])} shippers; new load every ~{interval}s; "
           f"1 wall second = {clock.ratio() / 60:.0f} business minutes")
     warm_human = 0
@@ -562,14 +558,20 @@ async def main() -> None:
         t = asyncio.create_task(run_load(r, world, rnd, sc, timedelta(hours=rnd.uniform(0, 96))))
         running.add(t)
         t.add_done_callback(running.discard)
+        if sc in NEEDS_HUMAN:
+            human_running.add(t)
+            t.add_done_callback(human_running.discard)
         print(f"sim: warm-started {sc}")
     while True:
         sc = pick(rnd)
-        if sc in NEEDS_HUMAN and open_human_items() >= max_open:
+        if sc in NEEDS_HUMAN and len(human_running) >= max_open:
             sc = "clean"  # don't bury the operator in parked calls
         t = asyncio.create_task(run_load(r, world, rnd, sc))
         running.add(t)
         t.add_done_callback(running.discard)
+        if sc in NEEDS_HUMAN:
+            human_running.add(t)
+            t.add_done_callback(human_running.discard)
         print(f"sim: started {sc}")
         await asyncio.sleep(interval * rnd.uniform(0.6, 1.4))
 
@@ -578,8 +580,8 @@ async def offline(loads: int, root: pathlib.Path, seed: int = 7) -> None:
     root.mkdir(parents=True, exist_ok=True)
     os.environ["SIM_DATA_DIR"] = str(root)
     os.environ["WORLD_FILE"] = str(root / "world.json")
-    if not (root / "world.json").exists():
-        from integrations import directory
+    from integrations import directory
+    if not (root / "world.json").exists() or directory.load().get("schema") != WORLD_SCHEMA:
         directory.save(offline_world())
     world = ensure()
     await seed_hero(world)

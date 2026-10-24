@@ -30,6 +30,7 @@ def prune(data_dir, max_mb: int = int(os.getenv("SIM_DATA_MAX_MB", "500")),
         event_log.write_bytes(b"")
 
     answers = _jsonl(root / "answer_key.jsonl")
+    event_records = _jsonl(root / "events.jsonl.1") + _jsonl(event_log)
     pruned_path = root / "pruned_loads.jsonl"
     pruned = {x.get("load_id") for x in _jsonl(pruned_path)}
     remaining = [a.get("load_id") for a in answers if a.get("load_id") not in pruned]
@@ -47,8 +48,10 @@ def prune(data_dir, max_mb: int = int(os.getenv("SIM_DATA_MAX_MB", "500")),
                 continue
             if doc.get("load_id") == candidate:
                 records.append(doc)
-        refs = {d.get("ref") for d in records}
         attachments = {Path(d.get("pdf", f"{d.get('ref')}.pdf")).name for d in records}
+        case_hints = {f"CASE-{candidate}", f"CASE-{candidate}-BANK", f"CASE-{candidate}-AR"}
+        mail_ids = {str(event.get("payload", {}).get("mail_id"))
+                    for event in event_records if event.get("case_hint") in case_hints}
         for doc in records:
             for name in (f"{doc.get('ref')}.json", doc.get("pdf", f"{doc.get('ref')}.pdf")):
                 (docs_dir / name).unlink(missing_ok=True)
@@ -58,7 +61,7 @@ def prune(data_dir, max_mb: int = int(os.getenv("SIM_DATA_MAX_MB", "500")),
             except OSError:
                 continue
             names = {Path(p.get_filename()).name for p in message.iter_attachments() if p.get_filename()}
-            if names.intersection(attachments):
+            if path.stem in mail_ids or names.intersection(attachments):
                 path.unlink(missing_ok=True)
         pruned.add(candidate)
         removed.append(candidate)

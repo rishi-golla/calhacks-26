@@ -92,8 +92,8 @@ def extract_invoice_rules(text: str) -> dict:
     line_items = []
     if section:
         row_pattern = re.compile(
-            rf"^(?P<desc>.+?)\s+(?P<qty>{NUMBER})\s+\$?(?P<rate>{NUMBER}\.\d{{2,3}})"
-            rf"\s+\$?(?P<amount>{NUMBER}\.\d{{2}})\s*$")
+            rf"^(?P<desc>.+?)\s+(?P<qty>{NUMBER})\s+(?P<rate>-?\$?-?{NUMBER}\.\d{{2,3}})"
+            rf"\s+(?P<amount>-?\$?-?{NUMBER}\.\d{{2}})\s*$")
         for line in section.group(1).splitlines():
             match = row_pattern.match(line.strip())
             if match:

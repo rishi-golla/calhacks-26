@@ -4,12 +4,14 @@ import json
 import math
 import re
 from collections import Counter, defaultdict
+from datetime import UTC, datetime
 from email import policy
 from email.parser import BytesParser
 from email.utils import parseaddr
 from pathlib import Path
 
 from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 ALLOWED = {
     "rate_mismatch": {"V3"}, "fsc_error": {"V3"}, "math_error": {"V2"},
@@ -26,16 +28,23 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _date(value):
-    from datetime import datetime
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(str(value))
+        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
     except ValueError:
         try:
             return datetime.strptime(str(value), "%Y-%m-%d %H:%M")
         except ValueError:
             return None
+
+
+def _text_part(part) -> str:
+    content = part.get_payload(decode=True)
+    if content is None:
+        content = part.get_content()
+    return content.decode(errors="ignore") if isinstance(content, bytes) else str(content)
 
 
 def run(data_dir: str | Path = "data") -> dict:
@@ -48,8 +57,8 @@ def run(data_dir: str | Path = "data") -> dict:
         except (OSError, json.JSONDecodeError):
             continue
     answers = _read_jsonl(root / "answer_key.jsonl")
-    events = _read_jsonl(root / "events.jsonl")
-    world_path = Path(__import__("os").environ.get("WORLD_FILE", root / "world.json"))
+    events = _read_jsonl(root / "events.jsonl.1") + _read_jsonl(root / "events.jsonl")
+    world_path = root / "world.json"
     world = json.loads(world_path.read_text()) if world_path.exists() else {}
     pruned = {x.get("load_id") for x in _read_jsonl(root / "pruned_loads.jsonl")}
     violations: list[dict] = []
@@ -74,7 +83,7 @@ def run(data_dir: str | Path = "data") -> dict:
                 identifier = doc.get("invoice_number") or doc.get("load_id") or doc.get("bol")
                 if not identifier or str(identifier) not in text or "SIMULATED" not in text:
                     add("V1", load_id, ref, "primary identifier or SIMULATED footer missing")
-            except Exception as exc:
+            except (OSError, ValueError, PdfReadError) as exc:
                 add("V1", load_id, ref, f"PDF unreadable: {exc}")
         if kind == "carrier_invoice":
             lines = doc.get("line_items", [])
@@ -112,6 +121,10 @@ def run(data_dir: str | Path = "data") -> dict:
                 add("V8", load_id, ref, "remit-to differs from tendered carrier")
             if carrier.get("usdot") != tender.get("usdot"):
                 add("V8", load_id, ref, "invoice carrier USDOT differs from tendered carrier")
+            if pod and pod.get("carrier", {}).get("usdot") != tender.get("usdot"):
+                add("V8", load_id, ref, "POD carrier USDOT differs from tendered carrier")
+            if rc and any(inv.get(key) != rc.get(key) for key in ("bol", "po")):
+                add("V4", load_id, ref, "invoice identifiers differ from rate confirmation")
             if rc and bol and pod and any(x.get(key) != rc.get(key) for x in (bol, pod) for key in ("bol", "po")):
                 add("V4", load_id, ref, "BOL/POD identifiers differ from rate confirmation")
         if pod:
@@ -134,11 +147,13 @@ def run(data_dir: str | Path = "data") -> dict:
                 add("V7", load_id, pod.get("ref"), "detention log presence does not match scenario")
             for inv in invoices:
                 for line in inv.get("line_items", []):
-                    match = re.search(r"Detention\s+(\d+)\s*h", line.get("desc", ""), re.I)
-                    if match and not line.get("qty"):
+                    desc = line.get("desc", "")
+                    is_detention = "detention" in desc.lower()
+                    match = re.search(r"Detention\s+(\d+(?:\.\d+)?)\s*h\b", desc, re.IGNORECASE)
+                    if is_detention and not match:
                         add("V7", load_id, inv.get("ref"), "detention hours missing from line")
                     if det_logs and dwell is not None and rc:
-                        claimed = int(match.group(1)) if match else 0
+                        claimed = float(match.group(1)) if match else 0
                         free = int(rc.get("free_time_min", 0))
                         if det_logs[0].get("dwell_min") != dwell or claimed != math.ceil((dwell-free)/60):
                             add("V7", load_id, det_logs[0].get("ref"), "detention dwell or hours mismatch")
@@ -229,26 +244,36 @@ def run(data_dir: str | Path = "data") -> dict:
         matching = [row for row in bank_records if row[3] == shipper_name
                     and row[2] in {f"SINV-{load_id}", f"SINV-MISSING-{load_id}"}]
         if matching:
-            amount, txn, reference, _ = matching[-1]
+            amount, _txn, reference, _ = matching[-1]
             remittance_amount = None
             deduction = 0.0
             for _, message in mail_records:
-                body = "\n".join(str(p.get_payload(decode=True) or b"").decode(errors="ignore")
-                                 for p in message.walk() if p.get_content_type() == "text/plain")
-                match = re.search(r"Payment of \\$([\\d,.]+)", body)
+                body = "\n".join(
+                    _text_part(part) for part in message.walk() if part.get_content_type() == "text/plain")
+                match = re.search(r"Payment of \$([\d,.]+)", body)
                 if match and (f"SINV-{load_id}" in body or f"SINV-MISSING-{load_id}" in body):
                     remittance_amount = float(match.group(1).replace(",", ""))
-                    ded = re.search(r"Deduction \\$([\\d,.]+)", body)
+                    ded = re.search(r"Deduction \$([\d,.]+)", body)
                     deduction = float(ded.group(1).replace(",", "")) if ded else 0.0
             if reference != f"SINV-{load_id}" or remittance_amount is None \
                     or amount != remittance_amount or round(amount, 2) != round(float(sinv.get("total", 0))-deduction, 2):
                 add("V9", load_id, None, "bank/reference/remittance amount mismatch")
+        else:
+            add("V9", load_id, None, "shipper payment or remittance reference missing")
 
     # Answer-key completeness, allowed-rule constraints, and planted-fact checks.
     answer_by_load = Counter(a.get("load_id") for a in answers)
     for load_id, count in answer_by_load.items():
         if count != 1:
             add("V11", load_id, None, f"answer key has {count} entries")
+    observed_loads = {d.get("load_id") for d in docs if d.get("load_id")}
+    observed_loads.update(event.get("payload", {}).get("load_id") for event in events
+                          if event.get("type") == "load.tendered" and event.get("payload", {}).get("load_id"))
+    for load_id in observed_loads - pruned:
+        if answer_by_load.get(load_id, 0) != 1:
+            add("V11", load_id, None, "completed load must have exactly one answer-key entry")
+    for load_id in set(answer_by_load) - observed_loads - pruned:
+        add("V11", load_id, None, "answer-key entry has no corresponding load")
     rules_by_load: dict[str, set[str]] = defaultdict(set)
     for violation in violations:
         if violation["load_id"]:
@@ -291,8 +316,9 @@ def run(data_dir: str | Path = "data") -> dict:
         elif scenario == "bank_change":
             carrier = next((d.get("carrier", {}) for d in items if d.get("type") == "rate_confirmation"), {})
             domain = str(carrier.get("email", "")).rsplit("@", 1)[-1]
-            if not any("changed banks" in str(m.get_payload()) and
-                       str(m.get("From", "")).rsplit("@", 1)[-1].rstrip(">") != domain for _, m in mail_records):
+            if not any("changed banks" in "\n".join(str(p.get_payload()) for p in m.walk()) and
+                       parseaddr(str(m.get("From", "")))[1].rsplit("@", 1)[-1].casefold() != domain.casefold()
+                       for _, m in mail_records):
                 add("V12", load_id, None, "lookalike bank-change email missing")
         elif scenario == "shipper_short_pay":
             sinv = shipper_docs.get(f"SINV-{load_id}")
@@ -300,7 +326,12 @@ def run(data_dir: str | Path = "data") -> dict:
                        and row[2] == f"SINV-{load_id}"]
             if not sinv or not records or max(r[0] for r in records) >= float(sinv.get("total", 0)):
                 add("V12", load_id, None, "short payment fact missing")
-    report = {"ok": not violations, "violations": violations, "pruned": sorted(x for x in pruned if x),
+    answer_map = {a.get("load_id"): a for a in answers}
+    unexpected = [v for v in violations if v["rule"] == "V11" or
+                  (v.get("load_id") and v["rule"] not in ALLOWED.get(
+                      answer_map.get(v["load_id"], {}).get("scenario"), set())) or not v.get("load_id")]
+    report = {"ok": not unexpected, "violations": violations, "unexpected_violations": unexpected,
+              "pruned": sorted(x for x in pruned if x),
               "by_rule": dict(Counter(v["rule"] for v in violations)),
               "by_scenario": dict(Counter(a.get("scenario") for a in answers))}
     (root / "verify_report.json").write_text(json.dumps(report, indent=2))
@@ -324,7 +355,8 @@ def main() -> int:
         print("--- | ---:")
         for name, count in sorted(report["by_scenario"].items()):
             print(f"{name} | {count}")
-        print(f"Pruned loads: {len(report['pruned'])}; unexpected violations: {len(report['violations'])}")
+        print(f"Pruned loads: {len(report['pruned'])}; unexpected violations: "
+              f"{len(report['unexpected_violations'])}")
     return 0 if report["ok"] else 1
 
 

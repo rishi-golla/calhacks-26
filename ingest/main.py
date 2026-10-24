@@ -6,7 +6,6 @@ import os
 import re
 import sqlite3
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
 import redis.asyncio as redis
@@ -26,6 +25,7 @@ log = logging.getLogger("ingest")
 STREAM = "events"
 GROUP = "ingest"
 CONSUMER = "ingest-1"
+ACCESSORIAL_TERMS = ("detention", "lumper", "layover", "stop-off", "stop off", "tonu", "driver assist")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS loads (load_id TEXT PRIMARY KEY, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS invoices (invoice_id TEXT PRIMARY KEY, load_id TEXT, invoice_number TEXT, json TEXT NOT NULL);
@@ -204,9 +204,8 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
             else:
                 unmatched_attachments.append(filename)
     has_receipt = has_detention_log or has_lumper_receipt
-    has_accessorial_line = any(not re.search(r"\b(linehaul|fuel surcharge|fsc)\b",
-                                             str(item.get("desc", "")), re.IGNORECASE)
-                               for item in line_items)
+    has_accessorial_line = any(any(term in str(item.get("desc", "")).casefold()
+                                   for term in ACCESSORIAL_TERMS) for item in line_items)
     receipt_attached = True if has_receipt else False if has_accessorial_line else None
     gps_dwell_min = load.get("gps_dwell_min")
     free_time_min = load.get("free_time_min")
@@ -413,11 +412,11 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
 async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict) -> bool:
     try:
         raw = values.get(b"json") or values.get("json")
-            events = await handle(json.loads(raw), db)
-            for event in events:
-                await r.xadd(STREAM, {"json": json.dumps(event, default=str)},
-                             maxlen=20_000, approximate=True)
-                append_event(event)
+        events = await handle(json.loads(raw), db)
+        for event in events:
+            await r.xadd(STREAM, {"json": json.dumps(event, default=str)},
+                         maxlen=20_000, approximate=True)
+            append_event(event)
         db.commit()
         await r.xack(STREAM, GROUP, entry_id)
         return True

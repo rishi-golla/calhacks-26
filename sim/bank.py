@@ -1,5 +1,5 @@
-"""Operating-account bank feed: one BAI2-style file per business day under data/bank/, plus a structured
-transaction for the event stream. Incoming shipper ACH/wires are type 165/195; outgoing carrier ACH is 455."""
+"""Operating-account bank feed: one BAI2-style file per business day under data/bank/.
+Incoming shipper ACH/wires are type 165/195; outgoing carrier ACH is 455."""
 import os
 import pathlib
 import uuid
@@ -16,7 +16,7 @@ def bank_dir() -> pathlib.Path:
 
 
 def post(kind: str, amount: float, counterparty: str, reference: str, at: datetime) -> dict:
-    """Append a 16-record to the day's BAI2 file and return the bank.transaction payload."""
+    """Append a 16-record to the day's BAI2 file and return its raw record and metadata."""
     txn_id = f"BNK-{uuid.uuid4().hex[:10].upper()}"
     cents = round(amount * 100)
     path = bank_dir() / f"BAI2-{at:%Y%m%d}.txt"

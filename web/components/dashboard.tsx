@@ -9,7 +9,6 @@ import {
   Building2,
   CheckCircle2,
   ChevronRight,
-  CircleHelp,
   Copy,
   Cpu,
   FileSpreadsheet,
@@ -18,11 +17,13 @@ import {
   ListTree,
   Menu,
   MessagesSquare,
+  PanelLeft,
   Play,
+  PlusCircle,
+  Settings,
   Radio,
   RefreshCw,
   Search,
-  ShieldCheck,
   Wallet,
   X,
 } from "lucide-react";
@@ -33,6 +34,7 @@ import { InboxView, LearningView } from "./human-views";
 import { CounterpartiesView, DemoView, HarnessView } from "./support-views";
 import { Dialog, Submit, type FlagTarget } from "./ui";
 import AgentInbox from "./agent-inbox";
+import Home from "./home";
 const AuditWorkspace = dynamic(() => import("./audit-workspace"), {
   ssr: false,
   loading: () => <div className="loading">Loading audit workspace…</div>,
@@ -53,10 +55,15 @@ function databaseHostLabel(serverUrl: string): string {
 }
 const views = [
   {
+    id: "home",
+    label: "New chat",
+    icon: PlusCircle,
+    description: "Your AI back office.",
+  },
+  {
     id: "agents",
     label: "Agent inbox",
     icon: MessagesSquare,
-    group: "WORKSPACE",
     description: "Follow all nine specialists as they work together.",
   },
   {
@@ -101,7 +108,6 @@ const views = [
     id: "learning",
     label: "Validator & learning",
     icon: BookOpen,
-    group: "INTELLIGENCE",
     description: "Each review makes the next case more informed.",
   },
   {
@@ -131,7 +137,7 @@ function DashboardBody() {
     mutate,
   } = useLive();
   const hostLabel = databaseHostLabel(serverUrl);
-  const [view, setView] = useState("agents");
+  const [view, setView] = useState("home");
   const [caseId, setCaseId] = useState("");
   const [query, setQuery] = useState("");
   const [mobile, setMobile] = useState(false);
@@ -232,7 +238,9 @@ function DashboardBody() {
     }
   };
   return (
-    <div className={`app-shell ${view === "agents" ? "agent-mode" : ""}`}>
+    <div
+      className={`app-shell ${view === "agents" ? "agent-mode" : ""} ${view === "home" ? "home-mode" : ""}`}
+    >
       <a className="skip-link" href="#main-content">
         Skip to main content
       </a>
@@ -249,36 +257,29 @@ function DashboardBody() {
         aria-hidden={narrow && !mobile}
         className={`sidebar ${mobile ? "open" : ""}`}
       >
-        <a
-          className="brand"
-          href="#"
-          onClick={(event) => {
-            event.preventDefault();
-            navigate("overview");
-          }}
-          aria-label="Golden Gate Freight overview"
-        >
-          <span className="brand-logo">
-            <i />
-            <i />
-            <i />
-          </span>
-          <span>
-            golden gate<span>FREIGHT OPERATIONS</span>
-          </span>
-        </a>
-        <div className="workspace-switch">
-          <span className="workspace-avatar">GG</span>
-          <div>
-            <strong>Golden Gate Freight</strong>
-            <small>Autonomous back office</small>
-          </div>
-          <ChevronRight size={14} />
+        <div className="side-top">
+          <a
+            className="brand"
+            href="#"
+            onClick={(event) => {
+              event.preventDefault();
+              navigate("home");
+            }}
+            aria-label="Golden Gate Freight home"
+          >
+            <span className="side-orb" />
+          </a>
+          <button
+            className="icon-button side-collapse"
+            aria-label="Close navigation"
+            onClick={() => setMobile(false)}
+          >
+            <PanelLeft size={15} />
+          </button>
         </div>
         <nav aria-label="Main navigation">
           {views.map((item) => (
             <div key={item.id}>
-              {item.group && <p className="nav-group">{item.group}</p>}
               <button
                 className={`nav-item ${view === item.id ? "active" : ""}`}
                 aria-current={view === item.id ? "page" : undefined}
@@ -296,33 +297,43 @@ function DashboardBody() {
             </div>
           ))}
         </nav>
-        <div className="sidebar-bottom">
-          <div className="safety-card">
-            <ShieldCheck size={18} />
-            <div>
-              <strong>Human control, always</strong>
-              <p>
-                Every action is checked.
-                <br />
-                Every change is recorded.
-              </p>
-            </div>
+        <div className="side-chats">
+          <div className="side-chats-head">
+            <span>Chats</span>
+            <button
+              className="icon-button"
+              aria-label="Search cases"
+              onClick={() => navigate("cases")}
+            >
+              <Search size={14} />
+            </button>
           </div>
+          {data.case.slice(0, 12).map((row) => (
+            <button
+              key={String(row.case_id)}
+              className={`side-chat ${view === "cases" && caseId === row.case_id ? "active" : ""}`}
+              title={String(row.title || row.case_id)}
+              onClick={() => {
+                openCase(String(row.case_id));
+                setMobile(false);
+              }}
+            >
+              {String(row.title || row.case_id).replace(
+                /^\[W2 fixture\]\s*/,
+                "",
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="sidebar-bottom">
           <button
-            className="identity-button"
+            className="side-settings"
             aria-label="Database connection and identity"
             onClick={() => setConnectionInfo(true)}
           >
-            <span className="user-avatar">{human ? "HC" : "OB"}</span>
-            <span>
-              <strong>{human ? "Human controller" : "Observer"}</strong>
-              <small>
-                {identity
-                  ? `${identity.slice(0, 6)}…${identity.slice(-4)}`
-                  : "Connecting identity…"}
-              </small>
-            </span>
-            <CircleHelp size={16} />
+            <Settings size={14} />
+            <span>Settings</span>
+            <small>{human ? "Human controller" : "Observer"}</small>
           </button>
         </div>
       </aside>
@@ -389,6 +400,16 @@ function DashboardBody() {
           </div>
         </header>
         <main id="main-content" tabIndex={-1}>
+          {view === "home" && (
+            <Home
+              onNavigate={navigate}
+              onOpenCase={openCase}
+              onAsk={(text) => {
+                setQuery(text);
+                navigate("cases");
+              }}
+            />
+          )}
           {view === "agents" && (
             <AgentInbox
               openCase={openCase}

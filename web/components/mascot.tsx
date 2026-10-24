@@ -109,20 +109,7 @@ export function Mascot({
       focusable="false"
       style={{ "--blink-delay": `${delay}s` } as CSSProperties}
     >
-      {working &&
-        [0, 0.8].map((d) => (
-          <circle
-            key={d}
-            className="mascot-ping"
-            cx={60}
-            cy={62}
-            r={44}
-            fill="none"
-            stroke={spec.color}
-            strokeWidth={5}
-            style={{ animationDelay: `${d}s` }}
-          />
-        ))}
+      {working && <ellipse className="mascot-shadow" cx={60} cy={111} rx={30} ry={4.5} fill={spec.color} />}
       <g className="mascot-figure">
         <path className="mascot-body" d={spec.shape} fill={spec.color} />
         <g className="mascot-eyes">

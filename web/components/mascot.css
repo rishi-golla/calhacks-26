@@ -22,11 +22,14 @@
 .mascot.working .mascot-gaze {
   animation: mascot-look 1.6s ease-in-out infinite;
 }
-.mascot .mascot-ping {
+.mascot.working .mascot-eyes {
+  --eye-y: 0.55;
+}
+.mascot .mascot-shadow {
   transform-box: fill-box;
   transform-origin: 50% 50%;
-  opacity: 0;
-  animation: mascot-ping 1.6s ease-out infinite;
+  opacity: 0.28;
+  animation: mascot-shadow 0.9s ease-in-out infinite;
 }
 
 /* Team chat: breathing squash. */
@@ -81,7 +84,7 @@
 }
 
 @keyframes mascot-blink {
-  0%, 94%, 100% { scale: 1 1; }
+  0%, 94%, 100% { scale: 1 var(--eye-y, 1); }
   96.5% { scale: 1 0.1; }
 }
 @keyframes mascot-look {
@@ -90,9 +93,9 @@
   55% { translate: 5px -3px; }
   80% { translate: 0 2px; }
 }
-@keyframes mascot-ping {
-  0% { scale: 0.85; opacity: 0.55; }
-  100% { scale: 1.35; opacity: 0; }
+@keyframes mascot-shadow {
+  0%, 100% { scale: 1 1; opacity: 0.28; }
+  50% { scale: 0.8 1; opacity: 0.16; }
 }
 @keyframes mascot-breathe {
   0%, 100% { scale: 1 1; }

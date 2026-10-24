@@ -1,0 +1,35 @@
+{
+  "case_id": "CASE-4821",
+  "load_id": "LOAD-4821",
+  "lane": "Stockton, CA -> Reno, NV",
+  "brokerage": "Golden Gate Freight (fictional)",
+  "carrier": {
+    "id": "C-311",
+    "name": "TBD: real carrier from FMCSA (W4)",
+    "usdot": null
+  },
+  "shipper": {
+    "id": "S-07",
+    "name": "TBD: real shipper (W4)"
+  },
+  "contract_rate": 1850.0,
+  "invoice_amount": 2150.0,
+  "line_items": [
+    {
+      "desc": "Linehaul",
+      "amount": 1850.0
+    },
+    {
+      "desc": "Detention 2h",
+      "amount": 300.0
+    }
+  ],
+  "detention_hours_claimed": 2,
+  "free_time_min": 120,
+  "gps": {
+    "arrived": "14:02",
+    "departed": "14:49"
+  },
+  "gps_dwell_min": 47,
+  "receipt_attached": false
+}

@@ -1,0 +1,11 @@
+# W1: model pool and routing table. Replace with real models served on the ASUS box.
+pool:
+  - id: small-fast      # classification / extraction
+  - id: reasoning       # investigation / planning
+  - id: coder-tools     # spreadsheet + code tools
+routes:
+  - match: {task_type: [classify_email, extract_invoice]}
+    model: small-fast
+  - match: {stakes: high}
+    ensemble: [reasoning, coder-tools]
+  - default: reasoning

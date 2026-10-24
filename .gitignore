@@ -1,0 +1,25 @@
+# Private planning docs (never pushed)
+docs/PRD.md
+docs/private/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+
+# Data / runtime
+data/
+*.log
+.DS_Store

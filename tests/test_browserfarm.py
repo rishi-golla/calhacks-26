@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
+from unittest.mock import patch
+from urllib.parse import urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +16,13 @@ PlaywrightError = pytest.importorskip("playwright.async_api").Error
 
 class PageHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
+        if self.path == "/redirect":
+            self.send_response(302)
+            self.send_header("Location", "https://not-allowlisted.invalid/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+
         content = (
             b"<!doctype html><html><head><title>Browser farm fixture</title></head>"
             b"<body>ready</body></html>"
@@ -41,16 +51,18 @@ def local_page_url() -> str:
 
 
 @pytest.fixture(scope="module")
-def client():
-    test_client = TestClient(app)
-    try:
-        test_client.__enter__()
-    except PlaywrightError as exc:
-        pytest.skip(f"Playwright Chromium unavailable: {exc}")
-    try:
-        yield test_client
-    finally:
-        test_client.__exit__(None, None, None)
+def client(local_page_url):
+    port = urlsplit(local_page_url).port
+    with patch.dict(os.environ, {"BROWSERFARM_ALLOWED_HOSTS": f"127.0.0.1:{port}"}):
+        test_client = TestClient(app)
+        try:
+            test_client.__enter__()
+        except PlaywrightError as exc:
+            pytest.skip(f"Playwright Chromium unavailable: {exc}")
+        try:
+            yield test_client
+        finally:
+            test_client.__exit__(None, None, None)
 
 
 def test_post_navigates_and_sessions_show_url_and_title(client, local_page_url):
@@ -103,6 +115,31 @@ def test_rejects_disallowed_urls_and_node_ids(client, node_id, url):
     response = client.post(f"/sessions/{node_id}", json={"url": url})
 
     assert response.status_code == 400
+
+
+def test_rejects_localhost_on_a_different_port(client, local_page_url):
+    port = urlsplit(local_page_url).port
+    different_port = port % 65535 + 1
+
+    response = client.post(
+        "/sessions/wrong-port",
+        json={"url": f"http://127.0.0.1:{different_port}/"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_blocks_redirect_to_disallowed_host(client, local_page_url):
+    response = client.post(
+        "/sessions/redirect",
+        json={"url": f"{local_page_url}redirect"},
+    )
+
+    assert response.status_code == 200
+    session = next(
+        item for item in client.get("/sessions").json() if item["node_id"] == "redirect"
+    )
+    assert urlsplit(session["url"]).hostname != "not-allowlisted.invalid"
 
 
 def test_delete_removes_session(client, local_page_url):

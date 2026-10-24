@@ -5,7 +5,8 @@ SPACETIME_URL ?= http://127.0.0.1:3000
 .PHONY: setup infra harness agents gateway router web browsers test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest verify-data review-worker live-agents live-demo live-gateway
 
 setup:            ## create venv + install
-	python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+	python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev,browser]"
+	$(PY) -m playwright install chromium
 	cd web && npm install
 infra:            ## postgres + redis
 	docker compose up -d

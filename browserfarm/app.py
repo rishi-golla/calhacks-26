@@ -20,7 +20,7 @@ from fastapi.responses import Response, StreamingResponse
 log = logging.getLogger(__name__)
 
 DEFAULT_ALLOWED_HOSTS = (
-    "127.0.0.1,localhost,safer.fmcsa.dot.gov,www.sec.gov,api.nessieisreal.com"
+    "127.0.0.1:3001,localhost:3001,safer.fmcsa.dot.gov,www.sec.gov,api.nessieisreal.com"
 )
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -52,9 +52,18 @@ class BrowserSession:
 class BrowserFarm:
     def __init__(self) -> None:
         configured_hosts = os.getenv("BROWSERFARM_ALLOWED_HOSTS", DEFAULT_ALLOWED_HOSTS)
-        self.allowed_hosts = {
-            host.strip().lower().rstrip(".") for host in configured_hosts.split(",") if host.strip()
-        }
+        self.allowed_hosts: set[tuple[str, int | None]] = set()
+        for entry in configured_hosts.split(","):
+            try:
+                parsed = urlsplit(f"//{entry.strip()}")
+                host = (parsed.hostname or "").lower().rstrip(".")
+                port = parsed.port
+            except ValueError:
+                continue
+            if host and not any(
+                (parsed.path, parsed.query, parsed.fragment, parsed.username, parsed.password)
+            ):
+                self.allowed_hosts.add((host, port))
         self.user_agent = os.getenv("BROWSERFARM_USER_AGENT") or DEFAULT_USER_AGENT
         self.playwright: Any = None
         self.browser: Any = None
@@ -72,6 +81,7 @@ class BrowserFarm:
                 viewport={"width": 1280, "height": 800},
                 user_agent=self.user_agent,
             )
+            await self.context.route("**/*", self._route_request)
         except Exception:
             await self.playwright.stop()
             self.playwright = None
@@ -93,18 +103,28 @@ class BrowserFarm:
             await self.playwright.stop()
             self.playwright = None
 
-    def validate_url(self, url: str) -> None:
+    def is_allowed(self, url: str) -> bool:
         try:
             parsed = urlsplit(url)
             host = (parsed.hostname or "").lower().rstrip(".")
-        except ValueError as exc:
-            raise HTTPException(400, "invalid URL") from exc
+            port = parsed.port
+        except ValueError:
+            return False
         if parsed.scheme.lower() not in {"http", "https"} or not host:
-            raise HTTPException(400, "URL must use http or https and include a host")
+            return False
         if parsed.username is not None or parsed.password is not None:
-            raise HTTPException(400, "URL credentials are not allowed")
-        if host not in self.allowed_hosts:
-            raise HTTPException(400, "host is not allowlisted")
+            return False
+        effective_port = port
+        if effective_port is None:
+            effective_port = 80 if parsed.scheme.lower() == "http" else 443
+        return (host, None) in self.allowed_hosts or (host, effective_port) in self.allowed_hosts
+
+    async def _route_request(self, route: Any) -> None:
+        request = route.request
+        if request.is_navigation_request() and not self.is_allowed(request.url):
+            await route.abort("blockedbyclient")
+        else:
+            await route.continue_()
 
     async def get_or_create_session(self, node_id: str) -> BrowserSession:
         async with self.sessions_lock:
@@ -309,7 +329,8 @@ async def open_session(node_id: str, request: Request) -> dict[str, str]:
         raise HTTPException(400, "JSON body must include a URL string")
     url = body["url"]
     farm = _farm(request)
-    farm.validate_url(url)
+    if not farm.is_allowed(url):
+        raise HTTPException(400, "URL is not allowlisted")
     return await farm.navigate(node_id, url)
 
 

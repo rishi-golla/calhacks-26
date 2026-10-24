@@ -42,7 +42,25 @@ type StreamEvent =
   | { type: "error"; message: string };
 
 const vectorCache = new Map<string, number[]>();
+const VECTOR_CACHE_LIMIT = 2000;
 const encoder = new TextEncoder();
+
+function getCachedVector(hash: string): number[] | undefined {
+  const vector = vectorCache.get(hash);
+  if (!vector) return undefined;
+  vectorCache.delete(hash);
+  vectorCache.set(hash, vector);
+  return vector;
+}
+
+function cacheVector(hash: string, vector: number[]) {
+  vectorCache.delete(hash);
+  vectorCache.set(hash, vector);
+  if (vectorCache.size > VECTOR_CACHE_LIMIT) {
+    const oldest = vectorCache.keys().next().value;
+    if (oldest !== undefined) vectorCache.delete(oldest);
+  }
+}
 
 function event(
   controller: ReadableStreamDefaultController<Uint8Array>,
@@ -247,7 +265,7 @@ async function runSearch(
         const missingByHash = new Map<string, SearchChunk>();
         for (const chunk of corpus) {
           const hash = chunkHash(chunk.text);
-          if (!vectorCache.has(hash) && !missingByHash.has(hash))
+          if (!getCachedVector(hash) && !missingByHash.has(hash))
             missingByHash.set(hash, chunk);
         }
         const missing = [...missingByHash.values()];
@@ -259,17 +277,17 @@ async function runSearch(
           );
           openaiLatencyMs += result.latencyMs;
           batch.forEach((chunk, index) =>
-            vectorCache.set(chunkHash(chunk.text), result.vectors[index]),
+            cacheVector(chunkHash(chunk.text), result.vectors[index]),
           );
           embeddedCount += batch.length;
         }
         const queryHash = chunkHash(question);
-        let queryVector = vectorCache.get(queryHash);
+        let queryVector = getCachedVector(queryHash);
         if (!queryVector) {
           const result = await requestEmbeddings([question], apiKey);
           openaiLatencyMs += result.latencyMs;
           queryVector = result.vectors[0];
-          vectorCache.set(queryHash, queryVector);
+          cacheVector(queryHash, queryVector);
           queryEmbedded = true;
         }
         const vectors = new Map(
@@ -277,7 +295,7 @@ async function runSearch(
             (chunk) =>
               [
                 chunkHash(chunk.text),
-                vectorCache.get(chunkHash(chunk.text)) ?? [],
+                getCachedVector(chunkHash(chunk.text)) ?? [],
               ] as const,
           ),
         );
@@ -371,15 +389,25 @@ export async function POST(request: NextRequest) {
       },
     );
 
-  let body: ChatBody;
+  let parsedBody: unknown;
   try {
-    body = (await request.json()) as ChatBody;
+    parsedBody = await request.json();
   } catch {
     return new Response(JSON.stringify({ error: "Invalid request body." }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
   }
+  if (
+    parsedBody === null ||
+    typeof parsedBody !== "object" ||
+    Array.isArray(parsedBody)
+  )
+    return new Response(JSON.stringify({ error: "Invalid request body." }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  const body = parsedBody as ChatBody;
   const question =
     typeof body.question === "string" ? body.question.trim() : "";
   if (!question || question.length > 2000)

@@ -8,7 +8,10 @@ header h1{font-size:15px;margin:0 12px 0 0}.demo{background:var(--warn);color:#0
 button{background:var(--acc);color:#fff;border:0;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:12px}
 button.sec{background:#2a3850}button.ok{background:var(--ok);color:#000}button.bad{background:var(--bad)}
 input,textarea{background:#0e1420;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px}
-main{display:grid;grid-template-columns:220px 1fr 1fr;grid-auto-rows:calc(50vh - 40px);gap:12px;padding:12px}
+main{display:grid;grid-template-columns:220px 1fr 1fr;grid-auto-rows:calc(46vh - 30px);gap:12px;padding:12px}
+.fe{display:grid;grid-template-columns:70px 170px 110px 1fr;gap:6px;padding:2px 0;border-bottom:1px dashed #1c2536;font-size:12px}
+.co{padding:4px 0;border-bottom:1px dashed #1c2536;font-size:12px}a{color:var(--acc);cursor:pointer}
+.live{background:#1d5c42}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;overflow:auto}
 .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 8px}
 .case{padding:6px;border-radius:6px;cursor:pointer;font-family:ui-monospace,monospace;font-size:12px}.case.sel,.case:hover{background:#1d2738}
@@ -22,15 +25,21 @@ td.c{cursor:pointer}td.c:hover{background:#1d2738}.pill{padding:1px 6px;border-r
 </style></head><body>
 <header><h1>Golden Gate Freight · Live Ops Console</h1><span class="demo">DEMO MODE · outreach routed to team allowlist only</span>
 <input id="tok" placeholder="gateway token" size="12" type="password">
-<button onclick="fire('phone')">Fire hero case (call)</button><button onclick="fire('email')">Fire hero case (email)</button>
-<button class="sec" onclick="fire('phone',true)">Call + human approval</button>
+<span class="pill live" id="rate">stream …</span>
+<button onclick="inject('detention_unsupported')">Inject detention dispute (call)</button>
+<button onclick="inject('detention_unsupported',{channel:'email'})">… (email)</button>
+<button class="sec" onclick="inject('detention_unsupported',{force_human_approval:true})">… + human approval</button>
+<button class="sec" onclick="inject('shipper_short_pay')">Shipper short-pay</button>
+<button class="sec" onclick="inject('bank_change')">Bank-change request</button>
 <span id="chain" class="pill">chain …</span></header>
 <main>
 <section class="card" style="grid-row:span 2"><h2>Cases</h2><div id="cases"></div></section>
 <section class="card"><h2>Waiting on a human / counterparty</h2><div id="parked"><i style="color:var(--mut)">nothing parked</i></div></section>
 <section class="card"><h2>Agent trail <span id="cid"></span></h2><div id="trail"></div></section>
-<section class="card"><h2>AP subledger (click a cell for blame)</h2><div id="sheet"></div><div id="blame"></div></section>
+<section class="card"><h2><select id="sh" onchange="tick()"><option>ap_subledger</option><option>ar_subledger</option><option>gl</option></select> (click a cell for blame)</h2><div id="sheet"></div><div id="blame"></div></section>
 <section class="card"><h2>Audit change sets (Git-style) + Validator</h2><div id="audit"></div></section>
+<section class="card span2"><h2>Live event stream (Redis <code>events</code>, real-time)</h2><div id="feed"></div></section>
+<section class="card"><h2>Counterparties · public records, unmasked</h2><div id="world"></div></section>
 </main><div id="toast"></div>
 <script>
 const $=id=>document.getElementById(id);let sel=null;
@@ -41,11 +50,14 @@ async function api(p,body){const r=await fetch(p,{method:body?'POST':'GET',heade
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const A=v=>esc(JSON.stringify(String(v??'')));  // safe JS string literal inside a double-quoted handler attribute
 const brief=d=>{if(!d)return'';const o={...d};return esc(JSON.stringify(o)).slice(0,260)};
-async function fire(kind,human){try{const r=await api('/demo/'+kind,{force_human_approval:!!human});sel=r.case_id;toast('dispatched '+r.case_id);tick()}catch(e){toast(e.message)}}
+async function inject(sc,o){try{const r=await api('/inject/'+sc,o||{});sel=r.case_id;toast(`${r.case_id}: ${r.carrier} → ${r.shipper}`);tick()}catch(e){toast(e.message)}}
+async function doc(ref){const d=await api('/docs/'+encodeURIComponent(ref));$('blame').innerHTML=`<h2 style="margin-top:10px">source document ${esc(ref)}</h2><pre class="d">${esc(JSON.stringify(d,null,1))}</pre>`}
 const SAY={deny:"Hi, yes this is dispatch. Driver was in and out in about 45 minutes. The detention was added by mistake and we have no receipt, so we withdraw the detention charge.",
- confirm:"Yes, the driver waited over two hours at the receiver. The detention is valid and we stand by the charge."};
+ confirm:"Yes, the driver waited over two hours at the receiver. The detention is valid and we stand by the charge.",
+ ptp:"Sorry about that, we will pay the remaining balance by Friday.",
+ nobank:"We never requested a bank change. Do not update our account."};
 async function complete(k,kind){const t=$('t_'+k).value;try{
- if(kind==='call')await api('/demo/calls/'+k+'/complete',{status:'completed',transcript:[{role:'agent',text:'Hi, this is an AI assistant calling on behalf of Golden Gate Freight about load 4821.'},{role:'counterparty',text:t}]});
+ if(kind==='call')await api('/demo/calls/'+k+'/complete',{status:'completed',transcript:[{role:'agent',text:'Hi, this is an AI assistant calling on behalf of Golden Gate Freight.'},{role:'counterparty',text:t}]});
  else await api('/demo/emails/'+k+'/reply',{text:t});toast('sent — agents resuming');tick()}catch(e){toast(e.message)}}
 async function decide(k,d){try{await api('/approvals/'+k,{decision:d,approver:$('who_'+k).value||'controller'});toast(d+'d');tick()}catch(e){toast(e.message)}}
 function parkedCard(p){const pl=p.payload||{};const k=esc(p.key);
@@ -55,18 +67,23 @@ function parkedCard(p){const pl=p.payload||{};const k=esc(p.key);
   <div>intended_to: <b>${esc(tgt.intended_to)}</b> &nbsp; routed_to: <b>${esc(tgt.routed_to)}</b> <span class="pill">${esc(tgt.mode||'demo')}</span></div>
   <div class="d">${brief(pl)}</div><div style="margin-top:6px;color:var(--mut)">You are the carrier. What do you say?</div>
   <textarea id="t_${k}" rows="3" style="width:100%">${SAY.deny}</textarea>
-  <div class="row"><button class="sec" onclick="$(${A('t_'+p.key)}).value=SAY.deny">Carrier withdraws detention</button><button class="sec" onclick="$(${A('t_'+p.key)}).value=SAY.confirm">Carrier confirms detention</button>
+  <div class="row"><button class="sec" onclick="$(${A('t_'+p.key)}).value=SAY.deny">Carrier withdraws detention</button><button class="sec" onclick="$(${A('t_'+p.key)}).value=SAY.confirm">Carrier confirms detention</button><button class="sec" onclick="$(${A('t_'+p.key)}).value=SAY.ptp">Promise to pay</button><button class="sec" onclick="$(${A('t_'+p.key)}).value=SAY.nobank">No bank change</button>
   <button onclick="complete(${A(p.key)},${A(p.kind)})">${p.kind==='call'?'End call → send transcript':'Send reply'}</button></div></div>`}
-async function blame(r,c){const h=await api(`/audit/blame/ap_subledger/${encodeURIComponent(r)}/${encodeURIComponent(c)}`);
+async function blame(r,c){const h=await api(`/audit/blame/${encodeURIComponent($('sh').value)}/${encodeURIComponent(r)}/${encodeURIComponent(c)}`);
  $('blame').innerHTML=`<h2 style="margin-top:10px">blame ${esc(r)} · ${esc(c)}</h2>`+h.map(x=>`<div class="cs">${esc(x.change_set)} · <b>${esc(x.agent)}</b> ${esc(x.action)} [${esc((x.policy_ids||[]).join(','))}]<br><span class="b">${esc(JSON.stringify(x.before))}</span> → <span class="a">${esc(JSON.stringify(x.after))}</span></div>`).join('')}
 async function tick(){if(!$('tok').value){$('chain').textContent='enter token';return}
  try{const cs=await api('/cases');if(!sel&&cs.length)sel=cs[0];
-  $('cases').innerHTML=cs.map(c=>`<div class="case ${c===sel?'sel':''}" onclick="sel=${A(c)};tick()">${esc(c)}</div>`).join('')||'<i>fire a case →</i>';
+  $('cases').innerHTML=cs.map(c=>`<div class="case ${c===sel?'sel':''}" onclick="sel=${A(c)};tick()">${esc(c)}</div>`).join('')||'<i>waiting for the stream…</i>';
   const pk=await api('/parked');const open=document.activeElement&&document.activeElement.id.startsWith('t_');
   if(!open)$('parked').innerHTML=pk.map(parkedCard).join('')||'<i style="color:var(--mut)">nothing parked</i>';
   const log=await api('/audit/log');$('chain').textContent=log.chain_ok?'hash chain OK':'CHAIN BROKEN';$('chain').style.background=log.chain_ok?'#1d5c42':'#7a2222';
-  const rows=await api('/audit/sheet/ap_subledger');const by={};const cols=new Set();rows.forEach(r=>{(by[r.row]=by[r.row]||{})[r.col]=r.value;cols.add(r.col)});const C=[...cols];
+  const rows=await api('/audit/sheet/'+encodeURIComponent($('sh').value));const by={};const cols=new Set();rows.forEach(r=>{(by[r.row]=by[r.row]||{})[r.col]=r.value;cols.add(r.col)});const C=[...cols];
   $('sheet').innerHTML=`<table><tr><th>row</th>${C.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`+Object.entries(by).map(([r,v])=>`<tr><td>${esc(r)}</td>${C.map(c=>`<td class="c" onclick="blame(${A(r)},${A(c)})">${esc(typeof v[c]==='object'?JSON.stringify(v[c]):v[c])}</td>`).join('')}</tr>`).join('')+'</table>';
+  const fd=await api('/feed?n=80');const now=Date.now();$('rate').textContent=`stream · ${fd.filter(e=>now-Date.parse(e.ts)<60000).length} events/min`;
+  $('feed').innerHTML=fd.map(e=>{const p=e.payload||{};const who=p.carrier?.name||p.shipper?.name||'';const what=p.milestone||(p.invoice_amount!=null?'$'+p.invoice_amount+(p.paid_amount!=null?' paid $'+p.paid_amount:''):'')||p.new_account_last4&&'acct …'+p.new_account_last4||'';
+   return `<div class="fe"><span class="d">${new Date(e.ts).toLocaleTimeString()}</span><span class="k">${esc(e.type)}</span><a onclick="sel=${A(p.case_id||e.case_hint)};tick()">${esc(p.load_id||'')}</a><span>${esc(who)} <span class="d">${esc(what)}</span> ${(e.evidence_refs||[]).map(r=>`<a onclick="doc(${A(r)})">${esc(r.replace('doc:',''))}</a>`).join(' ')}</span></div>`}).join('')||'<i style="color:var(--mut)">no events yet: is the simulator running?</i>';
+  if(!window.W){window.W=await api('/world');const co=c=>`<div class="co"><b>${esc(c.name)}</b> <span class="pill">${esc(c.usdot?'USDOT '+c.usdot:c.ticker||'')}</span><br>${esc(c.phone||'')} · ${esc(c.email||c.website||'')}<br><span class="d">${esc(c.address)} · <a href="${esc(c.source_url)}" target="_blank" rel="noopener">${esc(c.source)}</a></span></div>`;
+   $('world').innerHTML=`<div class="d">built ${esc(W.built_at)}</div><h2 style="margin-top:6px">Carriers (${W.carriers.length})</h2>`+W.carriers.map(co).join('')+`<h2>Shippers (${W.shippers.length})</h2>`+W.shippers.map(co).join('')}
   if(!sel)return;$('cid').textContent='· '+sel;const c=await api('/cases/'+encodeURIComponent(sel));
   $('trail').innerHTML=c.events.map(e=>`<div class="ev"><span class="d">${new Date(e.ts*1000).toLocaleTimeString()}</span><span class="ag">${esc(e.agent)}</span><span><span class="k">${esc(e.kind)}</span> <span class="d">${brief(e.detail)}</span></span></div>`).join('');
   $('audit').innerHTML=c.change_sets.map(x=>`<div class="cs"><b>${esc(x.id)}</b> ← ${esc(x.parent_id||'root')} · <b>${esc(x.agent)}</b> ${esc(x.action)} [${esc((x.policy_ids||[]).join(','))}]<br>${(x.cells||[]).map(cl=>`${esc(cl.sheet)}!${esc(cl.row)}.${esc(cl.col)}: <span class="b">${esc(JSON.stringify(cl.before))}</span> → <span class="a">${esc(JSON.stringify(cl.after))}</span>`).join('<br>')}</div>`).join('')

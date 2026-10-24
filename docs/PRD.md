@@ -1,5 +1,5 @@
 # PRD: Autonomous Back Office for Freight Brokerages
-**Cal Hacks 13.0 · Ground truth v1.9 · Sat Oct 24, 2026 PDT**
+**Cal Hacks 13.0 · Ground truth v1.10 · Sat Oct 24, 2026 PDT**
 
 > This is the one source of truth. If code, a chat message or a slide disagrees with this doc, the doc wins until someone changes it. To change it, edit this file, bump the version in the change log at the bottom, and post one line in the team chat. Section 7 (interface contracts) is frozen at **Sat 3:00 AM**. After that, contract changes need agreement from both owners on that interface.
 
@@ -69,6 +69,18 @@ one provided outbound number configured. Its default completion path is the loca
 public HTTPS and webhook credentials are only needed when hosted webhook tools are enabled.
 The configured calling window is still enforced. No phone call has been placed in this milestone;
 the first team demonstration remains pending a suitable calling window and operator agreement.
+
+**Operator phone demo (v1.10):** the Demo Console includes **Call my phone** for the fixed,
+verified team destination. Each explicit click enters the real Verification → Dispatcher Outreach
+A2A workflow. A private, task-bound authorization lets this operator-triggered team demo bypass
+calling hours and the one-attempt-per-hour limit. Back-to-back demos are supported after the
+previous call and its agent processing finish; only one request can be active. Directory checks,
+demo routing and purpose permissions still apply. Ordinary calls and the CLI keep both guards.
+The UI polls actual state, masks the destination and saves a request ID before submission so
+retries/reloads cannot create another call. Model input cannot grant the exception. Server secrets
+stay outside the browser. Mocked coverage verifies this control; no actual call was placed during
+implementation, and the operator will trigger the first live test. Other demo presets remain
+unconnected.
 
 **Seats it fills (the line the Hyphenate judges ask for):** *"The carrier-payables clerk, payables fraud analyst and collections specialist at a 40-person freight brokerage, reporting to the controller."*
 
@@ -516,6 +528,7 @@ Resolved in v1.2: the home company is fictional "Golden Gate Freight" with real 
 7. Other sponsor credits worth using for data (check the live site and Slack). — W4
 
 ## Change log
+- v1.10 (Sat Oct 24): added the local Demo Console phone control, durable authenticated admission, exact-task demo authorization, idempotent retries and visible call status. Coordinated Voice/W2 changes let explicit team demos bypass hours and hourly limits while enforcing one active call; ordinary calls retain both guards. Live phone acceptance remains pending the operator's click.
 - v1.0 (Fri 11:45 PM): initial ground truth.
 - v1.1 (Sat 12:30 AM): dropped Fetch.ai and Coinbase. Person 4 = real-world data, enrichment and demo outreach. Demo-only outreach with intended_to and routed_to. Added the Validator agent (:9108) with memory and instruction learning, the Git-style audit with spreadsheet blame, diff and history, and human flags. Renamed the external-check agent from Validation to Verification.
 - v1.2 (Sat 1:00 AM): fictional "Golden Gate Freight" with real counterparties; enrichment waterfall (FMCSA via Apify, our own key, context.dev, Apify website scrape); contacts unmasked on the live site.

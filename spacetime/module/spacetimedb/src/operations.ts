@@ -624,14 +624,36 @@ export const upsertCall: Handler = m => {
   const routed_to = phone(text(p, 'routed_to', previous?.routed_to));
   if (!ctx.db.demo_target.phone.find(routed_to)?.enabled) throw new Error('P-011: routed number is not on the demo allowlist');
   if (previous && (previous.case_id !== case_id || previous.task_id !== task.task_id || previous.company_id !== company_id || previous.contact_id !== contact_id || previous.intended_to !== intended_to || previous.routed_to !== routed_to)) throw new Error('call routing and ownership are immutable');
-  if (!previous) {
-    const cutoff = Number(ctx.timestamp.microsSinceUnixEpoch / 1000n) - 3600000;
-    if ([...ctx.db.call.company_id.filter(company_id)].some(x => Date.parse(x.started_at) >= cutoff)) throw new Error('at most one call attempt per company per hour');
-  }
+  const persona = text(p, 'persona', previous?.persona ?? 'verification');
+  const direction = choice(p, 'direction', ['outbound', 'inbound'], previous?.direction ?? 'outbound');
   const status = choice(p, 'status', ['queued', 'ringing', 'in_progress', 'completed', 'no_answer', 'failed', 'cancelled'], previous?.status ?? 'queued');
+  // This assertion comes only from the authenticated Voice service after it
+  // consumes an operator's durable, task-bound demo grant. It cannot relax
+  // directory/routing controls or authorize ordinary counterparty calls.
+  const teamDemo = bool(p, 'team_demo_authorized', false);
+  if (teamDemo && (actor.role !== 'voice_desk' || task.skill !== 'place_call'
+      || case_id !== 'SYN-CARTESIA-TEAM-CALL' || company_id !== 'DEMO-TEAM'
+      || persona !== 'verification' || direction !== 'outbound'
+      || company.source_url !== 'operator://explicit-team-demo-destination'
+      || company.phone !== intended_to || intended_to !== routed_to)) {
+    throw new Error('team demo authorization does not match the operator team call scope');
+  }
+  if (!previous) {
+    const companyCalls = [...ctx.db.call.company_id.filter(company_id)];
+    if (company_id === 'DEMO-TEAM' && companyCalls.some(x => ['queued', 'ringing', 'in_progress'].includes(x.status))) {
+      throw new Error('an active team demo call must finish before another can start');
+    }
+    if (teamDemo) {
+      if (status !== 'queued') throw new Error('an authorized team demo call must start queued');
+      p.reason_code = 'operator_team_demo_call';
+    } else {
+      const cutoff = Number(ctx.timestamp.microsSinceUnixEpoch / 1000n) - 3600000;
+      if (companyCalls.some(x => Date.parse(x.started_at) >= cutoff)) throw new Error('at most one call attempt per company per hour');
+    }
+  }
   if (previous && ['completed', 'no_answer', 'failed', 'cancelled'].includes(previous.status) && status !== previous.status) throw new Error('terminal call cannot restart');
   const row = {
-    id, case_id, task_id: task.task_id, persona: text(p, 'persona', previous?.persona ?? 'verification'), direction: choice(p, 'direction', ['outbound', 'inbound'], previous?.direction ?? 'outbound'),
+    id, case_id, task_id: task.task_id, persona, direction,
     to_masked: `${intended_to.slice(0, 3)}…${intended_to.slice(-4)}`, intended_to, routed_to, company_id, contact_id, status,
     started_at: previous?.started_at ?? now(ctx), ended_at: ['completed', 'no_answer', 'failed', 'cancelled'].includes(status) ? previous?.ended_at || now(ctx) : '',
     findings_json: p.findings_json === undefined ? previous?.findings_json ?? '{}' : json(p, 'findings_json'),

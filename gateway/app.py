@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from common.envelope import TaskEnvelope
 from common.providers import infer, mode
@@ -75,9 +76,13 @@ async def reconcile_once(store: CallStore) -> None:
 
 @asynccontextmanager
 async def lifespan(app):
+    from common.demo_calls import DemoCallStore
+    from common.runtime_store import RuntimeStore
     store = CallStore()
     await store.initialize()
     app.state.calls = store
+    app.state.demo_calls = DemoCallStore(RuntimeStore(engine=store.engine))
+    await app.state.demo_calls.initialize()
     worker = asyncio.create_task(reconcile_calls(store)) if mode() == "live" else None
     try:
         yield
@@ -197,6 +202,38 @@ async def explain(case_id: str, decision: str, authorization: str = Header(defau
                          {"audit": selected}, purpose="explain_stored_decision")
     return {"case_id": case_id, "decision": decision, "explanation": result["assessment"],
             "evidence_refs": refs, "model_used": result["model_used"]}
+
+
+def require_demo_auth(authorization: str) -> None:
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(401, "invalid credentials")
+    require_secret(authorization[7:], "DEMO_CONTROL_TOKEN")
+
+
+@app.get("/demo/team-call")
+async def team_call_status(req: Request, request_id: str | None = None, authorization: str = Header(default="")):
+    from common.demo_calls import canonical_request_id
+    require_demo_auth(authorization)
+    try:
+        request_id = canonical_request_id(request_id) if request_id is not None else None
+    except ValueError:
+        raise HTTPException(400, "request_id must be a canonical UUID") from None
+    return await req.app.state.demo_calls.snapshot(request_id)
+
+
+@app.post("/demo/team-call")
+async def request_team_call(req: Request, authorization: str = Header(default="")):
+    from common.demo_calls import canonical_request_id
+    require_demo_auth(authorization)
+    body = await object_body(req)
+    try:
+        if set(body) != {"request_id"}:
+            raise ValueError
+        request_id = canonical_request_id(body["request_id"])
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Only a canonical UUID request_id is accepted") from None
+    result, status = await req.app.state.demo_calls.submit(request_id)
+    return JSONResponse(result, status_code=status)
 
 
 @app.post("/demo/{kind}")

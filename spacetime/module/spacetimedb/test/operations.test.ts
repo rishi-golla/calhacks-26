@@ -257,6 +257,105 @@ test('directory and demo allowlist checks prevent substituted phone numbers', ()
   assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, { ...payload, id: 'CALL-2' }), /one call/);
 });
 
+function teamDemo() {
+  const h = new Harness(); h.open('SYN-CARTESIA-TEAM-CALL');
+  h.run('voice_desk', 'upsert_task', ['voice_desk'], op.upsertTask, {
+    task_id: 'VOICE', case_id: 'SYN-CARTESIA-TEAM-CALL', skill: 'place_call' });
+  h.run('ingest', 'upsert_company', ['ingest'], op.upsertCompany, {
+    id: 'DEMO-TEAM', name: 'Operator team', phone: '+14155550100',
+    source_url: 'operator://explicit-team-demo-destination' });
+  h.run('admin', 'set_demo_target', ['admin'], op.setDemoTarget, { phone: '+14155550100', label: 'Team' });
+  const payload: Payload = { id: 'CALL-1', case_id: 'SYN-CARTESIA-TEAM-CALL', task_id: 'VOICE',
+    company_id: 'DEMO-TEAM', routed_to: '+14155550100', persona: 'verification', direction: 'outbound',
+    status: 'queued', team_demo_authorized: true };
+  return { h, payload };
+}
+
+test('explicit operator team calls may repeat after each terminal outcome and retain retry identity', () => {
+  const { h, payload } = teamDemo();
+  const outcomes = ['completed', 'no_answer', 'failed', 'cancelled'];
+  for (const [index, status] of outcomes.entries()) {
+    const queued = { ...payload, id: `CALL-${index}` };
+    const submitted = h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, queued);
+    const changes = h.rows('change_set').length;
+    h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, submitted);
+    assert.equal(h.rows('change_set').length, changes);
+    assert.equal(h.rows('audit_event').at(-1)?.reason_code, 'operator_team_demo_call');
+    // A repeated queue projection for this same call does not conflict with itself.
+    h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, queued);
+    h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall,
+      { id: queued.id, status, team_demo_authorized: false });
+    assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, queued), /terminal call/);
+  }
+  assert.equal(h.rows('call').length, 4);
+});
+
+test('team calls atomically block any second active call, even after the hourly window', () => {
+  for (const status of ['queued', 'ringing', 'in_progress']) {
+    const { h, payload } = teamDemo();
+    h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, payload);
+    h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, { id: payload.id, status });
+    h.micros += 7200000000n;
+    for (const team_demo_authorized of [true, false]) {
+      assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall,
+        { ...payload, id: 'CALL-2', team_demo_authorized }), /active team demo call/);
+    }
+    assert.equal(h.rows('call').length, 1);
+  }
+});
+
+test('team calls without explicit authorization retain the one-company-per-hour limit', () => {
+  const { h, payload } = teamDemo();
+  h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, payload);
+  h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, { id: payload.id, status: 'failed' });
+  const ordinary: Payload = { ...payload, id: 'CALL-2' };
+  delete ordinary.team_demo_authorized;
+  assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, ordinary), /one call/);
+  assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall,
+    { ...ordinary, team_demo_authorized: false }), /one call/);
+  assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall,
+    { ...ordinary, team_demo_authorized: 'true' }), /must be boolean/);
+});
+
+test('team-call authorization cannot apply to another case, company, purpose, direction or source', () => {
+  const invalid: Payload[] = [{ persona: 'collections' }, { direction: 'inbound' }, { status: 'completed' }];
+  for (const overrides of invalid) {
+    const { h, payload } = teamDemo();
+    assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall,
+      { ...payload, ...overrides }), /team demo/);
+    assert.equal(h.rows('call').length, 0);
+  }
+  const { h, payload } = teamDemo();
+  h.open('OTHER-CASE');
+  h.run('voice_desk', 'upsert_task', ['voice_desk'], op.upsertTask, {
+    task_id: 'OTHER-VOICE', case_id: 'OTHER-CASE', skill: 'place_call' });
+  assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall,
+    { ...payload, case_id: 'OTHER-CASE', task_id: 'OTHER-VOICE' }), /team demo/);
+  h.run('ingest', 'upsert_company', ['ingest'], op.upsertCompany, { id: 'OTHER-COMPANY', name: 'Other',
+    phone: '+14155550100', source_url: 'operator://explicit-team-demo-destination' });
+  assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall,
+    { ...payload, company_id: 'OTHER-COMPANY' }), /team demo/);
+  h.run('ingest', 'upsert_company', ['ingest'], op.upsertCompany,
+    { id: 'DEMO-TEAM', source_url: 'https://public.example/team' });
+  assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, payload), /team demo/);
+  assert.equal(h.rows('call').length, 0);
+});
+
+test('team-call authorization keeps routing, service identity and human ownership controls', () => {
+  const { h, payload } = teamDemo();
+  h.run('admin', 'set_demo_target', ['admin'], op.setDemoTarget, { phone: '+14155550101', label: 'Other teammate' });
+  assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall,
+    { ...payload, routed_to: '+14155550101' }), /team demo/);
+  h.run('admin', 'set_demo_target', ['admin'], op.setDemoTarget, { phone: '+14155550100', label: 'Disabled', enabled: false });
+  assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, payload), /P-011/);
+  h.run('admin', 'set_demo_target', ['admin'], op.setDemoTarget, { phone: '+14155550100', label: 'Team', enabled: true });
+  assert.throws(() => h.run('verification', 'upsert_call', ['voice_desk'], op.upsertCall, payload), /role/);
+  h.run('human', 'update_case', ['human'], op.updateCase,
+    { case_id: payload.case_id, status: 'human_owned', reason: 'operator takeover' });
+  assert.throws(() => h.run('voice_desk', 'upsert_call', ['voice_desk'], op.upsertCall, payload), /human_owned/);
+  assert.equal(h.rows('call').length, 0);
+});
+
 test('memory revisions and instruction reverts preserve immutable lesson history', () => {
   const h = new Harness(); h.open();
   h.run('human', 'upsert_memory', ['human'], op.upsertMemory, { id: 'MEM-1', agent: 'carrier_ap', scope: { carrier_id: 'C-1' }, text: 'Check receipts', source_ref: 'human-note' });

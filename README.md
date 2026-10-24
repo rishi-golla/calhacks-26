@@ -63,8 +63,9 @@ make web
 ```
 
 The gateway polls Cartesia locally, so the default setup does not require a public URL or webhook
-secret. The hosted personas cover verification, collections and approvals. Calls still require
-a real allowlisted team destination, a verified case contact and an open calling window. Source
+secret. The hosted personas cover verification, collections and approvals. Calls require
+a real allowlisted team destination and a verified case contact. Ordinary calls also require an
+open calling window and respect one attempt per company per hour. Source
 and phone configuration stay private; API keys are never sent to the browser.
 
 Readiness and the public-data demonstration can be inspected or run separately:
@@ -83,7 +84,15 @@ bank changes or payment. The completed report is `data/live/sponsor-lookups-spon
 it reused the original actor runs with updated normalization and no new paid run. Validation
 passed 414 backend tests and 41 frontend tests, plus lint and the frontend production build.
 
-No live call has been placed in this milestone. The explicit call command and optional hosted
+The Demo Console now includes **Call my phone** for the prepared team case. Each explicit click
+starts a durable Verification → Dispatcher Outreach A2A workflow. This local operator control
+can call outside business hours and repeat immediately after the previous call and agent work
+finish. It allows only one active request; reloads and retries reuse the saved request.
+Enable `DEMO_PHONE_ENABLED=1` and the same private `DEMO_CONTROL_TOKEN` in the gateway profile
+and `web/.env.local`, with `GATEWAY_URL=http://127.0.0.1:9000` in the latter. Never use a
+`NEXT_PUBLIC_*` variable for this token. The button cannot choose another destination.
+
+No live call has been placed during implementation. The explicit call command and optional hosted
 webhook-tool setup are documented in the [voice runbook](docs/A2A-RUNBOOK.md#enable-a-real-demo-phone-call).
 
 For W2's live database and dashboard, follow [spacetime/README.md](spacetime/README.md).

@@ -77,6 +77,7 @@ async def test_outbound_contract_uses_only_demo_target_and_never_redials(configu
     meta = DelegationMeta(case_id="case", from_agent="verification")
     attempt_id, result = await voice.start_call(configured, meta, "task")
     assert result is None
+    assert "team_demo_authorized" not in voice.SpacetimeClient.mutate.await_args.args[1]
     again, result = await voice.start_call(configured, meta, "task")
     assert again == attempt_id and result is None and len(requests) == 1
     store = voice.CallStore()

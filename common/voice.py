@@ -223,7 +223,11 @@ async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> t
             routed_to=routed.routed_to,
             findings={"simulated": True, "claim_confirmed": False, "receipt_provided": False, **fixture_findings},
             transcript_ref=f"fixture://calls/{attempt_id}")
-    check_call_window({**company, "timezone": target.get("timezone") or company.get("timezone")})
+    from common.demo_calls import authorize_demo_voice
+    hours_grant = await authorize_demo_voice(env, meta, task_id, request.counterparty_id,
+                                             routed.intended_to, routed.routed_to)
+    if not hours_grant:
+        check_call_window({**company, "timezone": target.get("timezone") or company.get("timezone")})
     headers, persona, number = call_config(request.purpose)
     store = CallStore()
     await store.initialize()
@@ -232,7 +236,8 @@ async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> t
                "contact_id": contact.get("id", "") if contact else "",
                "intended_to": routed.intended_to, "routed_to": routed.routed_to,
                "questions": request.questions, "facts": request.facts,
-               "evidence_refs": env.evidence_refs, "persona": persona}
+               "evidence_refs": env.evidence_refs, "persona": persona,
+               "team_demo_authorized": hours_grant}
     try:
         row = await store.prepare(attempt_id, env, task_id, payload, token)
         if row["result"]:
@@ -245,6 +250,7 @@ async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> t
             "task_id": task_id, "company_id": request.counterparty_id,
             "contact_id": payload["contact_id"], "routed_to": routed.routed_to,
             "persona": request.purpose, "direction": "outbound", "status": "queued",
+            **({"team_demo_authorized": True} if hours_grant else {}),
         })
         # A restart before claim can generate a replacement capability; store only its hash.
         if not await store.claim_dial(attempt_id):

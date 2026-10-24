@@ -176,8 +176,9 @@ window was closed at setup, so the first end-to-end team call remains pending.
 Required configuration is `CARTESIA_API_KEY`, `CARTESIA_FROM_NUMBER_ID`, the relevant
 `CARTESIA_AGENT_ID_<PURPOSE>`, and a real E.164 teammate destination in `DEMO_ALLOWLIST_PHONES`.
 The example phone numbers are rejected. Keep `OUTREACH_MODE=demo`; a public scraped number is
-never used as the routed destination. Calling hours, verified-directory provenance, purpose
-permissions, W2 controls and the per-counterparty rate limit still apply.
+never used as the routed destination. Verified-directory provenance, purpose permissions and
+W2 controls apply to every call. Ordinary calls enforce the calling window and one attempt per
+company per hour. The explicit team-demo button has the narrow exception described below.
 
 The default completion path is **local gateway polling**. With
 `CARTESIA_WEBHOOK_TOOLS_ENABLED=0`, neither a public URL nor a webhook secret is required.
@@ -202,9 +203,36 @@ verification task, delegates to Dispatcher Outreach and can ring the allowlisted
 .venv/bin/python -m scripts.live_sponsors call --run-id team-call-001
 ```
 
-The script checks readiness and calling hours before admission. Do not widen the calling window
-or change the recipient merely to make a test pass. A new run ID creates a new logical request;
+The script checks readiness and calling hours before admission and has no demo override.
+A new run ID creates a new logical request;
 reusing the same ID retrieves the same durable task. Reports are private files under `data/live/`.
+
+### Call from the Demo Console
+
+Prepare the private `SYN-CARTESIA-TEAM-CALL` case and `DEMO-TEAM` company with
+`scripts.live_sponsors prepare` as described below. Set `DEMO_PHONE_ENABLED=1` and a strong,
+matching `DEMO_CONTROL_TOKEN` in the gateway's private profile and `web/.env.local`; set
+`GATEWAY_URL=http://127.0.0.1:9000` in `web/.env.local`. Restart the live agents, gateway and web
+server. The web launch scripts bind to loopback; keep this operator control local. These are
+server-only settings; never expose the token through `NEXT_PUBLIC_*`.
+
+Open **Demo Console → Call my phone**. The panel displays only the configured phone's last four
+digits. One click admits a real Verification task, which delegates to Dispatcher Outreach over
+A2A. This fixed team-demo control can call outside business hours and start another call as soon
+as the previous call and agent processing finish, without a one-hour cooldown. Only one team call
+can be active. Other demo presets remain unconnected.
+
+The browser submits only a saved request UUID through a same-origin, loopback-only server proxy.
+The authenticated gateway creates a ten-minute durable authorization bound to the fixed case,
+verified team destination and exact reserved Voice task. Voice checks that authorization before
+bypassing the hours guard; W2 independently checks the team scope, directory, allowlist and active
+calls before bypassing the hourly limit. Model input cannot create this authorization. Ordinary
+calls and the CLI retain both guards. The demo changes no task-envelope contracts.
+
+Status polling and page reloads never place a call. Duplicate clicks and explicit retries reuse
+the same request; starting a fresh call after completion requires another click. If provider
+acceptance is uncertain, the panel waits for reconciliation and does not redial. The control has
+been tested with mocked calls; the first actual phone test remains for the operator to trigger.
 
 Hosted webhook tools are optional and are not attached to the current personas. To enable them,
 configure genuine public HTTPS `PUBLIC_BASE_URL` and `CARTESIA_WEBHOOK_SECRET`, attach the scoped
@@ -218,7 +246,8 @@ original Voice Desk task. Personas disclose that they are AI assistants, follow 
 purpose, end on stop/voicemail, and cannot authorize payments or bank changes.
 
 A timed-out create request remains **uncertain**. Do not automatically redial: reconcile the
-provider call first. Calls outside the configured contact time window fail. A spoken statement
+provider call first. Calls outside the configured contact time window fail unless they carry the
+valid team-demo authorization above. A spoken statement
 can be reported with an exact supporting quote but does not provide a receipt or authorize a
 financial mutation. Inbound dispute intake and email delivery still require W4 integration.
 

@@ -26,6 +26,7 @@ import {
   type FlagHandler,
 } from "./ui";
 import type { Notify } from "./operations";
+import { DemoPhone } from "./demo-phone";
 function AgentConfig({
   agent,
   models,
@@ -486,20 +487,19 @@ export function DemoView({ notify }: { notify: Notify }) {
         <span className="eyebrow">The moment it becomes real</span>
         <h2>Put the back office to work.</h2>
         <p>
-          Choose a scenario, pick your teammate, and follow the work from first
-          handoff to final decision.
+          Call your team phone and follow the agents from first handoff to final
+          decision.
         </p>
       </div>
+      <DemoPhone />
       {configError ? (
         <p className="notice warning">{configError}</p>
       ) : !config?.enabled ? (
         <div className="notice warning">
           <div>
-            <strong>W4 demo gateway is not enabled.</strong>
+            <strong>Additional scenarios are not connected yet.</strong>
             <p>
-              The console is ready. Enable it after the real handler and
-              allowlisted team destinations are configured. No outreach has been
-              started.
+              Use Call my phone above for the live phone demo.
             </p>
           </div>
         </div>
@@ -514,6 +514,7 @@ export function DemoView({ notify }: { notify: Notify }) {
           <button
             className={`preset ${kind === preset.id ? "selected" : ""}`}
             key={preset.id}
+            disabled={!config?.enabled}
             onClick={() => {
               setKind(preset.id);
               setChannel(preset.channel);

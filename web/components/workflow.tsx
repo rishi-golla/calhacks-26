@@ -11,7 +11,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Lock, Menu, Plus, X } from "lucide-react";
-import { num, str, timestamp } from "@/lib/data";
+import { str, timestamp } from "@/lib/data";
 import { useLive } from "./live-provider";
 import { MASCOT_IDS, Mascot } from "./mascot";
 import { useClock } from "./ui";
@@ -344,7 +344,9 @@ export default function Workflow({
       !["offline", "error", "stopped"].includes(
         str(rec.status).toLowerCase(),
       ) &&
-      num(rec.active) > 0;
+      scoped.task.some(
+        (t) => t.agent === owner.agent && str(t.a2a_state) === "working",
+      );
     const nodeState: StepState = needsApproval
       ? "need"
       : ["live", "online", "working", "busy"].includes(status)

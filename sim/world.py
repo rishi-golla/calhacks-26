@@ -95,7 +95,20 @@ def build(n_carriers: int = 300, n_shippers: int = 60, seed: int | None = None) 
 
 def ensure(**kw) -> dict:
     w = directory.load()
-    return w if w.get("schema") == WORLD_SCHEMA and w.get("lanes") else build(**kw)
+    w = w if w.get("schema") == WORLD_SCHEMA and w.get("lanes") else build(**kw)
+    if not any(c.get("id") == "C-311" for c in w.get("carriers", [])):
+        w["carriers"].extend([
+            {"id": "C-311", "name": "Sierra Haul LLC", "usdot": "3141592", "phone": "+15550143159",
+             "email": "dispatch@sierrahaul.example", "terms": "Net 30", "owner_operator": True,
+             "source": "prd_hero_fixture"},
+            {"id": "C-77", "name": "Rapid Ridge Transport", "usdot": "7700770", "phone": "+15550770077",
+             "email": "dispatch@rapidridge.example", "terms": "Net 30", "source": "prd_hero_fixture"},
+        ])
+        w["shippers"].append({"id": "S-07", "name": "Bay Produce Co", "cik": "0000000007",
+                              "phone": "+15550070007", "email": "ap@bayproduce.example",
+                              "source": "prd_hero_fixture"})
+        directory.save(w)
+    return w
 
 
 if __name__ == "__main__":

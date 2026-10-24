@@ -433,6 +433,90 @@ async def inject(scenario: str, overrides: dict | None = None, r: redis.Redis | 
     return asyncio.create_task(run())
 
 
+async def seed_hero(world: dict) -> None:
+    marker = data_dir() / ".hero_seeded"
+    if marker.exists():
+        return
+    from sim.world import ensure
+    world = ensure()
+    carrier = directory_entry(world, "C-311")
+    shipper = directory_entry(world, "S-07")
+    consignee = {"id": "RENO-01", "name": "Reno Cold Storage", "address": "Reno, NV"}
+    lane = {"id": "LN-HERO", "carrier_id": "C-311", "shipper_id": "S-07", "origin": "Stockton, CA",
+            "destination": "Reno, NV", "miles": 133, "linehaul": 1850.0, "fsc": 0.0, "contract_rate": 1850.0,
+            "free_time_min": 120, "detention_rate_hr": 150.0, "transit_hours": 1.0, "equipment": "Reefer",
+            "commodity": "Produce", "nmfc_class": 70,
+            "accessorials": {"lumper": "receipt required", "layover": 250.0, "tonu": 150.0,
+                             "stop_off": 75.0, "driver_assist": 100.0}}
+    for load_id, offset in (("LOAD-4821", 0), ("LOAD-4877", 14)):
+        base_time = (_now() + timedelta(days=offset)).replace(hour=13, minute=0, second=0, microsecond=0)
+        case_id, bol, po = f"CASE-{load_id[5:]}", f"BOL-{load_id}", f"PO-{load_id}"
+        loaded, arrived, departed = (base_time + timedelta(minutes=55), base_time + timedelta(hours=1, minutes=2),
+                                     base_time + timedelta(hours=1, minutes=49))
+        load = {"load_id": load_id, "case_id": case_id, "carrier": carrier, "shipper": shipper,
+                "consignee": consignee, "lane": lane, "contract_rate": 1850.0, "free_time_min": 120,
+                "bol": bol, "po": po, "pro": f"PRO-{load_id}", "fsc_per_mile": 0.0, "pallets": 20,
+                "weight_lb": 18000, "seal": "S4821", "trailer": "R-311", "driver": "Alex Rivera"}
+        common = {"load_id": load_id, "case_id": case_id, "bol": bol, "po": po, "pro": load["pro"],
+                  "lane": "Stockton, CA -> Reno, NV"}
+        refs = [
+            docs.write(f"RC-{load_id}", "rate_confirmation", {**common, "date": _ts(base_time), "carrier": carrier,
+                "shipper": shipper, "consignee": consignee, "pickup_appt": _ts(loaded), "delivery_appt": _ts(arrived),
+                "linehaul": 1850.0, "fsc": 0.0, "fsc_per_mile": 0.0, "total": 1850.0, "accessorials": lane["accessorials"],
+                "free_time_min": 120, "detention_rate_hr": 150.0, "terms": "Net 30"}),
+            docs.write(f"BOL-{load_id}", "bill_of_lading", {**common, "ship_date": _ts(loaded), "seal": load["seal"],
+                "trailer": load["trailer"], "carrier": carrier, "shipper": shipper, "consignee": consignee,
+                "commodity": "Produce", "nmfc_class": 70, "pallets": 20, "weight_lb": 18000, "loader": "Pat Lee",
+                "loaded_at": _ts(loaded), "driver": load["driver"]}),
+            docs.write(f"POD-{load_id}", "proof_of_delivery", {**common, "carrier": carrier, "consignee": consignee,
+                "arrived": _ts(arrived), "departed": _ts(departed), "pallets_received": 20, "receiver": "R. Gomez"}),
+        ]
+        invoice = f"INV-3141592-H{load_id[-4:]}"
+        invoice_ref = docs.write(invoice, "carrier_invoice", {**common, "invoice_number": invoice, "date": _ts(departed),
+            "terms": "Net 30", "due": _ts(departed + timedelta(days=30)), "carrier": carrier,
+            "remit_to": {"name": carrier["name"], "address": "", "routing_last4": "0000", "account_last4": "0000"},
+            "line_items": [{"desc": "Linehaul", "amount": 1850.0},
+                           {"desc": "Detention 2h", "qty": 2, "rate": 150.0, "amount": 300.0}],
+            "total": 2150.0, "origin": lane["origin"], "destination": lane["destination"]})
+        refs.append(invoice_ref)
+        at = departed + timedelta(hours=2)
+        message = mail.write(carrier["email"], "ap@goldengatefreight.example", f"Invoice {invoice}",
+                             "Please see attached invoice and signed POD.", at,
+                             attachments=[f"{invoice}.pdf", f"POD-{load_id}.pdf"])
+        tms = {**common, "carrier": carrier, "shipper": shipper, "consignee": consignee, "contract_rate": 1850.0,
+               "free_time_min": 120, "operator_overrides": {}, "pickup_appt": _ts(loaded),
+               "delivery_appt": _ts(arrived)}
+        events_to_publish = [
+            _event("load.tendered", load, tms, base_time, refs=[refs[0]]),
+            _event("load.dispatched", load, {**common, "status": "dispatched"}, base_time + timedelta(minutes=20)),
+            _event("load.status", load, {**common, "status": "loaded"}, loaded, refs=[refs[1]]),
+            _event("gps.ping", load, {**common, "milestone": "delivery.arrived", "dwell_min": None}, arrived),
+            _event("load.delivered", load, {**common, "dwell_min": 47}, departed),
+            _event("gps.ping", load, {**common, "milestone": "delivery.departed", "dwell_min": 47}, departed),
+            _event("pod.received", load, {**common, "pod_ref": refs[2], "signed": True}, departed, refs=refs[2:3]),
+            _event("email.received", load, _email_payload(message), at),
+        ]
+        for event in events_to_publish:
+            await publish(None, event)
+        record_answer(load, "detention_unsupported", {"field": "detention", "claimed_h": 2,
+                      "gps_dwell_min": 47, "free_time_min": 120})
+    bank_change_at = _now()
+    rapid = directory_entry(world, "C-77")
+    msg = mail.write("accounts@rapid-ridge.example", "ap@goldengatefreight.example",
+                     "Remittance details - Rapid Ridge Transport",
+                     "We changed banks. Invoice INV-RR-9400, new account details: Account ****9400.",
+                     bank_change_at)
+    await publish(None, _event("email.received", {"case_id": "CASE-C-77-BANK"},
+                                _email_payload(msg), bank_change_at))
+    txn = bank.post("ach_debit", 9400, "Rapid Ridge Transport", "INV-RR-9400",
+                    bank_change_at + timedelta(days=1))
+    await publish(None, _event("bank.event", {"case_id": "CASE-C-77-BANK"},
+                 {"file": txn["file"], "account": txn["account"], "record": txn["record"]},
+                 bank_change_at + timedelta(days=1)))
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("seeded")
+
+
 def open_human_items() -> int:
     return len(store.list_parked())
 
@@ -445,6 +529,7 @@ async def heartbeat(r: redis.Redis) -> None:
 
 async def main() -> None:
     world = ensure()
+    await seed_hero(world)
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     rnd = random.Random()
     interval = float(os.getenv("SIM_LOAD_INTERVAL_S", "8"))

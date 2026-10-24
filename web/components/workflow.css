@@ -140,6 +140,20 @@
   animation: wf-enter 0.35s ease-out;
   transition: transform 150ms ease;
 }
+.wf-window {
+  position: relative;
+}
+.wf .react-flow__handle.wf-port {
+  z-index: 1;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid #c7c7cc;
+  border-radius: 50%;
+  background: #fff;
+  box-sizing: border-box;
+  cursor: default;
+  pointer-events: none;
+}
 .wf-node.leaving {
   animation: wf-leave 0.45s ease-in forwards;
   pointer-events: none;

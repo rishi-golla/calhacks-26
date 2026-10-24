@@ -5,6 +5,10 @@ import {
   Background,
   BackgroundVariant,
   Controls,
+  Handle,
+  MarkerType,
+  Position,
+  type Edge,
   type Node,
   type NodeChange,
   type NodeProps,
@@ -113,27 +117,43 @@ const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
       >
         <X size={12} />
       </button>
-      <div className="wf-win">
-        <div className="wf-bar">
-          <span className="wf-dots">
-            <i />
-            <i />
-            <i />
-          </span>
-          <span className="wf-url">
-            <Lock className="wf-lock" size={9} />
-            <span className="wf-address">
-              <b>{data.host}</b>
-              {data.path}
+      <div className="wf-window">
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="target"
+          className="wf-port"
+          isConnectable={false}
+        />
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="source"
+          className="wf-port"
+          isConnectable={false}
+        />
+        <div className="wf-win">
+          <div className="wf-bar">
+            <span className="wf-dots">
+              <i />
+              <i />
+              <i />
             </span>
-          </span>
-        </div>
-        <div className="wf-screen">
-          {farm ? (
-            <LiveFrame id={step.id} tick={tick} />
-          ) : (
-            <p className="wf-empty">Browser offline</p>
-          )}
+            <span className="wf-url">
+              <Lock className="wf-lock" size={9} />
+              <span className="wf-address">
+                <b>{data.host}</b>
+                {data.path}
+              </span>
+            </span>
+          </div>
+          <div className="wf-screen">
+            {farm ? (
+              <LiveFrame id={step.id} tick={tick} />
+            ) : (
+              <p className="wf-empty">Browser offline</p>
+            )}
+          </div>
         </div>
       </div>
       <div className="wf-meta">
@@ -395,6 +415,48 @@ export default function Workflow({
       data: nodeData.get(id)!,
     };
   });
+  const recentCutoff = now - 60_000;
+  const edges: Edge[] = links.map(({ from, to }) => {
+    const targetPosition = pos.get(to) ?? { x: 0, y: 0 };
+    const sourcePosition = pos.get(from) ?? { x: 0, y: 0 };
+    const targetState = nodeData.get(to)?.state;
+    const sourceHasRecentFeed = feeds[from].some(
+      (line) => line.ts >= recentCutoff && line.ts <= now,
+    );
+    const recentDelegation = scoped.delegation_edge.some(
+      (row) =>
+        row.from_agent === from &&
+        row.to_agent === to &&
+        timestamp(row.ts) >= recentCutoff &&
+        timestamp(row.ts) <= now,
+    );
+    const animated =
+      (targetState === "working" || targetState === "need") &&
+      (sourceHasRecentFeed || recentDelegation);
+    const lowerRow = targetPosition.y > sourcePosition.y;
+    const stroke = animated ? "#1d1d1f" : "#d4d4d8";
+    return {
+      id: `${from}-${to}`,
+      source: from,
+      sourceHandle: "source",
+      target: to,
+      targetHandle: "target",
+      type: lowerRow ? "smoothstep" : "default",
+      animated,
+      style: {
+        stroke,
+        strokeWidth: 1.25,
+        ...(animated ? { strokeDasharray: "5 5" } : {}),
+      },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        width: 10,
+        height: 10,
+        color: stroke,
+      },
+      ...(lowerRow ? { pathOptions: { borderRadius: 16 } } : {}),
+    };
+  });
   const open = stepById(openId);
   const pendingApprovals = open
     ? scoped.approval.filter(
@@ -510,7 +572,7 @@ export default function Workflow({
       <ReactFlow
         key={followed}
         nodes={nodes}
-        edges={[]}
+        edges={edges}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         fitView

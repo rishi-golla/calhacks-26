@@ -535,6 +535,12 @@ async def main() -> None:
     interval = float(os.getenv("SIM_LOAD_INTERVAL_S", "8"))
     max_open = int(os.getenv("SIM_MAX_OPEN_HUMAN_ITEMS", "3"))
     warm_start_loads = int(os.getenv("SIM_WARM_START_LOADS", "12"))
+    history_days = int(os.getenv("SIM_HISTORY_DAYS", "90"))
+    history_loads = int(os.getenv("SIM_HISTORY_LOADS", "120"))
+    for _ in range(history_loads):
+        scenario = pick(rnd)
+        backdate = timedelta(days=rnd.uniform(2, max(2, history_days)))
+        await run_load(r, world, rnd, scenario, backdate=backdate)
     running: set[asyncio.Task] = {asyncio.create_task(heartbeat(r))}
     print(f"sim: {len(world['carriers'])} carriers, {len(world['shippers'])} shippers; new load every ~{interval}s; "
           f"1 wall second = {clock.ratio() / 60:.0f} business minutes")

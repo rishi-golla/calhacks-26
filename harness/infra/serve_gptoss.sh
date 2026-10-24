@@ -21,4 +21,5 @@ docker run -d --restart unless-stopped --name "$NAME" \
   --max-num-seqs 8 \
   --async-scheduling \
   --enable-auto-tool-choice \
-  --tool-call-parser openai
+  --tool-call-parser openai \
+  --reasoning-parser openai_gptoss   # keeps the JSON grammar off the analysis channel

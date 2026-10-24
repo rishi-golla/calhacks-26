@@ -1,4 +1,4 @@
-# W1: model pool and routing table. Replace with real models served on the ASUS box.
+# SUPERSEDED by harness/config.toml (not read by any code). Kept until the W1 owner approves deleting it.
 pool:
   - id: small-fast      # classification / extraction
   - id: reasoning       # investigation / planning

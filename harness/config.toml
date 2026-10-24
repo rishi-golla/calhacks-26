@@ -1,0 +1,66 @@
+# W1 harness: model pool, logical model names and the deterministic routing table.
+# Served by harness/infra/serve_*.sh; all backends listen on 127.0.0.1 only.
+policy_version = "w1-route-v1"
+default_deadline_s = 60      # overall budget per call when metadata.max_latency_ms is absent
+health_interval_s = 5
+
+[backends.A]                 # Nemotron-3-Nano-Omni-30B-A3B-Reasoning (FP8 mix)
+served_name = "nano"
+url = "http://127.0.0.1:8001"
+timeout_s = 45
+max_concurrency = 8
+[backends.A.extra_body]
+chat_template_kwargs = { enable_thinking = false }
+
+[backends.B]                 # Qwen3-4B-Instruct-2507
+served_name = "qwen4b"
+url = "http://127.0.0.1:8002"
+timeout_s = 20
+max_concurrency = 16
+
+[backends.C]                 # gpt-oss-20b
+served_name = "gptoss"
+url = "http://127.0.0.1:8003"
+timeout_s = 45
+max_concurrency = 8
+[backends.C.extra_body]
+reasoning_effort = "low"
+
+# Logical name -> backends in preference order. The first healthy one serves; the rest are fallbacks.
+[logical]
+small-fast = ["B", "A", "C"]
+reasoning = ["A", "C", "B"]
+coder-tools = ["C", "A", "B"]
+
+# model="auto": the first matching rule wins. Match keys (all must hold):
+#   task_type / agent / priority: list of values; stakes: string; has_tools / has_schema: bool.
+# A rule sets either `model` (a logical name) or `ensemble` (logical names, run in parallel).
+[[routes]]
+match = { stakes = "high" }
+ensemble = ["reasoning", "coder-tools"]
+reason = "stakes=high -> ensemble"
+
+[[routes]]
+match = { task_type = ["classify_email", "classify_event", "classify"] }
+model = "small-fast"
+reason = "classification -> small-fast"
+
+[[routes]]
+match = { task_type = ["extract_invoice", "extract_document", "extract"] }
+model = "reasoning"
+reason = "extraction -> reasoning (Nano)"
+
+[[routes]]
+match = { task_type = ["verify_extraction", "pii_check"] }
+model = "coder-tools"
+reason = "cross-check -> coder-tools (independent model family)"
+
+[[routes]]
+match = { has_tools = true }
+model = "coder-tools"
+reason = "tools present -> coder-tools"
+
+[[routes]]
+match = {}
+model = "reasoning"
+reason = "default -> reasoning"

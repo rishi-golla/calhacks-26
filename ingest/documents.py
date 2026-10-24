@@ -119,7 +119,13 @@ def extract_pod_rules(text: str) -> dict:
 
 def extract_detention_log_rules(text: str) -> dict:
     dwell = _capture(r"\bTime on site\s+([\d,]+(?:\.\d+)?)\s*min\b", text)
-    return {"dwell_min": _number(dwell) if dwell else None}
+    return {"load_id": _capture(r"\bLoad\s*#\s*([A-Z0-9-]+)", text),
+            "bol": _capture(r"\bBOL\s*#\s*([A-Z0-9-]+)", text),
+            "dwell_min": _number(dwell) if dwell else None}
+
+
+def extract_lumper_receipt_rules(text: str) -> dict:
+    return {"po": _capture(r"\bPO\s*#\s*([A-Z0-9-]+)", text)}
 
 
 def _has_value(value) -> bool:

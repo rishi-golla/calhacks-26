@@ -15,6 +15,7 @@ from ingest.documents import (
     classify,
     extract_detention_log_rules,
     extract_invoice,
+    extract_lumper_receipt_rules,
     extract_pod_rules,
     read_email,
 )
@@ -37,13 +38,15 @@ def data_dir() -> Path:
 
 
 def init_db(db: sqlite3.Connection) -> None:
-    db.executescript(SCHEMA)
+    for statement in SCHEMA.split(";"):
+        if statement.strip():
+            db.execute(statement)
 
 
 def connect() -> sqlite3.Connection:
     path = data_dir() / "ingest.db"
     path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path, timeout=15, isolation_level=None)
+    db = sqlite3.connect(path, timeout=15)
     db.row_factory = sqlite3.Row
     init_db(db)
     return db
@@ -63,17 +66,25 @@ def _load(db: sqlite3.Connection, load_id: str | None) -> dict | None:
     return _read_json(db.execute("SELECT json FROM loads WHERE load_id=?", (load_id,)).fetchone())
 
 
-def _find_load(db: sqlite3.Connection, fields: dict) -> dict | None:
-    load = _load(db, fields.get("load_id"))
-    if load:
-        return load
-    bol = fields.get("bol")
+def _load_by_bol(db: sqlite3.Connection, bol: str | None) -> dict | None:
     if bol:
         for row in db.execute("SELECT json FROM loads"):
             candidate = json.loads(row[0])
             if candidate.get("bol") == bol:
                 return candidate
     return None
+
+
+def _find_load(db: sqlite3.Connection, fields: dict) -> tuple[dict | None, str | None]:
+    load_id, bol = fields.get("load_id"), fields.get("bol")
+    by_id = _load(db, load_id) if load_id else None
+    by_bol = _load_by_bol(db, bol) if bol else None
+    if load_id and bol:
+        if (by_id is None) != (by_bol is None) \
+                or (by_id and by_bol and by_id["load_id"] != by_bol["load_id"]):
+            return None, "load_id/bol"
+        return by_id, None
+    return (by_id if load_id else by_bol), None
 
 
 def _event(trigger: dict, event_type: str, payload: dict, priority: str = "P2",
@@ -95,10 +106,26 @@ def _document_event(trigger: dict, kind: str, status: str, fields: dict | None =
 
 
 def _evidence_refs(message: dict) -> list[str]:
-    refs = [f"doc:{item['filename'].removesuffix('.pdf')}" for item in message.get("attachments", [])]
+    refs = []
+    for item in message.get("attachments", []):
+        filename = item if isinstance(item, str) else item.get("filename", "")
+        if filename:
+            refs.append(f"doc:{Path(filename).stem}")
     if message.get("mail_id"):
         refs.append(f"mail:{message['mail_id']}")
     return refs
+
+
+def _same_identifier(value: str | None, expected: str | None) -> bool:
+    return bool(value and expected and str(value).strip().casefold() == str(expected).strip().casefold())
+
+
+def _email_needs_review(trigger: dict, message: dict) -> dict:
+    attachments = message.get("attachments", [])
+    filenames = [item if isinstance(item, str) else item.get("filename", "") for item in attachments]
+    filenames = [name for name in filenames if name and name.lower().endswith(".pdf")]
+    fields = {"subject": message.get("subject", ""), "attachments": filenames}
+    return _document_event(trigger, "other", "needs_review", fields, evidence_refs=_evidence_refs(message))
 
 
 async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -> list[dict]:
@@ -108,15 +135,33 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
         return [_document_event(trigger, "carrier_invoice", "needs_review", evidence_refs=_evidence_refs(message))]
     extracted = await extract_invoice(invoice_doc.get("text", ""), str(trigger.get("case_hint") or "unmatched"))
     fields = extracted["fields"]
-    load = _find_load(db, fields)
     refs = _evidence_refs(message)
-    if not load or fields.get("total") is None or not fields.get("invoice_number"):
+    load, load_mismatch = _find_load(db, fields)
+    if load_mismatch:
+        mismatch_fields = {**fields, "mismatch": load_mismatch}
+        return [_document_event(trigger, "carrier_invoice", "needs_review", mismatch_fields,
+                                extracted["confidence"], extracted["method"], evidence_refs=refs)]
+    if not load:
         return [_document_event(trigger, "carrier_invoice", "needs_review", fields, extracted["confidence"],
                                 extracted["method"], load, evidence_refs=refs)]
 
     carrier_fields = load.get("carrier") or {}
-    usdot = fields.get("usdot") or carrier_fields.get("usdot")
-    carrier = directory.by_usdot(str(usdot)) if usdot else None
+    load_usdot = carrier_fields.get("usdot")
+    if fields.get("usdot") and load_usdot and not _same_identifier(fields["usdot"], load_usdot):
+        mismatch_fields = {**fields, "mismatch": "usdot"}
+        return [_document_event(trigger, "carrier_invoice", "needs_review", mismatch_fields,
+                                extracted["confidence"], extracted["method"], load, evidence_refs=refs)]
+    line_items = fields.get("line_items") or []
+    if not line_items:
+        mismatch_fields = {**fields, "mismatch": "no_line_items"}
+        return [_document_event(trigger, "carrier_invoice", "needs_review", mismatch_fields,
+                                extracted["confidence"], extracted["method"], load, evidence_refs=refs)]
+    if fields.get("total") is None or not fields.get("invoice_number"):
+        return [_document_event(trigger, "carrier_invoice", "needs_review", fields, extracted["confidence"],
+                                extracted["method"], load, evidence_refs=refs)]
+
+    usdot = load_usdot or fields.get("usdot")
+    carrier = directory.by_usdot(str(load_usdot)) if load_usdot else None
     carrier = carrier or carrier_fields
     load_id = load["load_id"]
     invoice_number = fields["invoice_number"]
@@ -124,16 +169,41 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
     existing = db.execute("SELECT invoice_number FROM invoices WHERE load_id=?", (load_id,)).fetchall()
     case_id = f"CASE-{load_id}" + ("-R" if any(row[0] != invoice_number for row in existing) else "")
 
-    pod_text = next((item.get("text", "") for item in attachments
-                     if classify(item.get("text", "")) == "pod"), None)
-    pod = extract_pod_rules(pod_text) if pod_text is not None else None
-    detention_text = next((item.get("text", "") for item in attachments
-                           if classify(item.get("text", "")) == "detention_log"), None)
-    detention_log = extract_detention_log_rules(detention_text) if detention_text is not None else None
-    has_lumper_receipt = any(classify(item.get("text", "")) == "lumper_receipt" for item in attachments)
-    has_receipt = any(classify(item.get("text", "")) in ("detention_log", "lumper_receipt")
-                      for item in attachments)
-    line_items = fields.get("line_items", [])
+    unmatched_attachments = []
+    pod = None
+    pod_signed = False
+    detention_log = None
+    has_detention_log = False
+    has_lumper_receipt = False
+    for item in attachments:
+        attachment_kind = classify(item.get("text", ""))
+        filename = item.get("filename", "")
+        text = item.get("text", "")
+        if attachment_kind == "pod":
+            candidate = extract_pod_rules(text)
+            if _same_identifier(candidate.get("load_id"), load_id) \
+                    or _same_identifier(candidate.get("bol"), load.get("bol")):
+                pod = candidate
+                pod_signed = candidate["signed"]
+            else:
+                unmatched_attachments.append(filename)
+                pod = candidate
+        elif attachment_kind == "detention_log":
+            candidate = extract_detention_log_rules(text)
+            if _same_identifier(candidate.get("load_id"), load_id) \
+                    or _same_identifier(candidate.get("bol"), load.get("bol")):
+                detention_log = candidate
+                has_detention_log = True
+            else:
+                unmatched_attachments.append(filename)
+                detention_log = candidate
+        elif attachment_kind == "lumper_receipt":
+            candidate = extract_lumper_receipt_rules(text)
+            if _same_identifier(candidate.get("po"), load.get("po")):
+                has_lumper_receipt = True
+            else:
+                unmatched_attachments.append(filename)
+    has_receipt = has_detention_log or has_lumper_receipt
     has_accessorial_line = any(not re.search(r"\b(linehaul|fuel surcharge|fsc)\b",
                                              str(item.get("desc", "")), re.IGNORECASE)
                                for item in line_items)
@@ -157,12 +227,13 @@ async def _invoice_email(trigger: dict, message: dict, db: sqlite3.Connection) -
         "free_time_min": free_time_min,
         "gps": {"delivery_dwell_min": gps_dwell_min, "free_time_min": free_time_min},
         "gps_dwell_min": gps_dwell_min, "receipt_attached": receipt_attached,
-        "pod_signed": bool(pod and pod["signed"]), "remit_to": {"name": fields.get("remit_to_name")},
+        "pod_signed": pod_signed, "remit_to": {"name": fields.get("remit_to_name")},
         "source_email": message.get("mail_id"), **(load.get("operator_overrides") or {}),
         "extraction": extracted,
     }
     document_fields = {**fields, "attachments": {"pod": pod, "detention_log": detention_log,
-                                                   "lumper_receipt": has_lumper_receipt}}
+                                                   "lumper_receipt": has_lumper_receipt},
+                       "unmatched_attachments": unmatched_attachments}
     document = _document_event(trigger, "carrier_invoice", "extracted", document_fields, extracted["confidence"],
                                extracted["method"], load, case_id, refs)
     priority = "P1" if has_accessorial_line or (
@@ -319,13 +390,13 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
     elif event_type == "email.received":
         mail_id = payload.get("mail_id")
         if not mail_id:
-            return [_document_event(ev, "other", "needs_review")]
+            return [_email_needs_review(ev, payload)]
         path = data_dir() / "mail" / f"{Path(str(mail_id)).name}.eml"
         try:
             message = read_email(path)
-        except OSError:
-            log.warning("email file missing for %s", mail_id)
-            return [_document_event(ev, "other", "needs_review")]
+        except Exception:
+            log.exception("email file unreadable for %s", mail_id)
+            return [_email_needs_review(ev, payload)]
         kind = classify(message)
         if kind == "invoice_email":
             return await _invoice_email(ev, message, db)
@@ -333,9 +404,26 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
             return _bank_change(ev, message, db)
         if kind == "remittance_advice":
             return _remittance_advice(ev, message, db)
+        return [_email_needs_review(ev, message)]
     elif event_type == "bank.file_appended":
         return _bank_appended(ev, db)
     return []
+
+
+async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict) -> bool:
+    try:
+        raw = values.get(b"json") or values.get("json")
+        events = await handle(json.loads(raw), db)
+        for event in events:
+            await r.xadd(STREAM, {"json": json.dumps(event, default=str)},
+                         maxlen=20_000, approximate=True)
+        db.commit()
+        await r.xack(STREAM, GROUP, entry_id)
+        return True
+    except Exception:
+        db.rollback()
+        log.exception("ingest failed for %s", entry_id)
+        return False
 
 
 async def main() -> None:
@@ -348,19 +436,21 @@ async def main() -> None:
             if "BUSYGROUP" not in str(exc):
                 raise
         while True:
+            while True:
+                pending = await r.xreadgroup(GROUP, CONSUMER, {STREAM: "0"}, count=10)
+                entries = [entry for _stream, batch in pending or [] for entry in batch]
+                if not entries:
+                    break
+                failed = False
+                for entry_id, values in entries:
+                    if not await _process_entry(r, db, entry_id, values):
+                        failed = True
+                if failed:
+                    await asyncio.sleep(1)
             response = await r.xreadgroup(GROUP, CONSUMER, {STREAM: ">"}, count=10, block=2000)
             for _stream, entries in response or []:
                 for entry_id, values in entries:
-                    raw = values.get(b"json") or values.get("json")
-                    try:
-                        events = await handle(json.loads(raw), db)
-                        for event in events:
-                            await r.xadd(STREAM, {"json": json.dumps(event, default=str)},
-                                         maxlen=20_000, approximate=True)
-                    except Exception:
-                        log.exception("ingest failed for %s", entry_id)
-                        continue
-                    await r.xack(STREAM, GROUP, entry_id)
+                    await _process_entry(r, db, entry_id, values)
     finally:
         db.close()
         await r.aclose()

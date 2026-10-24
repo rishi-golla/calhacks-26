@@ -17,7 +17,7 @@ const primaryKeys: Record<string, string> = {
   demo_target: 'phone', approval_secret: 'approval_id', write_receipt: 'id', chain_head: 'name',
 };
 const identities: Record<string, string> = {};
-['admin', 'human', 'controller', 'carrier_ap', 'shipper_ar', 'cfo', 'risk', 'verification', 'voice_desk', 'validator', 'ingest', 'harness', 'evaluator', 'router', 'stranger'].forEach((name, i) => identities[name] = (i + 1).toString(16).padStart(64, '0'));
+['admin', 'human', 'controller', 'carrier_ap', 'shipper_ar', 'cfo', 'risk', 'verification', 'voice_desk', 'validator', 'documents', 'ingest', 'harness', 'evaluator', 'router', 'stranger'].forEach((name, i) => identities[name] = (i + 1).toString(16).padStart(64, '0'));
 
 class Harness {
   data: Record<string, Map<unknown, Row>> = {};
@@ -216,6 +216,19 @@ test('human takeover blocks agent mutations until a human releases ownership', (
   assert.throws(() => h.run('controller', 'update_case', ['controller'], op.updateCase, { case_id: 'CASE-1', status: 'open' }));
   h.run('human', 'update_case', ['human'], op.updateCase, { case_id: 'CASE-1', status: 'open' });
   h.hold();
+});
+
+test('document specialist owns reserved tasks and outreach but cannot authorize financial actions', () => {
+  const h = new Harness(); h.open();
+  assert.equal(h.row('agent_config', 'documents').enabled, true);
+  h.run('carrier_ap', 'upsert_task', ['carrier_ap'], op.upsertTask, { task_id: 'AP', case_id: 'CASE-1', skill: 'process_carrier_invoice' });
+  h.run('carrier_ap', 'record_delegation', ['carrier_ap'], op.recordDelegation, { id: 'DOC-EDGE', parent_task_id: 'AP', task_id: 'DOC', to_agent: 'documents', skill: 'collect_documents' });
+  h.run('documents', 'upsert_task', ['documents'], op.upsertTask, { task_id: 'DOC', case_id: 'CASE-1', skill: 'collect_documents', parent_task_id: 'AP', a2a_state: 'working' });
+  h.run('documents', 'record_delegation', ['documents'], op.recordDelegation, { id: 'CALL-EDGE', parent_task_id: 'DOC', task_id: 'CALL', to_agent: 'voice_desk', skill: 'place_call' });
+  assert.equal(h.row('task', 'CALL').depth, 2);
+  assert.throws(() => h.run('documents', 'record_delegation', ['documents'], op.recordDelegation, { id: 'BAD-EDGE', parent_task_id: 'DOC', task_id: 'CTRL', to_agent: 'controller', skill: 'review_hold' }), /allowlisted/);
+  assert.throws(() => h.run('documents', 'place_hold', ['controller'], op.placeHold, { id: 'BAD-HOLD', case_id: 'CASE-1', invoice_id: 'INV-CASE-1', amount: 10, reason_code: 'MISSING_POD' }));
+  assert.equal(h.rows('hold').length, 0);
 });
 
 test('outbox leases prevent duplicate consumers and recover after expiry', () => {

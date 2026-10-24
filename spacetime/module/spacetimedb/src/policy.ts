@@ -116,12 +116,12 @@ export function journalLines(value: Json | undefined): JournalLine[] {
   return lines;
 }
 
-export const AGENTS = ['carrier_ap', 'shipper_ar', 'cfo', 'risk', 'controller', 'verification', 'voice_desk', 'validator'] as const;
+export const AGENTS = ['carrier_ap', 'shipper_ar', 'cfo', 'risk', 'controller', 'verification', 'voice_desk', 'validator', 'documents'] as const;
 export const ROLES: readonly string[] = [...AGENTS, 'admin', 'human', 'ingest', 'harness', 'evaluator', 'router'];
 export const DELEGATIONS: Record<string, readonly string[]> = {
-  carrier_ap: ['risk', 'controller', 'verification'], shipper_ar: ['controller', 'verification', 'voice_desk', 'cfo'],
-  cfo: ['shipper_ar', 'carrier_ap', 'controller'], risk: ['verification', 'controller'],
-  controller: ['cfo', 'verification', 'voice_desk'], verification: ['voice_desk'], voice_desk: [], validator: [],
+  carrier_ap: ['risk', 'controller', 'verification', 'documents'], shipper_ar: ['controller', 'verification', 'voice_desk', 'cfo', 'documents'],
+  cfo: ['shipper_ar', 'carrier_ap', 'controller'], risk: ['verification', 'controller', 'documents'],
+  controller: ['cfo', 'verification', 'voice_desk', 'documents'], verification: ['voice_desk'], voice_desk: [], validator: [], documents: ['voice_desk'],
 };
 export const SKILLS: Record<string, readonly string[]> = {
   carrier_ap: ['process_carrier_invoice', 'propose_payment', 'answer_payment_status'],
@@ -130,6 +130,7 @@ export const SKILLS: Record<string, readonly string[]> = {
   controller: ['review_hold', 'check_already_paid', 'reconcile', 'approve_entry'],
   verification: ['verify_claim', 'verify_bank_change', 'verify_dispute'],
   voice_desk: ['place_call', 'handle_inbound_call'], validator: ['review_output', 'review_flag'],
+  documents: ['collect_documents', 'check_document_packet'],
 };
 export const TERMINAL = ['completed', 'failed', 'canceled', 'rejected'];
 export const A2A_STATES = ['submitted', 'working', 'input-required', 'auth-required', ...TERMINAL];

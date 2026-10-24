@@ -21,7 +21,7 @@ from common.policy import check
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = (
     "carrier_ap", "shipper_ar", "cfo", "risk", "controller", "verification",
-    "voice_desk", "validator", "ingest", "harness", "evaluator", "router",
+    "voice_desk", "validator", "documents", "ingest", "harness", "evaluator", "router",
 )
 
 

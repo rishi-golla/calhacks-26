@@ -52,7 +52,7 @@ The module derives caller identity from the signed connection. Frontend state ca
 
 ## Workspaces
 
-- **Overview:** eight-agent React Flow graph with actual delegation edges and recent animation, live workload counts, case/hold summaries, and evaluator metrics.
+- **Overview:** nine-agent React Flow graph with actual delegation edges and recent animation, live workload counts, case/hold summaries, and evaluator metrics.
 - **Cases & tasks:** case and agent filters, search, parent task depth, A2A and business states, artifacts/evidence, policy trail, models, document reads, human takeover, redacted call transcripts, recording links, intended/routed destinations.
 - **Human inbox:** one-time-code decisions; feedback and durable Validator delivery status; resolutions and approval history.
 - **Ledger & holds:** original and remaining holds, journal lines, payment proposals and cash metrics.

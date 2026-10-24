@@ -1,29 +1,85 @@
-from a2a.server.tasks import TaskUpdater
-from a2a.types import TaskState
-
 from agents.carrier_ap.card import DESCRIPTIONS
-from agents.carrier_ap.tools import three_way_match
-from common.envelope import DelegationMeta, ResultArtifact, TaskEnvelope
+from agents.carrier_ap.tools import duplicate_invoices, three_way_match
+from agents.risk.tools import audit_charges
+from common.agent_support import child_envelope, evidence, finish, identifier, money, mutate, number, rows
+from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
+from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
 
 
 class CarrierAPAgent(FreightAgent):
     name = "carrier_ap"
 
-    async def handle(self, env: TaskEnvelope, meta: DelegationMeta, task_id: str,
-                     updater: TaskUpdater) -> ResultArtifact:
-        match = three_way_match(env.subject)
-        if match["matched"]:
-            return ResultArtifact(outcome="approve", confidence=0.95, findings=match)
-        await updater.update_status(TaskState.TASK_STATE_WORKING,
-                                    metadata={"business_status": "awaiting_other_agent", "waiting_on": "risk"})
-        child = TaskEnvelope(task_type="investigate_charge", case_id=env.case_id, subject=env.subject,
-                             evidence_refs=env.evidence_refs, priority=env.priority)
-        risk = await self.delegate("investigate_charge", child, meta, task_id)
-        return ResultArtifact(outcome="hold", confidence=0.8, policy_ids=match["policy_ids"],
-                              findings={"match": match, "risk": risk},
-                              recommended_next=["controller.review_hold"])
+    async def handle(self, env: TaskEnvelope, meta: DelegationMeta, task_id: str, updater):
+        source = await SourceRepository().load(env)
+        refs = evidence(source, env)
+        if env.task_type == "answer_payment_status":
+            proposals = source.get("payment_proposals", []) if fixture_mode() else await rows(
+                self.name, "payment_proposal", "case_id", env.case_id)
+            return await finish(self, env, task_id, outcome="verified",
+                                findings={"payment_proposals": proposals,
+                                          "paid_amount": source.get("paid_amount", 0)}, evidence_refs=refs)
+        if env.task_type not in {"process_carrier_invoice", "propose_payment"}:
+            raise ValueError("unsupported Carrier Settlement skill")
+        match = three_way_match(source)
+        duplicates = duplicate_invoices(source)
+        if duplicates:
+            return await finish(self, env, task_id, outcome="reject", findings={"match": match,
+                                "duplicate_invoice_ids": duplicates}, policy_ids=["P-007"], evidence_refs=refs)
+        if match["missing_documents"]:
+            documents = await self.delegate("collect_documents", child_envelope(
+                env, "collect_documents", required_documents=match["missing_documents"]), meta, task_id,
+                invocation_key="settlement_packet")
+            if not documents or documents[-1].get("outcome") != "verified":
+                return await finish(self, env, task_id, outcome="unverified", findings={
+                    "match": match, "documents": documents}, evidence_refs=refs)
+        if not match["totals_match"]:
+            return await finish(self, env, task_id, outcome="reject", findings={"match": match},
+                                policy_ids=["P-010"], evidence_refs=refs)
+        charge_checks = audit_charges(source)
+        if source.get("bank_change_requested") or match["above_tolerance"] or charge_checks["needs_verification"]:
+            skill = "screen_bank_change" if source.get("bank_change_requested") else "investigate_charge"
+            risk = await self.delegate(skill, child_envelope(env, skill),
+                                       meta, task_id, invocation_key="charge_audit")
+            controller = await self.delegate("review_hold", child_envelope(env, "review_hold"),
+                                             meta, task_id, invocation_key="settlement_decision")
+            held = controller and controller[-1].get("outcome") == "hold"
+            return await finish(self, env, task_id, outcome="hold" if held else "unverified", findings={
+                "match": match, "risk": risk, "controller": controller,
+                "undisputed_amount": match["contract_rate"], "payment_blocked": bool(held)},
+                policy_ids=["P-004", "P-002"] if source.get("bank_change_requested") else ["P-001", "P-002"],
+                evidence_refs=refs)
+        invoice_id = source.get("invoice_id")
+        if not invoice_id:
+            raise SourceUnavailable("source invoice_id is required for a payment proposal")
+        holds = source.get("holds", []) if fixture_mode() else await rows(
+            self.name, "hold", "invoice_id", invoice_id)
+        if any(hold.get("status") == "active" for hold in holds):
+            return await finish(self, env, task_id, outcome="hold", findings={"match": match,
+                                "payment_blocked": True}, policy_ids=["P-002"], evidence_refs=refs)
+        amount = money(source["invoice_amount"]) - money(source.get("paid_amount", 0))
+        if amount <= 0:
+            return await finish(self, env, task_id, outcome="clear", findings={"already_paid": True},
+                                evidence_refs=refs)
+        proposal_id = identifier(task_id, "payment_proposal")
+        payload = {"id": proposal_id, "invoice_id": invoice_id, "amount": number(amount)}
+        if money(source["invoice_amount"]) > 5000:
+            decision = await self.delegate("review_hold", child_envelope(env, "review_hold",
+                requested_action="propose_payment", target_id=proposal_id), meta, task_id,
+                invocation_key="payment_approval")
+            findings = decision[-1].get("findings", {}) if decision else {}
+            if decision and decision[-1].get("outcome") == "reject":
+                return await finish(self, env, task_id, outcome="reject", findings={"approval": decision},
+                                    policy_ids=["P-003"], evidence_refs=refs)
+            if not findings.get("approval_id"):
+                return await finish(self, env, task_id, outcome="unverified", findings={"approval": decision},
+                                    policy_ids=["P-003"], evidence_refs=refs)
+            payload["approval_id"] = findings["approval_id"]
+        proposal = await mutate(self, env, task_id, "propose_payment", payload)
+        return await finish(self, env, task_id, outcome="approve" if proposal.get("decision", "allow") == "allow"
+                            else "unverified", findings={"match": match, "payment_proposal": proposal},
+                            evidence_refs=refs, policy_ids=proposal.get("policy_ids", []))
 
 
 if __name__ == "__main__":

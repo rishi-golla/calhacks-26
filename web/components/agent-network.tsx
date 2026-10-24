@@ -61,6 +61,7 @@ const positions: Record<string, { x: number; y: number }> = {
   voice_desk: { x: 580, y: 235 },
   cfo: { x: 870, y: 20 },
   validator: { x: 870, y: 235 },
+  documents: { x: 290, y: 450 },
 };
 export default function AgentNetwork({ caseId }: { caseId?: string }) {
   const { data, lastUpdated } = useLive();

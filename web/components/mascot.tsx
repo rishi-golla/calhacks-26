@@ -45,28 +45,30 @@ export function Mascot({
         } as CSSProperties
       }
     >
-      {working && <span className="mascot-shadow" />}
-      {known ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          className="mascot-figure"
-          src={`/mascots/${id}.webp`}
-          width={size}
-          height={size}
-          alt=""
-          draggable={false}
-        />
-      ) : (
-        <svg className="mascot-figure" viewBox="0 0 120 120">
-          <circle cx="60" cy="62" r="40" fill="#8e8e93" />
-          <path
-            d="M47 55.5V64.5M73 55.5V64.5"
-            stroke="#fff"
-            strokeWidth={9.5}
-            strokeLinecap="round"
+      <span className="mascot-shadow" />
+      <span className="mascot-body">
+        {known ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            className="mascot-figure"
+            src={`/mascots/${id}.webp`}
+            width={size}
+            height={size}
+            alt=""
+            draggable={false}
           />
-        </svg>
-      )}
+        ) : (
+          <svg className="mascot-figure" viewBox="0 0 120 120">
+            <circle cx="60" cy="62" r="40" fill="#8e8e93" />
+            <path
+              d="M47 55.5V64.5M73 55.5V64.5"
+              stroke="#fff"
+              strokeWidth={9.5}
+              strokeLinecap="round"
+            />
+          </svg>
+        )}
+      </span>
     </span>
   );
 }

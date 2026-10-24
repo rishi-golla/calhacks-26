@@ -232,15 +232,58 @@ calls and the CLI retain both guards. The demo changes no task-envelope contract
 
 Status polling and page reloads never place a call. Duplicate clicks and explicit retries reuse
 the same request; starting a fresh call after completion requires another click. If provider
-acceptance is uncertain, the panel waits for reconciliation and does not redial. The control has
-been tested with mocked calls; the first actual phone test remains for the operator to trigger.
+acceptance is uncertain, the panel waits for reconciliation and does not redial. Two operator calls
+completed with the original brief. The revised load context and in-call tools are ready for a new
+operator speech test; setup and tests never dial a phone.
 
-Hosted webhook tools are optional and are not attached to the current personas. To enable them,
-configure genuine public HTTPS `PUBLIC_BASE_URL` and `CARTESIA_WEBHOOK_SECRET`, attach the scoped
-tools to the hosted personas, and then set `CARTESIA_WEBHOOK_TOOLS_ENABLED=1`. Completion callbacks
-use `/voice/webhook` with `x-webhook-secret`. In-call tool requests use `x-call-token` from the
-call's dynamic variables and include `attempt_id` and `case_id`. The gateway checks the capability
-and fetches authoritative Cartesia state; untrusted webhook payloads cannot finalize a call.
+### Grounded load context and live lookups
+
+The team case now uses `sim/fixtures/team_call_source.json`: fictional load **GG-1042**, Oakland
+to Sacramento, a $1,225 invoice ($975 linehaul plus $250 claimed detention), and a provisional
+$125 detention calculation pending signed backup. Prepare ingests the scenario invoice, preserves
+existing paid amounts, and writes a versioned private source file with the team phone added.
+The [role-play guide](VOICE-DEMO.md) gives the dispatcher prompts and expected answers; it is also
+available under **Demo call guide** in the console.
+
+Voice rebuilds its complete brief from the authoritative source through `common/voice_context.py`
+and freezes that brief in the durable attempt before calling Cartesia. It contains shipment,
+route, appointments, parties, cargo, invoice, claim, documents and known missing channels. It
+does not copy arbitrary task facts, contact destinations, credentials or bank details. The hosted
+persona uses a human-readable load reference, answers questions first and admits unknown facts.
+
+Five read-only tools cover load facts, document status, case summary, invoice status and payment
+status. These are separate from the A2A agent's pre-call tools. Start the dedicated service and
+an HTTPS tunnel in separate terminals:
+
+```bash
+.venv/bin/python -m scripts.live_voice_tools  # only read-only routes on 127.0.0.1:9001
+cloudflared tunnel --url http://127.0.0.1:9001 --no-autoupdate
+```
+
+Save the printed HTTPS URL as `PUBLIC_BASE_URL` in the private profile. Then run:
+
+```bash
+.venv/bin/python -m scripts.setup_cartesia --apply --update-existing --enable-tools
+```
+
+This creates/updates five named tools, updates the existing personas and verifies their published
+configuration without creating another number or calling anyone. The tool contract follows
+[Cartesia's managed tools API](https://docs.cartesia.ai/api-reference/agents/tools/create).
+The HTTPS URL is temporary and changes when a [Cloudflare Quick Tunnel](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)
+restarts; update `PUBLIC_BASE_URL` and rerun setup after that. Restart agents and both gateways
+after private profile changes. Keep the tunnel and local services running during the demo.
+
+Each lookup uses a dynamically bound `x-call-token`, `attempt_id` and `case_id`; the conversational
+model cannot select another case or destination. Capabilities expire and stop working when the
+call completes. The public listener exposes only these five reads and a health check. Do not
+tunnel the operator gateway on :9000 or the dashboard. Lookup results use field allowlists;
+ledger outages return `current_payment_status=unknown`. Sanitized lookup events enter the normal
+Voice task audit outbox and appear in the inbox. No email, SMS or upload channel is configured.
+
+Set `CARTESIA_WEBHOOK_TOOLS_ENABLED=1` after tools are attached. Call completion still uses local
+polling, so tool authentication needs no `CARTESIA_WEBHOOK_SECRET`. Optional completion callbacks
+use `/voice/webhook` with that separate secret; the gateway always fetches authoritative provider
+state before finalizing a call. The read-only public listener does not expose completion callbacks.
 
 Both paths redact transcripts, persist the final result before the W2 write, and resume the
 original Voice Desk task. Personas disclose that they are AI assistants, follow the requested

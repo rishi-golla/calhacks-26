@@ -18,6 +18,8 @@ def private_root(monkeypatch, tmp_path):
     source = tmp_path / "sim/fixtures/live_concurrency_source.json"
     source.parent.mkdir(parents=True)
     source.write_text(fixture)
+    (source.parent / "team_call_source.json").write_text(
+        (live_sponsors.ROOT / "sim/fixtures/team_call_source.json").read_text())
     (tmp_path / "data/live").mkdir(parents=True)
     (tmp_path / ".env").write_text("# Keep existing credentials\nOPENAI_API_KEY='secret key # stays'\n")
     (tmp_path / "data/live/runtime.env").write_text("A2A_PORT=8001\n")
@@ -218,10 +220,47 @@ def test_prepare_keeps_team_phone_private_and_synthetic_sources_labeled(private_
         assert all(doc["load_id"] == case["load_id"] for doc in case["documents"])
     assert data["companies"]["PUBLIC-JBHUNT"]["verified"] is False
     assert closed == [True]
-    assert {reducer for _, reducer, _ in calls} == {"open_case", "upsert_company", "set_demo_target"}
+    assert {reducer for _, reducer, _ in calls} == {"open_case", "upsert_company", "upsert_invoice", "set_demo_target"}
+    voice_source = data["cases"][live_sponsors.VOICE_CASE]
+    assert voice_source["load_reference"] == "GG-1042"
+    assert voice_source["invoice_amount"] == 1225 and voice_source["paid_amount"] == 0
+    invoice = next(payload for _, reducer, payload in calls if reducer == "upsert_invoice")
+    assert invoice["amount"] == 1225 and invoice["contract_amount"] == 975
+    assert invoice["id"] == "SYN-CARTESIA-TEAM-CALL-INVOICE" and "paid_amount" not in invoice
+    assert invoice["write_id"] == "sponsor-invoice:gg1042:v1:SYN-CARTESIA-TEAM-CALL-INVOICE"
     for path in (private_root / ".env", private_root / "data/live/runtime.env"):
         assert read_env(path)["SOURCE_DATA_PATH"] == str(destination)
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_prepare_retains_prior_source_artifacts_and_reuses_stable_invoice_write(private_root, monkeypatch):
+    from scripts import spacetime_admin
+    calls = []
+    monkeypatch.setattr(spacetime_admin, "LocalAdmin", lambda *_: SimpleNamespace(
+        call=lambda actor, reducer, payload: calls.append((actor, reducer, payload)),
+        client=SimpleNamespace(close=lambda: None)))
+    monkeypatch.setenv("SPACETIME_URL", "http://127.0.0.1:3000")
+    monkeypatch.setenv("SPACETIME_DB", "test")
+    monkeypatch.setenv("DEMO_ALLOWLIST_PHONES", "+15005550006")
+    public_source = private_root / "sim/fixtures/team_call_source.json"
+    public_before = public_source.read_bytes()
+    original = live_sponsors.prepare()
+    original_bytes, modified = original.read_bytes(), original.stat().st_mtime_ns
+    assert live_sponsors.prepare() == original and original.stat().st_mtime_ns == modified
+    monkeypatch.setenv("DEMO_ALLOWLIST_PHONES", "+15005550007")
+    replacement = live_sponsors.prepare()
+    assert replacement != original and original.read_bytes() == original_bytes
+    assert public_source.read_bytes() == public_before
+    assert b"+15005550006" not in public_before and b"+15005550007" not in public_before
+    invoices = [payload for _, reducer, payload in calls if reducer == "upsert_invoice"]
+    assert len(invoices) == 3 and invoices[0] == invoices[1] == invoices[2]
+    assert "paid_amount" not in invoices[0]
+    cases = [payload for _, reducer, payload in calls if reducer == "open_case"
+             and payload["case_id"] == live_sponsors.VOICE_CASE]
+    assert cases[0]["write_id"] == "sponsor-case:v1:SYN-CARTESIA-TEAM-CALL"
+    assert cases[0]["load_id"] == "SYN-CARTESIA-TEAM-CALL-LOAD"
+    assert cases[0]["title"] == "[Live synthetic] Cartesia team phone test"
+    assert cases[0] == cases[1] == cases[2]
 
 
 @pytest.fixture

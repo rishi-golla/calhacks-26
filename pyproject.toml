@@ -24,7 +24,7 @@ include = ["common*", "agents*", "harness*", "router*", "gateway*", "sim*", "ing
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests", "harness/tests"]
 
 [tool.ruff]
 line-length = 110

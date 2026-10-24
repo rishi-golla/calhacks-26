@@ -17,10 +17,8 @@ import {
   ListTree,
   Menu,
   MessagesSquare,
-  PanelLeft,
   Play,
   PlusCircle,
-  Settings,
   Radio,
   RefreshCw,
   Search,
@@ -35,6 +33,7 @@ import { CounterpartiesView, DemoView, HarnessView } from "./support-views";
 import { Dialog, Submit, type FlagTarget } from "./ui";
 import AgentInbox from "./agent-inbox";
 import Workflow from "./workflow";
+import SidebarNav from "./sidebar-nav";
 const AuditWorkspace = dynamic(() => import("./audit-workspace"), {
   ssr: false,
   loading: () => <div className="loading">Loading audit workspace…</div>,
@@ -56,7 +55,7 @@ function databaseHostLabel(serverUrl: string): string {
 const views = [
   {
     id: "home",
-    label: "New chat",
+    label: "Home",
     icon: PlusCircle,
     description: "Your AI back office.",
   },
@@ -142,6 +141,7 @@ function DashboardBody() {
   const [query, setQuery] = useState("");
   const [mobile, setMobile] = useState(false);
   const [narrow, setNarrow] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const menuTrigger = useRef<HTMLElement | null>(null);
   const navigation = useRef<HTMLElement | null>(null);
   const [connectionInfo, setConnectionInfo] = useState(false);
@@ -251,101 +251,30 @@ function DashboardBody() {
           onClick={() => setMobile(false)}
         />
       )}
-      <aside
+      <SidebarNav
         ref={navigation}
-        inert={narrow && !mobile}
-        aria-hidden={narrow && !mobile}
-        className={`sidebar ${mobile ? "open" : ""}`}
+        cases={data.case}
+        caseId={caseId}
+        currentView={view}
+        collapsed={sidebarCollapsed}
+        narrow={narrow}
+        mobileOpen={mobile}
+        onToggleCollapsed={() => setSidebarCollapsed((collapsed) => !collapsed)}
+        onNewChat={() => {
+          setCaseId("");
+          navigate("home");
+        }}
+        onHome={() => navigate("home")}
+        onSelectCase={(selectedCase) => {
+          setCaseId(selectedCase);
+          navigate("home");
+        }}
+        onCloseMobile={() => setMobile(false)}
+      />
+      <div
+        className="main-shell"
+        style={{ marginLeft: narrow ? 0 : sidebarCollapsed ? 52 : 224 }}
       >
-        <div className="side-top">
-          <a
-            className="brand"
-            href="#"
-            onClick={(event) => {
-              event.preventDefault();
-              navigate("home");
-            }}
-            aria-label="Golden Gate Freight home"
-          >
-            <span className="side-orb" />
-          </a>
-          <button
-            className="icon-button side-collapse"
-            aria-label="Close navigation"
-            onClick={() => setMobile(false)}
-          >
-            <PanelLeft size={15} />
-          </button>
-        </div>
-        <nav aria-label="Main navigation">
-          {views
-            .filter((item) => item.id === "home")
-            .map((item) => (
-              <div key={item.id}>
-                <button
-                  className={`nav-item ${view === item.id ? "active" : ""}`}
-                  aria-current={view === item.id ? "page" : undefined}
-                  aria-label={item.label}
-                  title={item.label}
-                  onClick={() => {
-                    if (item.id === "home") setCaseId("");
-                    navigate(item.id);
-                  }}
-                >
-                  <item.icon size={17} />
-                  <span>{item.label}</span>
-                  {item.id === "inbox" && pending > 0 && (
-                    <span className="nav-count">{pending}</span>
-                  )}
-                  {item.id === "demo" && <span className="nav-demo">DEMO</span>}
-                </button>
-              </div>
-            ))}
-        </nav>
-        <div className="side-chats">
-          <div className="side-chats-head">
-            <span>Chats</span>
-            <button
-              className="icon-button"
-              aria-label="Show all cases"
-              onClick={() => {
-                setCaseId("");
-                navigate("home");
-              }}
-            >
-              <Search size={14} />
-            </button>
-          </div>
-          {data.case.slice(0, 12).map((row) => (
-            <button
-              key={String(row.case_id)}
-              className={`side-chat ${caseId === row.case_id ? "active" : ""}`}
-              title={String(row.title || row.case_id)}
-              onClick={() => {
-                setCaseId(String(row.case_id));
-                navigate("home");
-              }}
-            >
-              {String(row.title || row.case_id).replace(
-                /^\[W2 fixture\]\s*/,
-                "",
-              )}
-            </button>
-          ))}
-        </div>
-        <div className="sidebar-bottom">
-          <button
-            className="side-settings"
-            aria-label="Database connection and identity"
-            onClick={() => setConnectionInfo(true)}
-          >
-            <Settings size={14} />
-            <span>Settings</span>
-            <small>{human ? "Human controller" : "Observer"}</small>
-          </button>
-        </div>
-      </aside>
-      <div className="main-shell">
         <header className="topbar">
           <div className="inline">
             <button

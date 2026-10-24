@@ -10,8 +10,21 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Lock, Menu, Plus, X } from "lucide-react";
-import { str, timestamp } from "@/lib/data";
+import {
+  ArrowLeft,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Lock,
+  Menu,
+  Plus,
+  X,
+} from "lucide-react";
+import { money, str, timestamp } from "@/lib/data";
+import {
+  useApprovalDecision,
+  type ApprovalDecision,
+} from "./approval-decision";
 import { useLive } from "./live-provider";
 import { MASCOT_IDS, Mascot } from "./mascot";
 import { useClock } from "./ui";
@@ -19,7 +32,6 @@ import {
   FARM,
   STEPS,
   activeSteps,
-  displayUrl,
   feedOf,
   latestCase,
   layout,
@@ -81,20 +93,6 @@ type StepData = {
   open: () => void;
   remove: () => void;
 };
-
-function Chrome({ url, status }: { url: string; status: string }) {
-  return (
-    <div className="wf-chrome">
-      <span className="wf-lights">
-        <i />
-        <i />
-        <i />
-      </span>
-      <span className="wf-url">{displayUrl(url)}</span>
-      <span className={`wf-live ${status}`}>{status}</span>
-    </div>
-  );
-}
 
 function LiveFrame({ id, tick }: { id: string; tick: number }) {
   const [src, setSrc] = useState("");
@@ -192,7 +190,7 @@ export default function Workflow({
   onClearCase: () => void;
   onOpenMenu: () => void;
 }) {
-  const { data, state } = useLive();
+  const { data, state, mutate } = useLive();
   const now = useClock();
   const [openId, setOpenId] = useState("");
   const [manual, setManual] = useState<Manual>({});
@@ -212,6 +210,20 @@ export default function Workflow({
   }, [scoped, mine.add, mine.remove]);
   const links = useMemo(() => linksFor(visible, scoped), [visible, scoped]);
   const { pos } = useMemo(() => layout(visible, links), [visible, links]);
+  const orderedIds = useMemo(
+    () =>
+      [...visible].sort((left, right) => {
+        const leftPos = pos.get(left) ?? { x: 0, y: 0 };
+        const rightPos = pos.get(right) ?? { x: 0, y: 0 };
+        return (
+          leftPos.y - rightPos.y ||
+          leftPos.x - rightPos.x ||
+          STEPS.findIndex((step) => step.id === left) -
+            STEPS.findIndex((step) => step.id === right)
+        );
+      }),
+    [visible, pos],
+  );
   const feeds = useMemo(
     () => Object.fromEntries(STEPS.map((s) => [s.id, feedOf(s, scoped)])),
     [scoped],
@@ -306,10 +318,28 @@ export default function Workflow({
 
   useEffect(() => {
     if (!openId) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpenId("");
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenId("");
+        return;
+      }
+      if (
+        (event.key !== "ArrowLeft" && event.key !== "ArrowRight") ||
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement
+      )
+        return;
+      const currentIndex = orderedIds.indexOf(openId);
+      const nextId =
+        orderedIds[currentIndex + (event.key === "ArrowLeft" ? -1 : 1)];
+      if (nextId) {
+        event.preventDefault();
+        setOpenId(nextId);
+      }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openId]);
+  }, [openId, orderedIds]);
 
   const measured = useRef(new Map<string, { width: number; height: number }>());
   const onNodesChange = useCallback((changes: NodeChange<Node<StepData>>[]) => {
@@ -392,6 +422,31 @@ export default function Workflow({
     };
   });
   const open = stepById(openId);
+  const openApproval = open
+    ? scoped.approval.find(
+        (approval) =>
+          approval.decision === "pending" &&
+          (open.id === "human" ||
+            (Boolean(open.agent) && approval.requested_by === open.agent)),
+      )
+    : undefined;
+  const approvalDecision = useApprovalDecision({
+    approval: openApproval,
+    approvals: data.approval,
+    mutate,
+  });
+  const openIndex = orderedIds.indexOf(openId);
+  const moveOpenStep = (offset: number) => {
+    const nextId = orderedIds[openIndex + offset];
+    if (nextId) setOpenId(nextId);
+  };
+  const submitApproval = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const submitter = (event.nativeEvent as SubmitEvent)
+      .submitter as HTMLButtonElement | null;
+    if (submitter?.value === "approved" || submitter?.value === "rejected")
+      void approvalDecision.decide(submitter.value as ApprovalDecision);
+  };
   const caseTitle = followed
     ? str(
         data.case.find((r) => r.case_id === followed)?.title || followed,
@@ -471,30 +526,95 @@ export default function Workflow({
         <Background
           variant={BackgroundVariant.Dots}
           gap={20}
-          size={1}
-          color="#dedee2"
+          size={1.2}
+          color="#d4d4d8"
         />
         <Controls showInteractive={false} position="bottom-left" />
       </ReactFlow>
       {open && (
-        <div className="wf-overlay" onClick={() => setOpenId("")}>
+        <div className="wf-overlay">
           <div
-            className="wf-window"
+            className="wf-c2"
             role="dialog"
-            aria-label={open.title}
-            onClick={(e) => e.stopPropagation()}
+            aria-modal="true"
+            aria-label={`${open.title} live browser`}
           >
-            <div className="wf-window-bar">
-              <Chrome
-                url={tabs[open.id]?.url || urls[open.id]}
-                status={statusOf(open)}
-              />
-              <button aria-label="Close" onClick={() => setOpenId("")}>
-                <X size={16} />
+            <header className="wf-c2-topbar">
+              <button
+                type="button"
+                className="wf-c2-back"
+                aria-label="Back to workflow"
+                onClick={() => setOpenId("")}
+              >
+                <ArrowLeft size={18} />
               </button>
-            </div>
-            <div className="wf-window-body">
-              <section className="wf-stream">
+              <div className="wf-c2-current">
+                <strong>
+                  {mascotOf(open) && (
+                    <Mascot
+                      id={mascotOf(open)!}
+                      size={18}
+                      working={nodeData.get(open.id)?.working}
+                    />
+                  )}
+                  {open.title}
+                </strong>
+                <span>{followed}</span>
+              </div>
+              <nav className="wf-c2-steps" aria-label="Steps in this case">
+                {orderedIds.map((id, index) => {
+                  const step = stepById(id)!;
+                  const completed = index < openIndex;
+                  const current = index === openIndex;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`wf-c2-step-chip ${completed ? "complete" : ""} ${current ? "current" : ""}`}
+                      aria-current={current ? "step" : undefined}
+                      title={step.title}
+                      onClick={() => setOpenId(id)}
+                    >
+                      {completed ? (
+                        <Check size={13} aria-hidden="true" />
+                      ) : current ? (
+                        <i className="wf-c2-step-pulse" aria-hidden="true" />
+                      ) : (
+                        <i className="wf-c2-step-future" aria-hidden="true" />
+                      )}
+                      <span>{step.title}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+              <button
+                type="button"
+                className="wf-c2-close"
+                aria-label="Close browser view"
+                onClick={() => setOpenId("")}
+              >
+                <X size={18} />
+              </button>
+            </header>
+
+            <div className="wf-c2-browser">
+              <div className="wf-c2-tab-strip">
+                <div
+                  className="wf-c2-tab"
+                  title={tabs[open.id]?.title || open.title}
+                >
+                  <i aria-hidden="true" />
+                  <span>{tabs[open.id]?.title || open.title}</span>
+                </div>
+              </div>
+              <div className="wf-c2-address">
+                <Lock size={13} aria-hidden="true" />
+                <span>{tabs[open.id]?.url || urls[open.id]}</span>
+              </div>
+              <section
+                className="wf-c2-screen"
+                aria-label="Live browser stream"
+              >
                 {farm ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -509,43 +629,90 @@ export default function Workflow({
                   </p>
                 )}
               </section>
-              <aside className="wf-info">
-                <dl>
-                  <dt>Step</dt>
-                  <dd>{open.title}</dd>
-                  <dt>Agent</dt>
-                  <dd className="wf-agent-dd">
-                    {mascotOf(open) && (
-                      <Mascot
-                        id={mascotOf(open)!}
-                        size={20}
-                        working={nodeData.get(open.id)?.working}
-                      />
-                    )}
-                    {open.operator}
-                  </dd>
-                  <dt>Status</dt>
-                  <dd>{statusOf(open)}</dd>
-                  <dt>Events in this case</dt>
-                  <dd>{feeds[open.id].length}</dd>
-                  <dt>Receives from</dt>
-                  <dd>
-                    {links
-                      .filter((l) => l.to === open.id)
-                      .map((l) => stepById(l.from)?.title)
-                      .join(", ") || "—"}
-                  </dd>
-                  <dt>Sends to</dt>
-                  <dd>
-                    {links
-                      .filter((l) => l.from === open.id)
-                      .map((l) => stepById(l.to)?.title)
-                      .join(", ") || "—"}
-                  </dd>
-                  <dt>Page</dt>
-                  <dd>{tabs[open.id]?.title || "—"}</dd>
-                </dl>
-              </aside>
+            </div>
+
+            <button
+              type="button"
+              className="wf-c2-side-control previous"
+              aria-label="Previous step"
+              disabled={openIndex <= 0}
+              onClick={() => moveOpenStep(-1)}
+            >
+              <ChevronLeft size={21} />
+            </button>
+            <button
+              type="button"
+              className="wf-c2-side-control next"
+              aria-label="Next step"
+              disabled={openIndex < 0 || openIndex >= orderedIds.length - 1}
+              onClick={() => moveOpenStep(1)}
+            >
+              <ChevronRight size={21} />
+            </button>
+
+            <div
+              className={`wf-c2-bottombar ${openApproval ? "has-approval" : ""}`}
+            >
+              <div className="wf-c2-bottom-main">
+                <i className="wf-c2-pulse-dot" aria-hidden="true" />
+                <span className="wf-c2-doing">
+                  {nodeData.get(open.id)?.doing || open.subtitle}
+                </span>
+                <span className="wf-c2-step-count">
+                  Step {openIndex + 1} of {orderedIds.length}
+                </span>
+              </div>
+              {openApproval && (
+                <div className="wf-c2-approval">
+                  <div className="wf-c2-approval-details">
+                    <span>Approval required</span>
+                    <strong>
+                      {str(openApproval.action).replaceAll("_", " ")} ·{" "}
+                      {money(openApproval.amount)}
+                    </strong>
+                    <small>Requested by {str(openApproval.requested_by)}</small>
+                  </div>
+                  <form
+                    className="wf-c2-approval-form"
+                    onSubmit={submitApproval}
+                  >
+                    <input
+                      autoComplete="one-time-code"
+                      type="password"
+                      minLength={6}
+                      maxLength={64}
+                      required
+                      disabled={approvalDecision.busy}
+                      value={approvalDecision.code}
+                      aria-label="One-time approval code"
+                      aria-invalid={Boolean(approvalDecision.error)}
+                      onChange={(event) =>
+                        approvalDecision.setCode(event.target.value)
+                      }
+                      placeholder="One-time code"
+                    />
+                    <button
+                      type="submit"
+                      value="approved"
+                      disabled={approvalDecision.busy || state !== "live"}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="submit"
+                      value="rejected"
+                      disabled={approvalDecision.busy || state !== "live"}
+                    >
+                      Reject
+                    </button>
+                  </form>
+                  {approvalDecision.error && (
+                    <p className="wf-c2-approval-error" role="alert">
+                      {approvalDecision.error}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

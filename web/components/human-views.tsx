@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { RotateCcw, ShieldCheck, Check, X } from "lucide-react";
 import {
   AGENTS,
@@ -15,6 +15,11 @@ import {
 import { useLive } from "./live-provider";
 import { Mascot } from "./mascot";
 import {
+  approvalError,
+  useApprovalDecision,
+  type ApprovalDecision,
+} from "./approval-decision";
+import {
   Badge,
   DataTable,
   Detail,
@@ -29,16 +34,6 @@ import {
   type FlagHandler,
 } from "./ui";
 import type { Notify } from "./operations";
-function approvalError(value: unknown): string {
-  if (value === "invalid_code")
-    return "The one-time code is incorrect. Try again or request a fresh code from your administrator.";
-  if (value === "code_locked")
-    return "This approval code is locked after five failed attempts. Ask your administrator for a fresh code.";
-  return str(
-    value,
-    "The code was rejected. Request a fresh code from your administrator.",
-  );
-}
 export function InboxView({
   onFlag,
   notify,
@@ -48,65 +43,30 @@ export function InboxView({
 }) {
   const { data, mutate, state, identity } = useLive();
   const [approvalId, setApprovalId] = useState("");
-  const [code, setCode] = useState("");
-  const [decision, setDecision] = useState("approved");
-  const [busy, setBusy] = useState(false);
-  const [decisionError, setDecisionError] = useState("");
-  const [awaiting, setAwaiting] = useState<{
-    id: string;
-    decision: string;
-    attempts: number;
-  } | null>(null);
+  const [decision, setDecision] = useState<ApprovalDecision>("approved");
   const approval = data.approval.find((row) => row.id === approvalId);
   const pending = data.approval.filter(
     (row) => row.decision === "pending" || !row.decision,
   );
-  useEffect(() => {
-    if (!awaiting) return;
-    const result = data.approval.find((row) => row.id === awaiting.id);
-    if (result?.decision === awaiting.decision) {
-      notify(
-        `Approval ${awaiting.id} ${awaiting.decision}. Decision is recorded in SpacetimeDB.`,
-      );
-      setAwaiting(null);
-      setBusy(false);
+  const {
+    code,
+    setCode,
+    busy,
+    error: decisionError,
+    setError: setDecisionError,
+    decide: submitDecision,
+  } = useApprovalDecision({
+    approval,
+    approvals: data.approval,
+    mutate,
+    onConfirmed: (id, result) => {
+      notify(`Approval ${id} ${result}. Decision is recorded in SpacetimeDB.`);
       setApprovalId("");
-      setCode("");
-    } else if (result && num(result.failed_attempts) > awaiting.attempts) {
-      setDecisionError(approvalError(result.last_error));
-      setAwaiting(null);
-      setBusy(false);
-      setCode("");
-    }
-  }, [data.approval, awaiting, notify]);
-  useEffect(() => {
-    if (!awaiting) return;
-    const timer = setTimeout(() => {
-      setBusy(false);
-      setAwaiting(null);
-      setDecisionError(
-        "No decision was confirmed yet. Check the approval's live status before trying again.",
-      );
-    }, 12000);
-    return () => clearTimeout(timer);
-  }, [awaiting, notify]);
+    },
+  });
   const decide = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!approval) return;
-    setDecisionError("");
-    setBusy(true);
-    setAwaiting({
-      id: approvalId,
-      decision,
-      attempts: num(approval.failed_attempts),
-    });
-    try {
-      await mutate("decide_approval", { id: approvalId, decision, code });
-    } catch (error) {
-      setAwaiting(null);
-      setBusy(false);
-      setDecisionError(String(error).replace(/^Error: /, ""));
-    }
+    await submitDecision(decision);
   };
   return (
     <div className="stack">
@@ -257,7 +217,9 @@ export function InboxView({
               Decision
               <select
                 value={decision}
-                onChange={(event) => setDecision(event.target.value)}
+                onChange={(event) =>
+                  setDecision(event.target.value as ApprovalDecision)
+                }
               >
                 <option value="approved">Approve</option>
                 <option value="rejected">Reject</option>
@@ -545,12 +507,19 @@ export function LearningView({
                   </div>
                   <div className="inline">
                     {row.active ? (
-                      <button className="button" disabled={state !== "live" || busy}
+                      <button
+                        className="button"
+                        disabled={state !== "live" || busy}
                         onClick={() => {
-                          setRevert({ ...row, version: 0, expected_version: num(row.version) });
+                          setRevert({
+                            ...row,
+                            version: 0,
+                            expected_version: num(row.version),
+                          });
                           setModalError("");
                           setReason("");
-                        }}>
+                        }}
+                      >
                         Restore original instructions
                       </button>
                     ) : null}
@@ -564,8 +533,15 @@ export function LearningView({
                       className="button"
                       disabled={Boolean(row.active) || state !== "live"}
                       onClick={() => {
-                        setRevert({ ...row, expected_version: Math.max(0, ...data.instruction_version
-                          .filter((item) => item.agent === row.agent).map((item) => num(item.version))) });
+                        setRevert({
+                          ...row,
+                          expected_version: Math.max(
+                            0,
+                            ...data.instruction_version
+                              .filter((item) => item.agent === row.agent)
+                              .map((item) => num(item.version)),
+                          ),
+                        });
                         setModalError("");
                         setReason("");
                       }}

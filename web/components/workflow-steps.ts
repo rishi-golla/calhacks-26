@@ -448,17 +448,19 @@ export function layout(visible: Set<string>, links: Link[]) {
       }
   }
   const max = Math.max(0, ...level.values());
-  const columns = new Map<number, string[]>();
-  for (const step of STEPS)
-    if (visible.has(step.id)) {
-      const c = level.get(step.id) ?? max + 1;
-      columns.set(c, [...(columns.get(c) ?? []), step.id]);
-    }
+  const stepIndex = new Map(STEPS.map((step, index) => [step.id, index]));
+  const ordered = [...visible].sort(
+    (a, b) =>
+      (level.get(a) ?? max + 1) - (level.get(b) ?? max + 1) ||
+      (stepIndex.get(a) ?? 0) - (stepIndex.get(b) ?? 0),
+  );
   const pos = new Map<string, { x: number; y: number }>();
-  for (const [c, ids] of columns)
-    ids.forEach((id, i) =>
-      pos.set(id, { x: c * 360, y: (i - (ids.length - 1) / 2) * 330 }),
-    );
+  ordered.forEach((id, index) =>
+    pos.set(id, {
+      x: (index % 3) * 360,
+      y: Math.floor(index / 3) * 330,
+    }),
+  );
   return { pos, level };
 }
 

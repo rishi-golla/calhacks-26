@@ -1,4 +1,16 @@
 @import "tailwindcss";
+@theme {
+  --color-ink: #1d1d1f;
+  --color-ink-2: #6e6e73;
+  --color-ink-3: #8e8e93;
+  --color-hover-2: #f2f2f4;
+  --color-field: #f7f7f8;
+  --color-line: #ececef;
+  --color-surface: #ffffff;
+  --radius-control: 8px;
+  --shadow-hairline: 0 1px 2px rgb(0 0 0 / 6%);
+  --shadow-overlay: 0 12px 30px rgb(0 0 0 / 12%);
+}
 :root {
   --bg: #f8f8f8;
   --surface: #fff;

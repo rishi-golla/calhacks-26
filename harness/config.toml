@@ -26,6 +26,32 @@ max_concurrency = 8
 [backends.C.extra_body]
 reasoning_effort = "low"
 
+# Fully open models (open data + training code + weights), served by infra/serve_all_open.sh. Not in any chain
+# until benchmarked; then they replace A/B/C.
+[backends.D]                 # OLMoE-1B-7B-0125-Instruct (AI2): slot B, classify
+served_name = "olmoe"
+url = "http://127.0.0.1:8004"
+timeout_s = 20
+max_concurrency = 16
+
+[backends.E]                 # Apertus-8B-Instruct-2509 (Swiss AI): slot C, cross-check
+served_name = "apertus"
+url = "http://127.0.0.1:8005"
+timeout_s = 30
+max_concurrency = 16
+
+[backends.F]                 # Olmo-3-7B-Instruct (AI2): slot A candidate, extraction
+served_name = "olmo3"
+url = "http://127.0.0.1:8006"
+timeout_s = 45
+max_concurrency = 16
+
+[backends.G]                 # OLMo-2-1124-13B-Instruct (AI2, FP8 on the fly): slot A candidate, extraction
+served_name = "olmo2"
+url = "http://127.0.0.1:8007"
+timeout_s = 45
+max_concurrency = 16
+
 # Logical name -> backends in preference order. The first healthy one serves; the rest are fallbacks.
 # C (gpt-oss) is out of rotation: its MXFP4 Marlin kernel emits NaN logits on GB10 (token 0 "!" garbage,
 # corrupt Harmony headers) under load, batched or not. Re-add "C" here once a working C is serving.

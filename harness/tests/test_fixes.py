@@ -102,3 +102,16 @@ async def test_consumer_does_not_block_tms_behind_model_work(tmp_path, monkeypat
     assert max(done[f"GPS-{i}"] for i in range(20)) - start < 0.5, "TMS events waited behind invoices"
     assert running["max"] == 2, "model-bound concurrency should hit, not exceed, the cap"
     assert info["pending"] == 0
+
+
+def test_lite_schema_keeps_only_pii_and_amounts():
+    from harness.ingest.schemas import lite_schema
+    props = lite_schema("carrier_invoice")["properties"]
+    assert set(props) == {"invoice_amount", "line_items", "pii"}
+    assert set(lite_schema("shipper_payment")["properties"]) == {"amount", "invoices_applied", "pii"}
+
+
+def test_structured_payload_detection():
+    from harness.ingest.schemas import is_structured
+    assert is_structured("carrier_invoice", {"invoice_amount": 2150.0, "load_id": "LOAD-4821", "text": "..."})
+    assert not is_structured("email", {"from": "a@b.co", "subject": "hi", "text": "..."})

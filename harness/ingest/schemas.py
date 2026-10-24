@@ -49,3 +49,19 @@ DOC_TYPE: dict[str, str] = {
 # Amount fields cross-checked between the structured payload and what model A read from the document.
 # contract_rate is deliberately absent: invoices don't state it, so the model would read the linehaul line.
 AMOUNT_FIELDS = ("invoice_amount", "amount", "amount_disputed", "next_payment_amount")
+
+# Fast lane: when the payload already carries the structured fields, model A only needs the personal-data spans
+# and the amounts (so the deterministic payload-vs-document cross-check still has something to compare).
+_LITE_FIELDS = (*AMOUNT_FIELDS, "line_items", "invoices_applied", "amounts")
+
+
+def lite_schema(doc_type: str) -> dict:
+    full = SCHEMAS[doc_type]["properties"]
+    props = {k: v for k, v in full.items() if k in _LITE_FIELDS or k == "pii"}
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+
+
+def is_structured(doc_type: str, payload: dict) -> bool:
+    """True when the upstream payload already holds at least two of this document type's fields."""
+    fields = [k for k in SCHEMAS[doc_type]["properties"] if k != "pii"]
+    return sum(payload.get(k) not in (None, "", []) for k in fields) >= 2

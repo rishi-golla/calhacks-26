@@ -221,13 +221,14 @@ def score(results: list[dict], truth: Truth, wall: float, args) -> dict:
             owner_ok += bool(want & owners)
     notes = Counter(re.sub(r"[\d.]+", "#", n.split(":")[0] + ":" + n.split(":")[1][:40] if ":" in n else n)
                     for r in results for n in (r.get("envelope") or {}).get("subject", {}).get("review_notes", []))
-    models = Counter(f"extract={r.get('extractor')} verify={(r.get('verifier') or {}).get('model_used')}"
-                     for r in routed)
+    models = Counter(f"lane={r.get('lane')} extract={r.get('extractor')} "
+                     f"verify={(r.get('verifier') or {}).get('model_used')}" for r in routed)
     emails = Counter(r.get("route", {}).get("skill") or "triage" for r in results if r["type"] == "email.received")
 
     return {
         "n": len(results), "wall_s": round(wall, 1), "docs_per_min": round(len(results) / wall * 60, 1),
-        "concurrency": args.concurrency, "dispatch": args.dispatch, "types": dict(per_type),
+        "concurrency": args.concurrency, "dispatch": args.dispatch, "mode": os.getenv("INGEST_MODE", "fast"),
+        "types": dict(per_type),
         "status": dict(status),
         "latency_ms": {"service_p50": _pct(service, .5), "service_p95": _pct(service, .95),
                        "e2e_p50": _pct(e2e, .5), "e2e_p95": _pct(e2e, .95), "stage_p50": stages},
@@ -246,7 +247,7 @@ def score(results: list[dict], truth: Truth, wall: float, args) -> dict:
 
 def print_report(rep: dict) -> None:
     x, lat, red = rep["extraction"], rep["latency_ms"], rep["redaction"]
-    print(f"\n## Batch benchmark: {rep['n']} events, concurrency {rep['concurrency']}, "
+    print(f"\n## Batch benchmark: {rep['n']} events, mode {rep['mode']}, concurrency {rep['concurrency']}, "
           f"{'dispatched over A2A' if rep['dispatch'] else 'dry run'}")
     print(f"- **Throughput:** {rep['wall_s']} s wall, **{rep['docs_per_min']} docs/min**")
     print(f"- **Per document:** service p50 {lat['service_p50']} ms / p95 {lat['service_p95']} ms; "

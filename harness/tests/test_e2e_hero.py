@@ -48,7 +48,8 @@ def _port_open(port: int) -> bool:
 async def pool():
     p = Pool()
     await p.check_health()
-    down = [b.served_name for b in p.backends.values() if not b.healthy]
+    in_rotation = {k for chain in p.logical.values() for k in chain}
+    down = [b.served_name for k, b in p.backends.items() if k in in_rotation and not b.healthy]
     if down:
         await p.aclose()
         pytest.skip(f"models down: {down}")

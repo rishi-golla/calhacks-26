@@ -3,6 +3,7 @@ model A extraction + name/address tokenization -> model B only if unlabeled -> m
 TaskEnvelope (7.2, unchanged schema) -> A2A dispatch."""
 import json
 import logging
+import os
 import re
 import time
 from typing import Any
@@ -12,7 +13,7 @@ from harness.chat import complete
 from harness.ingest.dispatch import Dispatcher, DispatchError
 from harness.ingest.redact import BUSINESS, known_spans, leftovers, redact_obj, replace_spans
 from harness.ingest.routing import Route, classify, table_route
-from harness.ingest.schemas import AMOUNT_FIELDS, DOC_TYPE, SCHEMAS
+from harness.ingest.schemas import AMOUNT_FIELDS, DOC_TYPE, SCHEMAS, is_structured, lite_schema
 from harness.ingest.vault import TOKEN_RE, Vault
 from harness.pool import Pool, Unavailable
 
@@ -151,18 +152,30 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
             dispatcher.record(event_id, case_id or "", None, None, None, "not_routed", route.reason, None)
         return {**out, "status": "not_routed", "route": route.__dict__, "timings_ms": timings}
 
-    # 2. Model A: per-type extraction; it also points out names/addresses, which we tokenize ourselves.
+    # 2. Model A. Lanes (INGEST_MODE=fast, the default): no free text -> no extraction call (structured fields are
+    # handled by key rules); structured payload + text -> "lite" (personal-data spans + amounts only);
+    # otherwise -> "full" per-type extraction. INGEST_MODE=full always runs the full extraction.
     gen = payload.get("generated_type") if etype == "scenario.injected" else None
     doc_type = DOC_TYPE.get(etype) or DOC_TYPE.get(gen or "") or "email"
+    has_text = any(isinstance(payload.get(k), str) and payload[k].strip() for k in TEXT_KEYS)
+    if os.getenv("INGEST_MODE", "fast") == "full":
+        lane = "full"
+    elif not has_text:
+        lane = "structured"
+    else:
+        lane = "lite" if is_structured(doc_type, payload) else "full"
     notes: list[str] = []
     extracted: dict = {}
     extractor = None
-    try:
-        extracted, h = await _llm_json(pool, EXTRACT_SYSTEM, f"<document type=\"{doc_type}\">\n{text[:12000]}"
-                                       "\n</document>", SCHEMAS[doc_type], "extract_document", event)
-        extractor = h["model_used"]
-    except Unavailable as e:
-        notes.append(f"extractor unavailable: {e}")
+    if lane != "structured":
+        schema, cap = (lite_schema(doc_type), 400) if lane == "lite" else (SCHEMAS[doc_type], 900)
+        try:
+            extracted, h = await _llm_json(pool, EXTRACT_SYSTEM, f"<document type=\"{doc_type}\">\n"
+                                           f"{text[:12000]}\n</document>", schema, "extract_document", event,
+                                           max_tokens=cap)
+            extractor = h["model_used"]
+        except Unavailable as e:
+            notes.append(f"extractor unavailable: {e}")
     spans = _verbatim_spans(extracted.pop("pii", []), text, vault, {"name": "NAME", "address": "ADDR"})
     text, payload_r, extracted = (replace_spans(x, spans) for x in (text, payload_r, extracted))
     t = lap("extract", t)
@@ -205,7 +218,7 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
                        requested_output="ResultArtifact",
                        priority=event.get("priority") if event.get("priority") in P_ORDER else "P2")
     out.update({"route": route.__dict__, "envelope": env.model_dump(), "needs_review": needs_review,
-                "extractor": extractor, "extracted": extracted, "verifier": verifier})
+                "lane": lane, "extractor": extractor, "extracted": extracted, "verifier": verifier})
 
     # 6. Dispatch (or triage). Without an upstream case a person has to attach it, so it waits in triage.
     if route.skill and case_id is None:

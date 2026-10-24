@@ -263,10 +263,12 @@ async function runSearch(
       });
       try {
         const missingByHash = new Map<string, SearchChunk>();
+        const vectors = new Map<string, number[]>();
         for (const chunk of corpus) {
           const hash = chunkHash(chunk.text);
-          if (!getCachedVector(hash) && !missingByHash.has(hash))
-            missingByHash.set(hash, chunk);
+          const cachedVector = getCachedVector(hash);
+          if (cachedVector) vectors.set(hash, cachedVector);
+          else if (!missingByHash.has(hash)) missingByHash.set(hash, chunk);
         }
         const missing = [...missingByHash.values()];
         for (let start = 0; start < missing.length; start += 100) {
@@ -276,9 +278,12 @@ async function runSearch(
             apiKey,
           );
           openaiLatencyMs += result.latencyMs;
-          batch.forEach((chunk, index) =>
-            cacheVector(chunkHash(chunk.text), result.vectors[index]),
-          );
+          batch.forEach((chunk, index) => {
+            const hash = chunkHash(chunk.text);
+            const vector = result.vectors[index];
+            cacheVector(hash, vector);
+            vectors.set(hash, vector);
+          });
           embeddedCount += batch.length;
         }
         const queryHash = chunkHash(question);
@@ -290,15 +295,6 @@ async function runSearch(
           cacheVector(queryHash, queryVector);
           queryEmbedded = true;
         }
-        const vectors = new Map(
-          corpus.map(
-            (chunk) =>
-              [
-                chunkHash(chunk.text),
-                getCachedVector(chunkHash(chunk.text)) ?? [],
-              ] as const,
-          ),
-        );
         semantic = rankSemantic(corpus, queryVector, vectors);
         embeddingDetail = `Embedded ${embeddedCount} new records; ${queryEmbedded ? "query vector created" : "query vector cached"}.`;
       } catch {

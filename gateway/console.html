@@ -25,7 +25,7 @@ td.c{cursor:pointer}td.c:hover{background:#1d2738}.pill{padding:1px 6px;border-r
 </style></head><body>
 <header><h1>Golden Gate Freight · Live Ops Console</h1><span class="demo">DEMO MODE · outreach routed to team allowlist only</span>
 <input id="tok" placeholder="gateway token" size="12" type="password">
-<span class="pill live" id="rate">stream …</span>
+<span class="pill live" id="rate">stream …</span><span class="pill" id="clk">business time …</span>
 <button onclick="inject('detention_unsupported')">Inject detention dispute (call)</button>
 <button onclick="inject('detention_unsupported',{channel:'email'})">… (email)</button>
 <button class="sec" onclick="inject('detention_unsupported',{force_human_approval:true})">… + human approval</button>
@@ -51,7 +51,11 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const A=v=>esc(JSON.stringify(String(v??'')));  // safe JS string literal inside a double-quoted handler attribute
 const brief=d=>{if(!d)return'';const o={...d};return esc(JSON.stringify(o)).slice(0,260)};
 async function inject(sc,o){try{const r=await api('/inject/'+sc,o||{});sel=r.case_id;toast(`${r.case_id}: ${r.carrier} → ${r.shipper}`);tick()}catch(e){toast(e.message)}}
-async function doc(ref){const d=await api('/docs/'+encodeURIComponent(ref));$('blame').innerHTML=`<h2 style="margin-top:10px">source document ${esc(ref)}</h2><pre class="d">${esc(JSON.stringify(d,null,1))}</pre>`}
+async function pdf(ref){const r=await fetch('/docs/'+encodeURIComponent(ref)+'/pdf',{headers:{'x-gateway-token':$('tok').value.trim()}});if(!r.ok)return toast(r.status+' pdf');window.open(URL.createObjectURL(await r.blob()),'_blank')}
+async function doc(ref){if(ref.startsWith('mail:'))return mailv(ref.slice(5));const d=await api('/docs/'+encodeURIComponent(ref));
+ $('blame').innerHTML=`<h2 style="margin-top:10px">source document ${esc(ref)} · <a onclick="pdf(${A(ref)})">open PDF</a></h2><pre class="d">${esc(JSON.stringify(d,null,1))}</pre>`}
+async function mailv(id){const m=await api('/mail/'+encodeURIComponent(id));const H=m.headers;
+ $('blame').innerHTML=`<h2 style="margin-top:10px">inbox message ${esc(id)} <span class="pill">simulated · never delivered</span></h2><div class="d">From: <b>${esc(H.From)}</b><br>To: ${esc(H.To)}<br>Date: ${esc(H.Date)}<br>Subject: <b>${esc(H.Subject)}</b>${H['Reply-To']?'<br>Reply-To: '+esc(H['Reply-To']):''}</div><pre class="d" style="white-space:pre-wrap">${esc(m.body)}</pre>`+m.attachments.map(a=>`<a onclick="pdf(${A(a.replace(/\.pdf$/,''))})">📎 ${esc(a)}</a>`).join(' ')}
 const SAY={deny:"Hi, yes this is dispatch. Driver was in and out in about 45 minutes. The detention was added by mistake and we have no receipt, so we withdraw the detention charge.",
  confirm:"Yes, the driver waited over two hours at the receiver. The detention is valid and we stand by the charge.",
  ptp:"Sorry about that, we will pay the remaining balance by Friday.",
@@ -79,9 +83,10 @@ async function tick(){if(!$('tok').value){$('chain').textContent='enter token';r
   const log=await api('/audit/log');$('chain').textContent=log.chain_ok?'hash chain OK':'CHAIN BROKEN';$('chain').style.background=log.chain_ok?'#1d5c42':'#7a2222';
   const rows=await api('/audit/sheet/'+encodeURIComponent($('sh').value));const by={};const cols=new Set();rows.forEach(r=>{(by[r.row]=by[r.row]||{})[r.col]=r.value;cols.add(r.col)});const C=[...cols];
   $('sheet').innerHTML=`<table><tr><th>row</th>${C.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`+Object.entries(by).map(([r,v])=>`<tr><td>${esc(r)}</td>${C.map(c=>`<td class="c" onclick="blame(${A(r)},${A(c)})">${esc(typeof v[c]==='object'?JSON.stringify(v[c]):v[c])}</td>`).join('')}</tr>`).join('')+'</table>';
+  api('/clock').then(k=>$('clk').textContent='business time '+k.business_time.slice(0,16).replace('T',' ')+' · '+(k.ratio/60)+' min/s').catch(()=>{});
   const fd=await api('/feed?n=80');const now=Date.now();$('rate').textContent=`stream · ${fd.filter(e=>now-Date.parse(e.ts)<60000).length} events/min`;
-  $('feed').innerHTML=fd.map(e=>{const p=e.payload||{};const who=p.carrier?.name||p.shipper?.name||'';const what=p.milestone||(p.invoice_amount!=null?'$'+p.invoice_amount+(p.paid_amount!=null?' paid $'+p.paid_amount:''):'')||p.new_account_last4&&'acct …'+p.new_account_last4||'';
-   return `<div class="fe"><span class="d">${new Date(e.ts).toLocaleTimeString()}</span><span class="k">${esc(e.type)}</span><a onclick="sel=${A(p.case_id||e.case_hint)};tick()">${esc(p.load_id||'')}</a><span>${esc(who)} <span class="d">${esc(what)}</span> ${(e.evidence_refs||[]).map(r=>`<a onclick="doc(${A(r)})">${esc(r.replace('doc:',''))}</a>`).join(' ')}</span></div>`}).join('')||'<i style="color:var(--mut)">no events yet: is the simulator running?</i>';
+  $('feed').innerHTML=fd.map(e=>{const p=e.payload||{};const who=p.carrier?.name||p.shipper?.name||'';const what=p.subject?('✉ '+p.from+' · '+p.subject):p.milestone?(p.milestone+(p.lat!=null?` @${p.lat},${p.lon}`:'')+(p.dwell_min?` dwell ${p.dwell_min}m`:'')):p.status?p.status:p.txn_id?(`${p.type_code} $${p.amount} ${p.reference}`):(p.invoice_amount!=null?'$'+p.invoice_amount+(p.paid_amount!=null?' paid $'+p.paid_amount:''):p.amount!=null?'$'+p.amount:'')||p.new_account_last4&&'acct …'+p.new_account_last4+' via '+p.requested_via||'';
+   return `<div class="fe"><span class="d" title="wall ${esc(e.ts)}">${esc((e.occurred_at||e.ts).slice(5,16).replace('T',' '))}</span><span class="k">${esc(e.type)}</span><a onclick="sel=${A(p.case_id||e.case_hint)};tick()">${esc(p.load_id||'')}</a><span>${esc(who)} <span class="d">${esc(what)}</span> ${(e.evidence_refs||[]).map(r=>`<a onclick="doc(${A(r)})">${esc(r.replace(/^(doc|mail):/,''))}</a>`).join(' ')}</span></div>`}).join('')||'<i style="color:var(--mut)">no events yet: is the simulator running?</i>';
   if(!window.W){window.W=await api('/world');const co=c=>`<div class="co"><b>${esc(c.name)}</b> <span class="pill">${esc(c.usdot?'USDOT '+c.usdot:c.ticker||'')}</span><br>${esc(c.phone||'')} · ${esc(c.email||c.website||'')}<br><span class="d">${esc(c.address)} · <a href="${esc(c.source_url)}" target="_blank" rel="noopener">${esc(c.source)}</a></span></div>`;
    $('world').innerHTML=`<div class="d">built ${esc(W.built_at)}</div><h2 style="margin-top:6px">Carriers (${W.carriers.length})</h2>`+W.carriers.map(co).join('')+`<h2>Shippers (${W.shippers.length})</h2>`+W.shippers.map(co).join('')}
   if(!sel)return;$('cid').textContent='· '+sel;const c=await api('/cases/'+encodeURIComponent(sel));

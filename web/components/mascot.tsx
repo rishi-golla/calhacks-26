@@ -42,7 +42,8 @@ function Face({ x = 24, y = 23 }: { x?: number; y?: number }) {
 
 const SCALLOPS = Array.from({ length: 10 }, (_, i) => {
   const angle = (i / 10) * Math.PI * 2;
-  return [24 + Math.cos(angle) * 13.6, 25 + Math.sin(angle) * 13.6] as const;
+  const round = (value: number) => Math.round(value * 100) / 100;
+  return [round(24 + Math.cos(angle) * 13.6), round(25 + Math.sin(angle) * 13.6)] as const;
 });
 
 function figure(id: string, { body, deep }: Palette): ReactNode {

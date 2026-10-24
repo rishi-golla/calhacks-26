@@ -26,6 +26,7 @@
   ],
   "detention_hours_claimed": 2,
   "free_time_min": 120,
+  "pod_signed": true,
   "gps": {
     "arrived": "14:02",
     "departed": "14:49"

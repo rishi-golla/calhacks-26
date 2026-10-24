@@ -5,7 +5,8 @@ from typing import Literal
 
 APPROVAL_THRESHOLD_USD = 5_000
 CONTRACT_TOLERANCE = 0.02
-# P-013 = signed POD required; P-014 = accessorials need a receipt.
+ACCESSORIAL_TERMS = ("detention", "lumper", "layover", "stop-off", "stop off", "tonu", "driver assist")
+# P-013 = signed POD required; P-014 = accessorial lines (detention, lumper, layover, stop-off, TONU, driver assist) need a receipt.
 
 
 @dataclass
@@ -27,10 +28,10 @@ def check(action: str, actor: str, payload: dict) -> Decision:
         if dup:
             policy_ids.append("P-007")
             reasons.append(f"duplicate of {dup} (same load/BOL)")
-        if payload.get("pod_signed") is False:
+        if payload.get("pod_signed") is not True:
             policy_ids.append("P-013")
             reasons.append("no signed POD")
-        if (any(any(term in item.get("desc", "").lower() for term in ("detention", "lumper"))
+        if (any(any(term in (item.get("desc") or "").lower() for term in ACCESSORIAL_TERMS)
                 for item in payload.get("line_items", [])) and payload.get("receipt_attached") is not True):
             policy_ids.append("P-014")
             reasons.append("accessorial billed without receipt")

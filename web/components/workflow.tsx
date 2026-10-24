@@ -21,7 +21,6 @@ import {
   FARM,
   STEPS,
   activeSteps,
-  clock,
   displayUrl,
   feedOf,
   latestCase,
@@ -30,14 +29,24 @@ import {
   scope,
   stepById,
   targetUrl,
-  type Line,
   type Step,
 } from "./workflow-steps";
 import "./workflow.css";
 
+type Tab = { node_id: string; url: string; title: string };
+
+function tabHost(url: string) {
+  try {
+    const host = new URL(url).host;
+    return host.endsWith(":3001") ? "Live tab" : host;
+  } catch {
+    return "Opening…";
+  }
+}
+
 type StepData = {
   step: Step;
-  lines: Line[];
+  events: number;
   status: string;
   url: string;
   farm: boolean;
@@ -61,21 +70,23 @@ function Chrome({ url, status }: { url: string; status: string }) {
   );
 }
 
-function Records({ lines, limit }: { lines: Line[]; limit: number }) {
-  if (!lines.length) return <p className="wf-empty">Waiting for events…</p>;
-  return (
-    <>
-      {lines.slice(0, limit).map((l) => (
-        <p key={l.key} className={Date.now() - l.ts < 60_000 ? "fresh" : ""}>
-          {l.text}
-        </p>
-      ))}
-    </>
-  );
+function LiveFrame({ id, tick }: { id: string; tick: number }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => setSrc(img.src);
+    img.src = `${FARM}/frame/${id}.jpg?t=${tick}`;
+    return () => {
+      img.onload = null;
+    };
+  }, [id, tick]);
+  if (!src) return <p className="wf-empty">Opening browser…</p>;
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img className="wf-shot" alt="" src={src} />;
 }
 
 const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
-  const { step, lines, status, farm, tick } = data;
+  const { step, events, status, farm, tick } = data;
   const Icon = step.icon;
   return (
     <div
@@ -105,21 +116,15 @@ const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
       <div className="wf-browser">
         <Chrome url={data.url} status={status} />
         <div className="wf-screen">
-          <Records lines={lines} limit={6} />
-          {farm && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              className="wf-shot"
-              alt=""
-              src={`${FARM}/frame/${step.id}.jpg?t=${tick}`}
-              onLoad={(e) => (e.currentTarget.style.opacity = "1")}
-              onError={(e) => (e.currentTarget.style.opacity = "0")}
-            />
+          {farm ? (
+            <LiveFrame id={step.id} tick={tick} />
+          ) : (
+            <p className="wf-empty">Browser offline</p>
           )}
         </div>
       </div>
       <div className="wf-foot">
-        {lines.length} events · {step.sources.join(", ")}
+        {tabHost(data.url)} · {events} events
       </div>
       <Handle type="source" position={Position.Right} />
     </div>
@@ -145,6 +150,7 @@ export default function Workflow({
   const [palette, setPalette] = useState(false);
   const [farm, setFarm] = useState(false);
   const [tick, setTick] = useState(0);
+  const [tabs, setTabs] = useState<Record<string, Tab>>({});
   const [leaving, setLeaving] = useState<string[]>([]);
   const followed = caseId || latestCase(data);
   const scoped = useMemo(() => scope(data, followed), [data, followed]);
@@ -195,42 +201,49 @@ export default function Workflow({
     return feeds[s.id].length ? "live" : "idle";
   };
 
+  const sent = useRef(new Map<string, string>());
+  const pending = useRef(new Set<string>());
   useEffect(() => {
     let alive = true;
-    const check = () =>
-      fetch(`${FARM}/healthz`, { cache: "no-store" })
-        .then((r) => alive && setFarm(r.ok))
-        .catch(() => alive && setFarm(false));
-    check();
-    const timer = setInterval(check, 5000);
+    const sync = async () => {
+      try {
+        const r = await fetch(`${FARM}/sessions`, { cache: "no-store" });
+        if (!r.ok) throw new Error(String(r.status));
+        const list: Tab[] = await r.json();
+        if (!alive) return;
+        setFarm(true);
+        setTabs(Object.fromEntries(list.map((t) => [t.node_id, t])));
+        const have = new Set(list.map((t) => t.node_id));
+        for (const { id } of STEPS) {
+          const url = urls[id];
+          if (pending.current.has(id)) continue;
+          if (have.has(id) && sent.current.get(id) === url) continue;
+          sent.current.set(id, url);
+          pending.current.add(id);
+          fetch(`${FARM}/sessions/${id}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url }),
+          })
+            .catch(() => sent.current.delete(id))
+            .finally(() => pending.current.delete(id));
+        }
+      } catch {
+        if (alive) setFarm(false);
+      }
+    };
+    sync();
+    const timer = setInterval(sync, 3000);
     return () => {
       alive = false;
       clearInterval(timer);
     };
-  }, []);
+  }, [urls]);
   useEffect(() => {
     if (!farm) return;
-    const timer = setInterval(() => setTick((t) => t + 1), 1500);
+    const timer = setInterval(() => setTick((t) => t + 1), 700);
     return () => clearInterval(timer);
   }, [farm]);
-
-  const sent = useRef(new Map<string, string>());
-  useEffect(() => {
-    if (!farm) {
-      sent.current.clear();
-      return;
-    }
-    for (const { id } of STEPS) {
-      const url = urls[id];
-      if (sent.current.get(id) === url) continue;
-      sent.current.set(id, url);
-      fetch(`${FARM}/sessions/${id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      }).catch(() => sent.current.delete(id));
-    }
-  }, [farm, urls]);
 
   const shown = useRef(new Set<string>());
   useEffect(() => {
@@ -263,9 +276,9 @@ export default function Workflow({
       position: pos.get(id) ?? lastPos.current.get(id) ?? { x: 0, y: 0 },
       data: {
         step,
-        lines: feeds[id],
+        events: feeds[id].length,
         status: statusOf(step),
-        url: urls[id],
+        url: tabs[id]?.url || urls[id],
         farm,
         tick,
         leaving: !visible.has(id),
@@ -384,7 +397,10 @@ export default function Workflow({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="wf-window-bar">
-              <Chrome url={urls[open.id]} status={statusOf(open)} />
+              <Chrome
+                url={tabs[open.id]?.url || urls[open.id]}
+                status={statusOf(open)}
+              />
               <button aria-label="Close" onClick={() => setOpenId("")}>
                 <X size={16} />
               </button>
@@ -399,24 +415,10 @@ export default function Workflow({
                     src={`${FARM}/stream/${open.id}`}
                   />
                 ) : (
-                  <>
-                    <h2>
-                      <open.icon size={16} /> {open.title}
-                    </h2>
-                    <p className="wf-window-sub">
-                      Browser service offline. Start it with{" "}
-                      <code>python -m browserfarm</code>. Showing records:
-                    </p>
-                    <ol>
-                      {feeds[open.id].map((l) => (
-                        <li key={l.key}>
-                          <time>{clock(l.ts)}</time>
-                          <span>{l.text}</span>
-                          {l.meta && <em>{l.meta}</em>}
-                        </li>
-                      ))}
-                    </ol>
-                  </>
+                  <p className="wf-empty">
+                    Browser service offline. Start it with{" "}
+                    <code>make browsers</code>.
+                  </p>
                 )}
               </section>
               <aside className="wf-info">
@@ -441,12 +443,8 @@ export default function Workflow({
                       .map((l) => stepById(l.to)?.title)
                       .join(", ") || "—"}
                   </dd>
-                  <dt>Latest</dt>
-                  <dd className="wf-latest">
-                    {feeds[open.id].slice(0, 8).map((l) => (
-                      <span key={l.key}>{l.text}</span>
-                    ))}
-                  </dd>
+                  <dt>Page</dt>
+                  <dd>{tabs[open.id]?.title || "—"}</dd>
                 </dl>
               </aside>
             </div>

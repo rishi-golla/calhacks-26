@@ -480,8 +480,7 @@ export function layout(visible: Set<string>, links: Link[]) {
   return { pos, level };
 }
 
-export const FARM =
-  process.env.NEXT_PUBLIC_BROWSERFARM_URL ?? "http://127.0.0.1:9300";
+export const FARM = process.env.NEXT_PUBLIC_BROWSERFARM_URL ?? "/farm";
 export const INTERNAL =
   process.env.NEXT_PUBLIC_DASHBOARD_INTERNAL_URL ?? "http://127.0.0.1:3001";
 
@@ -502,7 +501,6 @@ export function targetUrl(
   if (id === "contacts" && shipper)
     return `https://www.sec.gov/cgi-bin/browse-edgar?company=${encodeURIComponent(str(shipper.name))}&action=getcompany`;
   if (id === "contacts" && safer) return safer;
-  if (id === "payments") return "http://api.nessieisreal.com/documentation";
   return `${INTERNAL}/node/${id}?case=${encodeURIComponent(caseId)}`;
 }
 

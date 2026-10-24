@@ -71,74 +71,25 @@ def _run(world, scenario, seed=3):
 
 
 @pytest.mark.parametrize("scenario", sorted(__import__("sim.generator").generator.SCENARIOS))
-def test_lifecycle_paper_trail_routes_cleanly(world, scenario):
-    from router import main as router
+def test_lifecycle_emits_raw_arrivals_only(world, scenario):
     g, load, evs = _run(world, scenario)
     occurred = [e["occurred_at"] for e in evs]
     assert occurred == sorted(occurred)
-    routed = [e for e in evs if router.plan(e)]
-    invoices = [e for e in evs if e["type"] == "carrier_invoice.received"]
-    inv = invoices[0]["payload"]
-    assert inv["carrier"]["usdot"] == "391314" and inv["shipper"]["name"] == "COCA COLA CO"
-    assert all(router.invalid(e["payload"]) is None for e in routed)
-    assert {e["type"] for e in routed} >= {"carrier_invoice.received", "shipper_payment.received"}
-    assert {e["type"] for e in evs} >= {"load.tendered", "load.status", "gps.ping", "pod.received",
-                                        "email.received", "shipper_invoice.issued", "bank.transaction"}
-    lines = round(sum(li["amount"] for li in inv["line_items"]), 2)
-    if scenario == "math_error":
-        assert inv["invoice_amount"] > lines
-    else:
-        assert inv["invoice_amount"] == lines
-    if scenario in ("clean", "duplicate_invoice", "duplicate_renumbered", "shipper_short_pay", "pod_unsigned"):
-        assert inv["invoice_amount"] == inv["contract_rate"]
-    if scenario in ("rate_mismatch", "fsc_error", "math_error", "lumper_no_receipt", "detention_unsupported"):
-        assert inv["invoice_amount"] > inv["contract_rate"] * 1.02  # must trip the AP contract-tolerance check
-    if scenario == "detention_unsupported":
-        assert inv["detention_hours_claimed"] == 2 and inv["gps_dwell_min"] <= inv["free_time_min"]
-    if scenario == "duplicate_invoice":
-        assert len(invoices) == 2 and router._keys(invoices[0])[1] == router._keys(invoices[1])[1]
-    if scenario == "duplicate_renumbered":
-        assert len(invoices) == 2 and invoices[0]["payload"]["bol"] == invoices[1]["payload"]["bol"]
-        assert router._keys(invoices[0])[1] != router._keys(invoices[1])[1]
-        from agents.carrier_ap.tools import three_way_match
-        duplicate_match = three_way_match({**invoices[1]["payload"],
-                                           "duplicate_of": invoices[0]["payload"]["invoice_id"]})
-        assert "P-007" in duplicate_match["policy_ids"]
-    if scenario == "pod_unsigned":
-        assert inv["pod_signed"] is False
-    if scenario in ("bank_change", "factoring_unverified"):
-        bc = next(e["payload"] for e in evs if e["type"] == "bank_change.requested")
-        assert (bc["from"] != bc["registered_email"]) == (scenario == "bank_change")
-    pay = next(e["payload"] for e in evs if e["type"] == "shipper_payment.received")
-    assert pay["chase"] == (scenario == "shipper_short_pay")
-    for ref in invoices[0]["evidence_refs"]:
-        kind, _, name = ref.partition(":")
-        sub, ext = ("docs", "pdf") if kind == "doc" else ("mail", "eml")
-        assert (g.data_dir() / sub / f"{name}.{ext}").stat().st_size > 500
+    types = {event["type"] for event in evs}
+    assert types >= {"load.tendered", "load.status", "gps.ping", "pod.received",
+                     "email.received", "shipper_invoice.issued", "bank.file_appended"}
+    assert not types & {"carrier_invoice.received", "bank_change.requested",
+                        "shipper_payment.received", "bank.transaction"}
+    tender = next(event["payload"] for event in evs if event["type"] == "load.tendered")
+    assert tender["operator_overrides"] == {} and tender["free_time_min"] == load["free_time_min"]
+    emails = [event["payload"] for event in evs if event["type"] == "email.received"]
+    expected_email_keys = {"mail_id", "from", "to", "subject", "sent_at", "attachments"}
+    assert emails and all(set(payload) == expected_email_keys for payload in emails)
+    assert all(not {"case_id", "load_id", "invoice_amount", "amount", "paid_amount"} & payload.keys()
+               for payload in emails)
     g.record_answer(load, scenario, load["planted"])
     key = json.loads((g.data_dir() / "answer_key.jsonl").read_text().splitlines()[-1])
     assert key["scenario"] == scenario and key["expected"]
-
-
-@pytest.mark.parametrize("scenario", sorted(
-    set(__import__("sim.generator").generator.SCENARIOS)
-    - {"clean", "duplicate_invoice", "duplicate_renumbered", "shipper_short_pay", "bank_change",
-       "detention_supported"}))
-def test_exception_invoices_are_held_by_ap_policy(world, scenario):
-    from agents.carrier_ap.tools import three_way_match
-    _, _, evs = _run(world, scenario)
-    invoice = next(e["payload"] for e in evs if e["type"] == "carrier_invoice.received")
-    assert not three_way_match(invoice)["matched"]
-
-
-def test_unsupported_detention_without_receipt_is_held_over_contract(world):
-    from agents.carrier_ap.tools import three_way_match
-    world["lanes"][0].update(contract_rate=8000, linehaul=8000)
-    _, _, evs = _run(world, "detention_unsupported")
-    invoice = next(e["payload"] for e in evs if e["type"] == "carrier_invoice.received")
-    match = three_way_match(invoice)
-    assert not match["matched"] and "P-014" in match["policy_ids"]
-
 
 def test_gps_breadcrumbs_follow_the_lane(world):
     _, load, evs = _run(world, "clean")

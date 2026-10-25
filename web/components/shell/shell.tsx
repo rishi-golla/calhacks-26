@@ -4,8 +4,8 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Activity, Bell, Database, FlaskConical, Home, ListTree, Network, Play, Receipt, RefreshCw, Zap } from "lucide-react";
 import { useOps, type DataMode } from "../data-provider";
-import { agentLabel } from "@/lib/agents";
-import { fmtAgo, fmtMoney, needsPerson, type AttentionItem } from "@/lib/ops";
+import { fmtAgo, fmtMoney, needsPerson } from "@/lib/ops";
+import { fmtSince } from "@/lib/view-epoch";
 import { LogButton, LogWindow, useLogHotkeys } from "./log-overlay";
 import { Mascot } from "../mascot";
 import BurstControl from "./burst-control";
@@ -25,9 +25,11 @@ export default function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [logOpen, setLogOpen] = useState(false);
   useLogHotkeys(logOpen, setLogOpen);
-  const { ops } = useOps();
+  const { ops, viewEpoch, now } = useOps();
   const [ready, setReady] = useState(false);
   const title = NAV.find((n) => (n.exact ? pathname === n.href : pathname.startsWith(n.href)))?.label ?? "FreightLine";
+  // The epoch window is said once, here; /demo and /cases carry their own epoch controls.
+  const since = viewEpoch.active && viewEpoch.epoch && !pathname.startsWith("/demo") && !pathname.startsWith("/cases") ? fmtSince(viewEpoch.epoch.since, now) : "";
   return (
     <>
       {/* The intro keeps the original Senra look, so it sits outside the themed wrapper. */}
@@ -56,6 +58,11 @@ export default function Shell({ children }: { children: ReactNode }) {
           <header className="fl-topbar">
             <span className="fl-crumb">
               <strong>{title}</strong>
+              {since && (
+                <span className="fl-micro" title="Activity before this is hidden (Start fresh on Demo)" style={{ marginLeft: 8 }}>
+                  since {since}
+                </span>
+              )}
             </span>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <LogButton open={logOpen} onToggle={() => setLogOpen((v) => !v)} />
@@ -95,18 +102,6 @@ function usePopover() {
   return { open, setOpen, ref };
 }
 
-const KIND_LABEL: Record<AttentionItem["kind"], string> = {
-  approval_pending: "Approve",
-  task_failed: "Failed",
-  input_required: "Input",
-  flag_open: "Flag",
-  review_issue: "Review",
-  hold_active: "Hold",
-  call_no_answer: "No answer",
-  policy_deny: "Blocked",
-  stale_agent: "Stale",
-};
-
 /**
  * Bell: the items that need a person, newest critical first, linking to their
  * case. What the agents are handling among themselves stays off it.
@@ -135,7 +130,7 @@ function Notifications() {
           </div>
           {items.length === 0 ? (
             <p className="fl-dim" style={{ padding: 14, fontSize: 13 }}>
-              Nothing needs you.
+              Nothing needs you
             </p>
           ) : (
             <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
@@ -148,19 +143,27 @@ function Notifications() {
                     className="fl-notif"
                   >
                     <Mascot id={item.agent === "human" ? "human" : item.agent} size={28} mood={item.severity === "critical" || item.kind === "task_failed" ? "alert" : "idle"} />
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
-                        <span className={`fl-chip outline ${item.severity === "critical" || item.severity === "high" ? "hot" : ""}`} style={{ fontSize: 10, padding: "1px 5px" }}>
-                          {KIND_LABEL[item.kind]}
+                    <span style={{ minWidth: 0 }} title={item.caseId || undefined}>
+                      <span
+                        style={{ display: "block", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: item.severity === "critical" || item.severity === "high" ? "var(--orange)" : undefined }}
+                      >
+                        {item.title}
+                      </span>
+                      {item.detail && (
+                        <span className="fl-micro" style={{ display: "block", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {item.detail}
                         </span>
-                        <span style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>
-                      </span>
-                      <span className="fl-micro" style={{ display: "block", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {item.caseId || agentLabel(item.agent)} · {fmtAgo(item.at, now)}
-                      </span>
+                      )}
                     </span>
-                    <span className="fl-num" style={{ fontSize: 13 }}>
-                      {item.amount ? fmtMoney(item.amount) : ""}
+                    <span style={{ textAlign: "right" }}>
+                      {item.amount > 0 && (
+                        <span className="fl-num" style={{ display: "block", fontSize: 13 }}>
+                          {fmtMoney(item.amount)}
+                        </span>
+                      )}
+                      <span className="fl-micro" suppressHydrationWarning>
+                        {fmtAgo(item.at, now)}
+                      </span>
                     </span>
                   </Link>
                 </li>

@@ -556,21 +556,17 @@
   background: var(--bg-0);
 }
 .au-metrics {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  display: flex;
   border-bottom: 1px solid var(--line);
 }
 .au-metric {
+  flex: 1 1 0;
   padding: 10px 12px 9px;
   border-right: 1px solid var(--line-soft);
-  border-bottom: 1px solid var(--line-soft);
   min-width: 0;
 }
-.au-metric:nth-child(2n) {
+.au-metric:last-child {
   border-right: 0;
-}
-.au-metric:nth-child(n + 3) {
-  border-bottom: 0;
 }
 .au-metric .v {
   font-family: var(--font-mono);
@@ -625,6 +621,13 @@
   width: 100%;
   padding: 7px 8px 7px 28px;
   font-size: 12px;
+}
+.au-search-count {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  translate: 0 -50%;
+  pointer-events: none;
 }
 .au-filters {
   display: grid;

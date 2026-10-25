@@ -5,14 +5,15 @@
  */
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import { Search, SlidersHorizontal, X } from "lucide-react";
 import { useLiveEvents, useOps } from "@/components/data-provider";
 import { Mascot } from "@/components/mascot";
 import { AGENT_META, skillLabel, type AgentId } from "@/lib/agents";
-import { str, timestamp } from "@/lib/data";
+import { str } from "@/lib/data";
 import { fmtDuration, fmtMoney, type AttentionKind, type CaseView } from "@/lib/ops";
 import { fmtSince } from "@/lib/view-epoch";
 import { EpochNote } from "@/components/shell/view-epoch";
+import { caseTitle, shortCaseId } from "@/components/agents/model";
 import { caseDuration, caseKind, KIND_LABEL, shortDur, type CaseKind } from "./model";
 import "./cases.css";
 
@@ -127,17 +128,6 @@ const toggle = <T,>(list: T[], value: T) => (list.includes(value) ? list.filter(
 
 export default function CaseExplorer() {
   const { caseList, snapshot, now, ops, simulated, source, viewEpoch } = useOps();
-  /** Latest validator verdict per case: a passed review earns a "Validated" chip. */
-  const verdicts = useMemo(() => {
-    const latest = new Map<string, { at: number; verdict: string }>();
-    for (const r of snapshot.review) {
-      const id = str(r.case_id, "");
-      const at = timestamp(r.ts);
-      const prev = latest.get(id);
-      if (!prev || at >= prev.at) latest.set(id, { at, verdict: str(r.verdict, "") });
-    }
-    return new Map([...latest].map(([id, v]) => [id, v.verdict]));
-  }, [snapshot.review]);
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const hydrated = useRef(false);
   useEffect(() => {
@@ -254,14 +244,17 @@ export default function CaseExplorer() {
 
   return (
     <div className={`cx-page ${simulated ? "is-sim" : ""}`}>
-      <header className="cx-head">
-        <div className="cx-stats">
-          <Stat label="Open" value={ops.casesActive} tone="var(--yellow)" />
-          <Stat label="Resolved today" value={ops.casesResolvedToday} tone="var(--teal)" />
-          <Stat label="Needs you" value={ops.casesNeedingYou} tone="var(--orange)" />
-          <Stat label="Median resolution" value={fmtDuration(ops.medianResolutionS)} />
-        </div>
-      </header>
+      {/* Zero counts are the resting state; show the ones that say something. */}
+      {(ops.casesActive || ops.casesResolvedToday || ops.casesNeedingYou || ops.medianResolutionS) > 0 && (
+        <header className="cx-head">
+          <div className="cx-stats">
+            {ops.casesActive > 0 && <Stat label="Open" value={ops.casesActive} tone="var(--yellow)" />}
+            {ops.casesResolvedToday > 0 && <Stat label="Resolved today" value={ops.casesResolvedToday} tone="var(--teal)" />}
+            {ops.casesNeedingYou > 0 && <Stat label="Needs you" value={ops.casesNeedingYou} tone="var(--orange)" />}
+            {ops.medianResolutionS > 0 && <Stat label="Median resolution" value={fmtDuration(ops.medianResolutionS)} />}
+          </div>
+        </header>
+      )}
 
       <div className="cx-filters">
         <div className="cx-filter-row">
@@ -299,6 +292,61 @@ export default function CaseExplorer() {
               </button>
             ))}
           </div>
+          <MoreFilters count={filters.kinds.length + filters.attention.length + filters.handling.length}>
+            <div className="cx-more-group">
+              <span className="fl-micro">Type</span>
+              <div className="cx-toggles" role="group" aria-label="Kind">
+                {KINDS.map((k) => (
+                  <button
+                    key={k}
+                    className={`cx-toggle ${filters.kinds.includes(k) ? "on" : ""}`}
+                    aria-pressed={filters.kinds.includes(k)}
+                    onClick={() => patch({ kinds: toggle(filters.kinds, k) })}
+                  >
+                    {KIND_LABEL[k]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="cx-more-group">
+              <span className="fl-micro">Needs you</span>
+              <div className="cx-toggles" role="group" aria-label="Needs you">
+                {NEEDS_YOU_KINDS.map((k) => (
+                  <button
+                    key={k}
+                    className={`cx-toggle tone-${ATTENTION_META[k].tone} ${filters.attention.includes(k) ? "on" : ""}`}
+                    aria-pressed={filters.attention.includes(k)}
+                    onClick={() => patch({ attention: toggle(filters.attention, k) })}
+                  >
+                    {ATTENTION_META[k].label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="cx-more-group">
+              <span className="fl-micro">Agents handling</span>
+              <div className="cx-toggles" role="group" aria-label="Agents handling">
+                {HANDLING_KINDS.map((k) => (
+                  <button
+                    key={k}
+                    className={`cx-toggle ${filters.handling.includes(k) ? "on" : ""}`}
+                    aria-pressed={filters.handling.includes(k)}
+                    onClick={() => patch({ handling: toggle(filters.handling, k) })}
+                  >
+                    {HANDLING_META[k]!.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </MoreFilters>
+          {anyFilter ? (
+            <span className="cx-count fl-micro">
+              {rows.length} of {caseList.length}
+              <button className="fl-btn quiet small" onClick={() => setFilters({ ...EMPTY, sort: filters.sort })}>
+                <X size={12} /> Clear
+              </button>
+            </span>
+          ) : null}
           <div className="cx-sort">
             <span className="fl-micro">Sort</span>
             <div className="fl-tabs cx-tabs" role="group" aria-label="Sort">
@@ -309,53 +357,6 @@ export default function CaseExplorer() {
               ))}
             </div>
           </div>
-        </div>
-        <div className="cx-filter-row">
-          <div className="cx-toggles" role="group" aria-label="Kind">
-            {KINDS.map((k) => (
-              <button
-                key={k}
-                className={`cx-toggle ${filters.kinds.includes(k) ? "on" : ""}`}
-                aria-pressed={filters.kinds.includes(k)}
-                onClick={() => patch({ kinds: toggle(filters.kinds, k) })}
-              >
-                {KIND_LABEL[k]}
-              </button>
-            ))}
-          </div>
-          <div className="cx-toggles" role="group" aria-label="Needs you">
-            {NEEDS_YOU_KINDS.map((k) => (
-              <button
-                key={k}
-                className={`cx-toggle tone-${ATTENTION_META[k].tone} ${filters.attention.includes(k) ? "on" : ""}`}
-                aria-pressed={filters.attention.includes(k)}
-                onClick={() => patch({ attention: toggle(filters.attention, k) })}
-              >
-                {ATTENTION_META[k].label}
-              </button>
-            ))}
-          </div>
-          <div className="cx-toggles" role="group" aria-label="Agents handling">
-            {HANDLING_KINDS.map((k) => (
-              <button
-                key={k}
-                className={`cx-toggle ${filters.handling.includes(k) ? "on" : ""}`}
-                aria-pressed={filters.handling.includes(k)}
-                onClick={() => patch({ handling: toggle(filters.handling, k) })}
-                title="Agents are handling these"
-              >
-                {HANDLING_META[k]!.label}
-              </button>
-            ))}
-          </div>
-          <span className="cx-count fl-micro">
-            {rows.length} of {caseList.length}
-            {anyFilter ? (
-              <button className="fl-btn quiet small" onClick={() => setFilters({ ...EMPTY, sort: filters.sort })}>
-                <X size={12} /> Clear
-              </button>
-            ) : null}
-          </span>
         </div>
       </div>
 
@@ -401,7 +402,7 @@ export default function CaseExplorer() {
           ) : (
             <div className="cx-rows" style={{ height: rows.length * ROW_H }}>
               {rows.slice(first, last).map(({ c, kind }, i) => (
-                <CaseRow key={c.caseId} c={c} kind={kind} now={now} top={(first + i) * ROW_H} fresh={fresh.has(c.caseId)} verdict={verdicts.get(c.caseId)} />
+                <CaseRow key={c.caseId} c={c} kind={kind} now={now} top={(first + i) * ROW_H} fresh={fresh.has(c.caseId)} />
               ))}
             </div>
           )}
@@ -412,8 +413,10 @@ export default function CaseExplorer() {
   );
 }
 
-function CaseRow({ c, kind, now, top, fresh, verdict }: { c: CaseView; kind: CaseKind; now: number; top: number; fresh: boolean; verdict?: string }) {
+function CaseRow({ c, kind, now, top, fresh }: { c: CaseView; kind: CaseKind; now: number; top: number; fresh: boolean }) {
   const resolved = c.status === "resolved";
+  // The load id is already in the case id; only say it again when it is not.
+  const sub = [c.loadId && !c.caseId.includes(c.loadId) ? c.loadId : "", c.synthetic ? "synthetic" : ""].filter(Boolean).join(" · ");
   return (
     <Link
       href={`/cases/${encodeURIComponent(c.caseId)}`}
@@ -421,21 +424,19 @@ function CaseRow({ c, kind, now, top, fresh, verdict }: { c: CaseView; kind: Cas
       style={{ transform: `translateY(${top}px)` }}
       role="row"
     >
-      <span className="cx-id fl-mono">{c.caseId}</span>
-      <span className="cx-title">
-        <span className="cx-title-text">{c.title}</span>
-        <span className="cx-sub">
-          {KIND_LABEL[kind]} · {c.loadId || "no load"}
-          {c.synthetic && " · synthetic"}
-        </span>
+      <span className="cx-id fl-mono" title={c.caseId}>
+        {shortCaseId(c.caseId)}
+      </span>
+      <span className="cx-title" title={`${KIND_LABEL[kind]} · ${c.title}`}>
+        <span className="cx-title-text">{caseTitle(c)}</span>
+        {sub && <span className="cx-sub">{sub}</span>}
       </span>
       <span>
         <PriorityChip priority={c.priority} />
       </span>
-      <span>
-        <StatusChip status={c.status} active={c.activeTasks} />
-      </span>
-      <span className="num fl-num">{c.exposureUsd ? fmtMoney(c.exposureUsd) : <span className="fl-mute">—</span>}</span>
+      {/* Resolved is the normal end state; the column only carries the exceptions. */}
+      <span>{!resolved && <StatusChip status={c.status} active={c.activeTasks} />}</span>
+      <span className="num fl-num">{c.exposureUsd ? fmtMoney(c.exposureUsd) : null}</span>
       <span className="cx-agents">
         {c.agents.length ? (
           c.agents.map((a) => (
@@ -451,9 +452,8 @@ function CaseRow({ c, kind, now, top, fresh, verdict }: { c: CaseView; kind: Cas
           <span className="fl-mute fl-micro">queued</span>
         )}
       </span>
-      <span className={`num fl-mono cx-age ${resolved ? "" : "live"}`}>{c.openedAt ? shortDur(caseDuration(c, now)) : "—"}</span>
+      <span className={`num fl-mono cx-age ${resolved ? "" : "live"}`}>{c.openedAt ? shortDur(caseDuration(c, now)) : null}</span>
       <span className="cx-attn">
-        {verdict === "pass" && <span className="fl-chip outline ok cx-chip">Validated</span>}
         {c.needsYou.map((k) => (
           <span key={k} className={`fl-chip outline ${ATTENTION_META[k].tone} cx-chip`}>
             {ATTENTION_META[k].label}
@@ -466,6 +466,33 @@ function CaseRow({ c, kind, now, top, fresh, verdict }: { c: CaseView; kind: Cas
         ))}
       </span>
     </Link>
+  );
+}
+
+/** Rarely used filter groups, folded behind one button that shows how many are on. */
+function MoreFilters({ count, children }: { count: number; children: React.ReactNode }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (e: PointerEvent | KeyboardEvent) => {
+      const el = ref.current;
+      if (!el?.open) return;
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !el.contains(e.target as Node)) el.open = false;
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, []);
+  return (
+    <details className="cx-more" ref={ref}>
+      <summary className={`cx-toggle cx-more-btn ${count ? "on" : ""}`} aria-label="More filters" title="Type, needs you, agents handling">
+        <SlidersHorizontal size={12} aria-hidden />
+        {count ? count : null}
+      </summary>
+      <div className="cx-more-panel fl-popover">{children}</div>
+    </details>
   );
 }
 

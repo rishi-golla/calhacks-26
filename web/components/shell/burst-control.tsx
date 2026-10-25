@@ -51,15 +51,11 @@ export default function BurstControl() {
   };
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button className="fl-btn quiet small" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog" title="Send a burst of real cases through the pipeline">
+      <button className="fl-btn quiet small" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog" title="Announce synthetic loads at once, each fast-forwarded to its carrier invoice, through Redis, ingest, the router and the real agents">
         <Zap size={14} /> Burst
       </button>
       {open && (
         <div className="fl-popover" role="dialog" aria-label="Send a burst">
-          <div className="fl-section" style={{ marginBottom: 8 }}>Load burst</div>
-          <p className="fl-micro" style={{ margin: "0 0 10px" }}>
-            Announces synthetic loads at once, each fast-forwarded to its carrier invoice. They go through Redis, ingest, the router and the real agents; the map shows them as they land.
-          </p>
           <label className="fl-micro" style={{ display: "flex", justifyContent: "space-between" }}>
             <span>Loads</span>
             <span className="fl-mono">{count}</span>
@@ -75,12 +71,12 @@ export default function BurstControl() {
           </button>
           {simulated && (
             <p className="fl-micro" style={{ margin: "10px 0 0", color: "var(--orange)" }}>
-              The screen is showing the browser simulation. Switch the data source to Live DB to watch the real cases.
+              Showing the simulation. Switch to Live to watch.
             </p>
           )}
           {result && (
-            <p className="fl-micro" style={{ margin: "10px 0 0" }}>
-              {result.count} loads announced in {result.announced_in_s.toFixed(1)}s. First case <span className="fl-mono">{result.case_ids[0]}</span>.
+            <p className="fl-micro" style={{ margin: "10px 0 0" }} title={result.case_ids[0] ? `First case ${result.case_ids[0]}` : undefined}>
+              Sent {result.count} in {result.announced_in_s.toFixed(1)}s
             </p>
           )}
           {error && (

@@ -10,7 +10,7 @@ import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSP
 import { ArrowUpRight, Search } from "lucide-react";
 import { AGENT_IDS, AGENT_META, agentColor, type AgentId } from "@/lib/agents";
 import { fmtMoney, type CaseView } from "@/lib/ops";
-import { matchesTab, scenarioLabel, type KindTab } from "./model";
+import { caseTitle, matchesTab, scenarioLabel, shortCaseId, type KindTab } from "./model";
 
 const ROW_H = 72;
 const OVERSCAN = 6;
@@ -89,22 +89,29 @@ function CaseRailImpl({ caseList, liveAgents, selectedCase, onSelect, tab, onTab
 
   return (
     <>
-      <div className="au-metrics" aria-label="Operations">
-        <Metric v={metrics.active} k="Active cases" />
-        <Metric v={metrics.exceptions} k="Exceptions" hot={metrics.exceptions > 0} />
-        <Metric v={metrics.handoffs} k="Handoffs" sub="last 5 min" />
-        <Metric v={metrics.toolCalls} k="Tool calls" sub="last 5 min" />
-      </div>
-      <div className="au-explorer-head">
-        <div className="au-list-meta">
-          <span className="fl-section">Case explorer</span>
-          <span className="fl-micro">
-            {rows.length.toLocaleString()} / {caseList.length.toLocaleString()}
-          </span>
+      {/* Zero counters are the resting state; the strip only shows what moved. */}
+      {metrics.active + metrics.exceptions + metrics.handoffs + metrics.toolCalls > 0 && (
+        <div className="au-metrics" aria-label="Operations">
+          {metrics.active > 0 && <Metric v={metrics.active} k="Active" />}
+          {metrics.exceptions > 0 && <Metric v={metrics.exceptions} k="Exceptions" hot />}
+          {metrics.handoffs > 0 && <Metric v={metrics.handoffs} k="Handoffs" title="Handoffs in the last 5 minutes" />}
+          {metrics.toolCalls > 0 && <Metric v={metrics.toolCalls} k="Tool calls" title="Tool calls completed in the last 5 minutes" />}
         </div>
+      )}
+      <div className="au-explorer-head">
         <label className="au-search">
           <Search size={13} />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search cases, carriers, agents…" aria-label="Search cases" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={`Search ${caseList.length.toLocaleString()} cases`}
+            aria-label="Search cases, carriers, agents"
+          />
+          {rows.length !== caseList.length && (
+            <span className="au-search-count fl-micro">
+              {rows.length.toLocaleString()} / {caseList.length.toLocaleString()}
+            </span>
+          )}
         </label>
         <div className="fl-tabs" role="tablist" aria-label="Case kind">
           {TABS.map((t) => (
@@ -170,14 +177,11 @@ function CaseRailImpl({ caseList, liveAgents, selectedCase, onSelect, tab, onTab
   );
 }
 
-function Metric({ v, k, sub, hot = false }: { v: number; k: string; sub?: string; hot?: boolean }) {
+function Metric({ v, k, title, hot = false }: { v: number; k: string; title?: string; hot?: boolean }) {
   return (
-    <div className="au-metric">
+    <div className="au-metric" title={title}>
       <div className={`v ${hot ? "hot" : ""}`}>{v.toLocaleString()}</div>
-      <div className="k">
-        {k}
-        {sub && <small>{sub}</small>}
-      </div>
+      <div className="k">{k}</div>
     </div>
   );
 }
@@ -216,14 +220,17 @@ function CaseRow({
         }
       }}
     >
-      <span className="id">
-        {c.caseId}
+      <span className="id" title={c.caseId}>
+        {shortCaseId(c.caseId)}
         <small>{c.priority}</small>
       </span>
       <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        <span className="au-status" style={{ "--accent": accent } as CSSProperties}>
-          {statusLabel(c.status)}
-        </span>
+        {/* Resolved is the normal end state; only the exceptions carry a status. */}
+        {c.status !== "resolved" && (
+          <span className="au-status" style={{ "--accent": accent } as CSSProperties}>
+            {statusLabel(c.status)}
+          </span>
+        )}
         <Link
           href={`/cases/${encodeURIComponent(c.caseId)}`}
           className="open"
@@ -234,7 +241,7 @@ function CaseRow({
         </Link>
       </span>
       <span className="title" title={c.title}>
-        {c.title}
+        {caseTitle(c)}
       </span>
       <span className="foot">
         <span className="dots" aria-label={`Route: ${c.agents.map((a) => AGENT_META[a].name).join(" → ")}`}>

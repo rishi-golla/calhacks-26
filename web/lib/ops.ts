@@ -631,9 +631,9 @@ const ACCOUNT_ALIASES: Record<string, string> = {
 
 /**
  * `since` (a "Start fresh" epoch, with rows already scoped to it): cash comes
- * from the ledger rows given, not the all-time `cash_position` metric, and the
- * month-to-date and 30-day totals run from `since` instead, matching the
- * "since" labels on Home.
+ * from the ledger rows given, not the all-time `cash_position` metric; the
+ * 30-day totals run from `since` instead, and month-to-date from the later of
+ * the month start and `since`, matching the "since" labels on Home.
  */
 export function buildFinance(snapshot: Snapshot, now: number, { since }: { since?: number } = {}): FinanceMetrics {
   const day = 86_400_000;
@@ -656,7 +656,7 @@ export function buildFinance(snapshot: Snapshot, now: number, { since }: { since
   let revenue30d = 0;
   let expense30d = 0;
   let revenueMtd = 0;
-  const monthStart = since ?? new Date(now).setDate(1);
+  const monthStart = Math.max(since ?? 0, new Date(now).setDate(1));
   for (const e of entries) {
     for (const line of e.lines) {
       const d = delta(line);

@@ -355,7 +355,7 @@ test("ledger goes by posted_at alone, even for a hidden old case", () => {
 });
 
 test("carried: a dispatch within grace whose task has no row yet", () => {
-  const dispatch = (offsetS: number, taskId = "TX"): Row => ({ id: "D", case_id: "C1", task_id: taskId, ts: at(offsetS) });
+  const dispatch = (offsetS: number, taskId = "TX"): Row => ({ id: "D", case_id: "C1", task_id: taskId, status: "queued", ts: at(offsetS) });
   assert.equal(carriedBy({ dispatch: [dispatch(-GRACE_S + 5)] }), true, "within grace");
   assert.equal(carriedBy({ dispatch: [dispatch(30)] }), true, "after since");
   assert.equal(carriedBy({ dispatch: [dispatch(-GRACE_S - 5)] }), false, "older than grace");
@@ -366,7 +366,14 @@ test("carried: a dispatch within grace whose task has no row yet", () => {
   );
 });
 
-test("buildFinance with since totals revenue and expense from since, not the month or 30 days", () => {
+test("only a queued dispatch carries a case; triage and not_routed never do", () => {
+  const d = (status: string, offsetS: number): Row => ({ id: "D", case_id: "C1", task_id: "", status, ts: at(offsetS) });
+  assert.equal(carriedBy({ dispatch: [d("queued", -GRACE_S + 5)] }), true, "queued within grace");
+  for (const status of ["not_routed", "triage"])
+    for (const offset of [-GRACE_S + 5, 30]) assert.equal(carriedBy({ dispatch: [d(status, offset)] }), false, `${status} at ${offset}`);
+});
+
+test("buildFinance with since: revenue30d and expense30d from since, revenueMtd stays month-to-date", () => {
   const entry = (id: string, offsetDays: number): Row => ({
     id,
     posted_at: at(-offsetDays * DAY),
@@ -374,8 +381,11 @@ test("buildFinance with since totals revenue and expense from since, not the mon
   });
   const s = snap({ ledger_entry: [entry("old", 35), entry("recent", 1)] });
   const scoped40 = buildFinance(s, NOW, { since: NOW - 40 * DAY * 1000 });
-  assert.equal(scoped40.revenueMtd, 200);
+  assert.equal(scoped40.revenueMtd, 100);
   assert.equal(scoped40.revenue30d, 200);
+  const recent = buildFinance(snap({ ledger_entry: [entry("older", 5), entry("recent", 1)] }), NOW, { since: NOW - 2 * DAY * 1000 });
+  assert.equal(recent.revenueMtd, 100);
+  assert.equal(recent.revenue30d, 100);
   const unscoped = buildFinance(s, NOW);
   assert.equal(unscoped.revenue30d, 100);
 });

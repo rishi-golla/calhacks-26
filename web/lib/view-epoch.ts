@@ -88,8 +88,9 @@ const isPending = (a: Row) => !a.decision || a.decision === "pending";
  * Case ids opened before `since` that were still active across it:
  * - a task of the case started or changed at or after `since`;
  * - a non-terminal task changed within `CARRY_GRACE_MS` before `since`;
- * - a dispatch routed within `CARRY_GRACE_MS` before `since`, or later, whose
- *   task does not exist yet (its first hop is still being delivered);
+ * - a `queued` dispatch (routed, first hop not delivered yet) from within
+ *   `CARRY_GRACE_MS` before `since`, or later, whose task does not exist yet.
+ *   `triage` and `not_routed` intake rows never get a task and carry nothing;
  * - a pending approval that had not expired by `since`;
  * - an open flag;
  * - an active hold placed within `CARRY_GRACE_MS` before `since`, or later.
@@ -108,7 +109,8 @@ export function carriedOver(snapshot: Snapshot, since: number, candidates: Set<s
     const last = Math.max(t.startedAt, t.updatedAt);
     if (last >= since || (!t.terminal && last >= recent)) add(t.caseId);
   }
-  for (const d of snapshot.dispatch) if (timestamp(d.ts) >= recent && !tasks.has(str(d.task_id, ""))) add(d.case_id);
+  for (const d of snapshot.dispatch)
+    if (d.status === "queued" && timestamp(d.ts) >= recent && !tasks.has(str(d.task_id, ""))) add(d.case_id);
   for (const a of snapshot.approval)
     if (isPending(a)) {
       const expires = timestamp(a.expires_at);

@@ -5,7 +5,11 @@ models (Nemotron, Qwen, gpt-oss, DeepSeek) don't qualify. Candidates must also u
 safetensors weights (no `trust_remote_code`, no pickle). Every file is checked against the SHA-256 that Hugging Face
 publishes (`infra/download_open_models.py`).
 
-**Current lineup (every model step fully open):** Olmo-3-7B finds names/addresses; Apertus-8B classifies and audits
+**Not the live lineup.** On 2026-10-24 the team chose speed + accuracy: live intake runs Nemotron Nano (personal data)
+and Qwen3-4B FP8 (classify, audit), 67 docs/min on 120 docs with recall 100% and 84/84 invoices (see config.toml).
+The fully open lineup below is kept as a tested alternative.
+
+**Fully open lineup (tested):** Olmo-3-7B finds names/addresses; Apertus-8B classifies and audits
 for leftover personal data. Money is read and compared by exact code (`ingest/amounts.py`, `amount_checks`), because
 models misread and misjudge numbers. Fully open run on 300 docs: recall 100%, invoice totals and line items 132/132,
 40.6 docs/min.

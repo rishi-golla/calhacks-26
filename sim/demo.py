@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import json
 import os
+import random
 import re
 import time
 import uuid
@@ -123,6 +124,51 @@ async def start_demo(req: DemoRequest, r: redis.Redis | None = None) -> DemoStar
     return DemoStarted(injection_id=injection_id, preset=name, scenario=scenario, load_id=load["load_id"],
                        case_id=f"{load['case_id']}{p.case_suffix}", trigger_event=p.trigger_event,
                        demo_target=target, channel=req.channel, outreach_channel=OUTREACH_CHANNEL)
+
+
+BURST_MAX = 200
+# Lifecycle step every scenario has, and the routable event ingest derives from it.
+BURST_TRIGGERS = {"carrier_invoice": "carrier_invoice.received"}
+
+
+@dataclass(frozen=True)
+class BurstStarted:
+    burst_id: str
+    count: int
+    trigger_step: str
+    trigger_event: str
+    load_ids: list[str]
+    case_ids: list[str]
+    announced_in_s: float
+
+
+async def start_burst(count: int, r: redis.Redis | None = None, trigger_step: str = "carrier_invoice",
+                      seed: int | None = None) -> BurstStarted:
+    """Announce `count` operator-injected loads at once, each on a random quick lane and fast-forwarded so its
+    case-opening step publishes straight away: one burst through ingest -> router -> agents. Scenarios follow the
+    simulator's own mix; every event is labeled `demo` like any injection. Returns once every announcement is in
+    `raw`; the loads keep streaming their later steps in the background."""
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= BURST_MAX:
+        raise ValueError(f"count must be an integer from 1 to {BURST_MAX}")
+    if trigger_step not in BURST_TRIGGERS:
+        raise ValueError(f"unknown burst trigger {trigger_step!r}; expected one of {sorted(BURST_TRIGGERS)}")
+    world = ensure()
+    rnd = random.Random(seed)
+    burst_id = f"BURST-{uuid.uuid4().hex}"
+    started = time.monotonic()
+    load_ids: list[str] = []
+    case_ids: list[str] = []
+    for index in range(count):
+        scenario = generator.pick(rnd)
+        load = generator.new_load(world, rnd, quick=True)
+        await generator.launch(load, scenario, r, {"injection_id": f"INJ-{uuid.uuid4().hex}", "burst_id": burst_id,
+                                                   "burst_index": index}, priority="P1",
+                               fast_forward_to=trigger_step)
+        load_ids.append(load["load_id"])
+        case_ids.append(load["case_id"])
+    return BurstStarted(burst_id=burst_id, count=count, trigger_step=trigger_step,
+                        trigger_event=BURST_TRIGGERS[trigger_step], load_ids=load_ids, case_ids=case_ids,
+                        announced_in_s=round(time.monotonic() - started, 3))
 
 
 @dataclass(frozen=True)

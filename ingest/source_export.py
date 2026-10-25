@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -259,11 +260,13 @@ def export(db: sqlite3.Connection, target: Path | None = None) -> Path:
 
 
 class Exporter:
-    """Keeps the export current: right before a case becomes routable, otherwise between reads."""
+    """Keeps the export current: right before a case becomes routable, otherwise within `max_age_s`."""
 
-    def __init__(self, target: Path | None = None):
+    def __init__(self, target: Path | None = None, max_age_s: float = 1.0):
         self.target = target
+        self.max_age_s = max_age_s
         self.dirty = True  # the first flush writes the file even before any new arrival
+        self.last_flush = 0.0
         self.written: dict | None = None  # the dataset last written, until the SpacetimeDB mirror takes it
 
     def changed(self) -> None:
@@ -275,7 +278,14 @@ class Exporter:
             dataset = dataset or build(db)
             write(dataset, self.target)
             self.dirty = False
+            self.last_flush = time.monotonic()
             self.written = dataset
+
+    def flush_if_due(self, db: sqlite3.Connection) -> None:
+        """Flush stale state at most once per `max_age_s`: a full rebuild and fsync per raw arrival capped ingest
+        at about ten events per second, while nothing but a routable case needs the file current immediately."""
+        if self.dirty and time.monotonic() - self.last_flush >= self.max_age_s:
+            self.flush(db)
 
     def take(self) -> dict | None:
         """The newest dataset written since the last call, for the source-record mirror to diff."""

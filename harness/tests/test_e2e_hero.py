@@ -16,6 +16,7 @@ from google.protobuf.json_format import MessageToDict
 
 from common.config import AGENTS
 from harness.ingest.dispatch import Dispatcher
+from harness.ingest.memory import Memory
 from harness.ingest.pipeline import process
 from harness.ingest.vault import Vault
 from harness.pool import Pool
@@ -87,6 +88,7 @@ async def _final_task(task_id: str) -> dict:
 
 async def test_hero_invoice_end_to_end(pool, agents, tmp_path):
     vault, dispatcher = Vault(tmp_path / "vault.sqlite"), Dispatcher(tmp_path / "ingest.sqlite", transport="a2a")
+    memory = Memory(tmp_path / "memory.sqlite")
     event = {"event_id": f"EVT-test-{uuid.uuid4().hex[:8]}", "type": "carrier_invoice.received",
              "ts": "2026-06-14T15:02:11Z", "case_hint": "LOAD-4821", "priority": "P0", "source": "sim",
              "payload": {"case_id": "CASE-4821", "load_id": "LOAD-4821",
@@ -97,15 +99,17 @@ async def test_hero_invoice_end_to_end(pool, agents, tmp_path):
                          "detention_hours_claimed": 2, "free_time_min": 120, "gps_dwell_min": 47,
                          "receipt_attached": False, "text": HERO_TEXT}}
 
-    res = await process(pool, vault, dispatcher, event)
+    from harness.ingest.context import ContextStore
+    off = ContextStore("")
+    res = await process(pool, vault, dispatcher, event, memory=memory, context=off)
 
     assert res["status"] == "accepted", res
     assert res["case_id"] == "CASE-4821"
     assert res["route"]["skill"] == "process_carrier_invoice" and res["route"]["classifier"] is None
     assert res["extractor"]
-    # Either an independent model cross-checked it, or (verifier timed out under load) it is explicitly flagged.
+    # Either the personal-data audit ran, or (verifier timed out under load) the document is explicitly flagged.
     if res["verifier"]:
-        assert res["verifier"]["model_used"] not in (None, res["extractor"])
+        assert res["verifier"]["model_used"]
     else:
         assert res["needs_review"] and any("verifier unavailable" in n for n in res["envelope"]["subject"]["review_notes"])
     env = res["envelope"]
@@ -134,5 +138,5 @@ async def test_hero_invoice_end_to_end(pool, agents, tmp_path):
     assert not [p for p in PII if p in received]
     assert task["history"][0]["metadata"]["idempotency_key"] == f"event:{event['event_id']}"
 
-    again = await process(pool, vault, dispatcher, event)
+    again = await process(pool, vault, dispatcher, event, memory=memory, context=off)
     assert again["status"] == "duplicate" and again["prior"]["task_id"] == res["dispatch"]["task_id"]

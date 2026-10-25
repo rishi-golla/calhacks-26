@@ -1345,3 +1345,54 @@
     z-index: 90;
   }
 }
+
+/* Evidence viewer + shown work in the inbox (structure in app/globals.css). */
+.agent-inbox {
+  --ev-bg: #181c22;
+  --ev-sunk: #12151a;
+  --ev-chip-bg: #1f242c;
+  --ev-fg: #c5d1e1;
+  --ev-strong: #eef2f7;
+  --ev-dim: #a8b8ce;
+  --ev-mute: #8f9db0;
+  --ev-line: #303a47;
+  --ev-line-strong: #4a5666;
+  --ev-ok: #7fc4a2;
+  --ev-warn: #d8b86a;
+  --ev-bad: #e1a6a0;
+  --ev-info: #8fb8e0;
+  --ev-accent: #93c9b6;
+  --ev-radius: 4px;
+  --ev-pdf-bg: #2a2f37;
+}
+.ai-inspector .wk-block {
+  margin-top: 10px;
+}
+.ai-inspector .wk-list > li,
+.ai-inspector .ev-evidence > li {
+  margin: 0;
+}
+.ai-inspector .wk-advisories {
+  margin-top: 4px;
+  font-size: inherit;
+}
+.ai-inspector ul.ev-evidence {
+  list-style: none;
+  padding-left: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.ai-inspector .wk-row {
+  padding: 6px 8px 7px;
+}
+.ai-inspector .wk-eq {
+  font-size: 11px;
+}
+.ai-inspector .wk-result {
+  font-size: 12px;
+}
+.agent-inbox .ev-viewer a {
+  text-decoration: underline;
+}

@@ -285,6 +285,34 @@ async def test_source_and_counterparties_land_before_open_case_and_open_case_bef
     assert routed
 
 
+async def test_with_the_mirror_off_a_routed_case_is_exported_before_its_event(world, tmp_path):
+    """Unrouted progress flushes the export at most once per max_age_s; a routed case never waits for that."""
+    _gen, _load, events = _run(world, "clean")
+    target = tmp_path / "source.json"
+    exporter = source_export.Exporter(target, max_age_s=10 ** 9)
+    exporter.last_flush = spacetime_mirror.monotonic()  # nothing is ever due on its own
+    readable: dict[str, bool] = {}
+
+    class CheckingRedis(FakeRedis):
+        async def xadd(self, stream, fields, **kwargs):
+            event = json.loads(fields["json"])
+            if event["type"] == "carrier_invoice.received":
+                payload = event["payload"]
+                exported = json.loads(target.read_text())["cases"] if target.exists() else {}
+                readable[payload["case_id"]] = exported.get(payload["case_id"], {}).get("invoice_id") == \
+                    payload["invoice_id"]
+            await super().xadd(stream, fields, **kwargs)
+
+    mirror = spacetime_mirror.Mirror()
+    assert mirror.disabled
+    db = connect()
+    try:
+        assert all(await _process(events, db, Server(), CheckingRedis([]), exporter, mirror))
+    finally:
+        db.close()
+    assert readable and all(readable.values())
+
+
 async def test_a_failed_source_record_keeps_the_case_unopened_and_the_event_unpublished(world):
     log: list = []
     server = Server(log)

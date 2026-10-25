@@ -2,12 +2,35 @@ import os
 from decimal import Decimal
 
 from agents.controller.card import DESCRIPTIONS
-from agents.risk.tools import audit_charges
-from common.agent_support import child_envelope, evidence, finish, identifier, money, mutate, number, rows
+from agents.risk.tools import audit_charges, charge_workings
+from common.agent_support import (
+    child_envelope,
+    evidence,
+    finish,
+    identifier,
+    journal_lines,
+    money,
+    mutate,
+    number,
+    rows,
+)
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
-from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
+from common.source_repository import (  # noqa: F401 -- fixture_mode: PR #16's HUMAN_APPROVER_ID branch
+    SourceRepository,
+    SourceUnavailable,
+    fixture_mode,
+    source_fixtures_only,
+)
+from common.workings import refs_for, working
+
+
+def journal_working(label: str, lines: list[dict], debit: Decimal, credit: Decimal) -> dict:
+    inputs = {f"{line.get('account', 'line')}_{i + 1}": {"debit": line.get("debit", 0), "credit": line.get("credit", 0)}
+              for i, line in enumerate(lines)}
+    return working(label, "sum(debits) == sum(credits)", inputs, {"debits": debit, "credits": credit,
+                   "balanced": bool(lines) and debit == credit}, unit="text", basis="P-006")
 
 
 class ControllerAgent(FreightAgent):
@@ -15,7 +38,7 @@ class ControllerAgent(FreightAgent):
 
     async def approval(self, env, task_id, source, action, target_id, amount):
         approval_id = identifier(task_id, "approval:" + action + ":" + target_id)
-        stored = [] if fixture_mode() else await rows(self.name, "approval", "id", approval_id)
+        stored = [] if source_fixtures_only() else await rows(self.name, "approval", "id", approval_id)
         if stored:
             approval = stored[0]
             if approval.get("decision") == "rejected":
@@ -51,12 +74,13 @@ class ControllerAgent(FreightAgent):
                 "paid_amount": number(paid), "already_paid": paid >= money(source["invoice_amount"])},
                 evidence_refs=refs)
         if env.task_type == "reconcile":
-            lines = source.get("journal_lines", [])
+            lines = journal_lines(source.get("journal_lines", []))
             debit = sum((money(line.get("debit", 0)) for line in lines), Decimal(0))
             credit = sum((money(line.get("credit", 0)) for line in lines), Decimal(0))
             return await finish(self, env, task_id, outcome="verified" if lines and debit == credit else "unverified",
                                 findings={"debits": number(debit), "credits": number(credit),
-                                          "balanced": bool(lines) and debit == credit},
+                                          "balanced": bool(lines) and debit == credit,
+                                          "workings": [journal_working("Journal balances", lines, debit, credit)]},
                                 policy_ids=["P-006"], evidence_refs=refs)
         if env.task_type == "approve_entry":
             request_ids = env.subject.get("request_ids")
@@ -68,7 +92,7 @@ class ControllerAgent(FreightAgent):
             # Resolve every request before posting any, so a missing one cannot leave a partial batch.
             requests = []
             for request_id in request_ids:
-                if fixture_mode():
+                if source_fixtures_only():
                     recorded = [*source.get("journal_requests", []), *filter(None, [source.get("journal_request")])]
                     found = [item for item in recorded if item.get("id") == request_id][:1]
                 else:
@@ -76,7 +100,7 @@ class ControllerAgent(FreightAgent):
                 if not found or found[0].get("id") != request_id or found[0].get("case_id") != env.case_id:
                     raise SourceUnavailable("matching source journal request was not found")
                 requests.append(found[0])
-            entries, policy_ids = [], set()
+            entries, policy_ids, workings = [], set(), []
             for request in requests:
                 entry = {"request_id": request["id"]}
                 if request.get("posted_entry_id"):
@@ -85,9 +109,13 @@ class ControllerAgent(FreightAgent):
                     entry.update(outcome="reject", reason="requester is approver")
                     policy_ids.add("P-005")
                 else:
+                    lines = journal_lines(request["lines"])
+                    debit = sum((money(line.get("debit", 0)) for line in lines), Decimal(0))
+                    credit = sum((money(line.get("credit", 0)) for line in lines), Decimal(0))
+                    workings.append(journal_working(f"Entry {request['id'][:12]} balances", lines, debit, credit))
                     journal = await mutate(self, env, task_id, "post_journal_entry", {
                         "id": identifier(request["id"], "journal"), "request_id": request["id"],
-                        "lines": request["lines"], "period": request["period"],
+                        "lines": lines, "period": request["period"],
                         "requested_by": request["requested_by"],
                     })
                     entry.update(outcome="approve" if journal.get("decision", "allow") == "allow" else "reject",
@@ -97,7 +125,8 @@ class ControllerAgent(FreightAgent):
             outcomes = {entry["outcome"] for entry in entries}
             outcome = "reject" if outcomes == {"reject"} else "partial" if "reject" in outcomes else \
                 "approve" if "approve" in outcomes else "verified"
-            return await finish(self, env, task_id, outcome=outcome, findings={"entries": entries},
+            return await finish(self, env, task_id, outcome=outcome,
+                                findings={"entries": entries, "workings": workings},
                                 policy_ids=sorted(policy_ids), evidence_refs=refs)
         if env.task_type != "review_hold":
             raise ValueError("unsupported Settlement Approvals skill")
@@ -116,7 +145,7 @@ class ControllerAgent(FreightAgent):
             hold_id = env.subject.get("hold_id")
             if not isinstance(hold_id, str) or not hold_id:
                 raise SourceUnavailable("release_hold requires a stored hold reference")
-            holds = source.get("holds", []) if fixture_mode() else await rows(self.name, "hold", "id", hold_id)
+            holds = source.get("holds", []) if source_fixtures_only() else await rows(self.name, "hold", "id", hold_id)
             holds = [hold for hold in holds if hold.get("id") == hold_id and hold.get("case_id") == env.case_id]
             if not holds:
                 raise SourceUnavailable("hold does not exist for this case")
@@ -139,11 +168,25 @@ class ControllerAgent(FreightAgent):
             return await finish(self, env, task_id, outcome="approve" if released.get("decision", "allow") == "allow"
                                 else "unverified", findings={"release": released},
                                 evidence_refs=refs)
-        unsupported = money(audit_charges(source)["unsupported_amount"])
-        if amount <= contract * Decimal("1.02") and not unsupported and not source.get("bank_change_requested"):
-            return await finish(self, env, task_id, outcome="clear", findings={"hold_required": False},
-                                evidence_refs=refs)
-        hold_amount = amount if source.get("bank_change_requested") else max(amount - contract, unsupported)
+        charges = audit_charges(source)
+        unsupported = money(charges["unsupported_amount"])
+        bank = bool(source.get("bank_change_requested"))
+        workings = charge_workings(source, charges)
+        workings.append(working("Hold required", "bank_change or invoice_amount > contract_rate * 1.02 or unsupported > 0",
+                                {"bank_change": bank, "invoice_amount": amount, "contract_rate": contract,
+                                 "unsupported": unsupported},
+                                bank or amount > contract * Decimal("1.02") or unsupported > 0, unit="bool",
+                                evidence_refs=refs_for(source, "invoice_amount", "contract_rate"),
+                                basis="P-001/P-004"))
+        if amount <= contract * Decimal("1.02") and not unsupported and not bank:
+            return await finish(self, env, task_id, outcome="clear",
+                                findings={"hold_required": False, "workings": workings}, evidence_refs=refs)
+        hold_amount = amount if bank else max(amount - contract, unsupported)
+        workings.append(working("Amount to hold", "invoice_amount if bank_change else max(invoice_amount - contract_rate, unsupported)",
+                                {"bank_change": bank, "invoice_amount": amount, "contract_rate": contract,
+                                 "unsupported": unsupported}, hold_amount,
+                                evidence_refs=refs_for(source, "invoice_amount", "contract_rate"),
+                                basis="hold only the disputed money; the undisputed amount still waits on P-002"))
         reason = "UNVERIFIED_BANK_CHANGE" if source.get("bank_change_requested") else "UNSUPPORTED_ACCESSORIAL"
         hold = await mutate(self, env, task_id, "place_hold", {
             "id": identifier(task_id, "hold"), "invoice_id": source["invoice_id"],
@@ -161,7 +204,7 @@ class ControllerAgent(FreightAgent):
                                  "source_evidence": refs}, "outcome": "hold", "source_case": env.case_id,
             })
         return await finish(self, env, task_id, outcome="hold", findings={"hold": hold, "cash_impact": cash,
-                            "hold_amount": number(hold_amount), "payment_blocked": True},
+                            "hold_amount": number(hold_amount), "payment_blocked": True, "workings": workings},
                             policy_ids=["P-004"] if source.get("bank_change_requested") else ["P-001", "P-002"],
                             evidence_refs=refs)
 

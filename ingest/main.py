@@ -740,19 +740,24 @@ async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict,
         events = await handle(json.loads(raw), db)
         if exporter is not None:
             exporter.changed()
-        routed = mirror is not None and not mirror.disabled and spacetime_mirror.routed_case_ids(events)
+        routed = spacetime_mirror.routed_case_ids(events)
+        mirrored = bool(routed) and mirror is not None and not mirror.disabled
         exported = exporter is not None and any(
             event.get("type") != "document.extracted" and (event.get("payload") or {}).get("case_id")
             for event in events)
-        if routed or exported:
-            # Agents read the case's source record and write against its SpacetimeDB rows as soon as the router
-            # admits it, so all of them land first. A failed mirror write leaves the entry unacked; its retry
-            # resends the same write IDs, which the module treats as no-ops, and skips source records that landed.
+        if routed and (mirrored or exporter is not None):
+            # Agents read the case (its source record, or the export with the mirror off) and write against its
+            # SpacetimeDB rows as soon as the router admits it, so all of them land first. A failed mirror write
+            # leaves the entry unacked; its retry resends the same write IDs, which the module treats as no-ops,
+            # and skips the source records and directory writes that already landed.
             dataset = source_export.build(db)
-            if routed:
+            if mirrored:
                 await mirror.cases(dataset, events)
-            if exported:
+            if exporter is not None:
                 exporter.flush(db, dataset)
+        elif exported:
+            # TMS progress on a case nobody is routed to yet only needs the export fresh within a bounded delay.
+            exporter.flush_if_due(db)
         for event in events:
             stream = DOCUMENTS_STREAM if event.get("type") == "document.extracted" else EVENTS_STREAM
             await r.xadd(stream, {"json": json.dumps(event, default=str)},

@@ -1,0 +1,87 @@
+{
+  "generated_at": "2026-10-24T23:30:57.553902+00:00",
+  "model": "native-image_gen",
+  "transparent": true,
+  "characters": {
+    "intake": {
+      "idle": "/mascots/intake/idle.png",
+      "idle_small": "/mascots/intake/idle@320.png",
+      "working": "/mascots/intake/working.png",
+      "working_small": "/mascots/intake/working@320.png",
+      "alert": "/mascots/intake/alert.png",
+      "alert_small": "/mascots/intake/alert@320.png"
+    },
+    "carrier_ap": {
+      "idle": "/mascots/carrier_ap/idle.png",
+      "idle_small": "/mascots/carrier_ap/idle@320.png",
+      "working": "/mascots/carrier_ap/working.png",
+      "working_small": "/mascots/carrier_ap/working@320.png",
+      "alert": "/mascots/carrier_ap/alert.png",
+      "alert_small": "/mascots/carrier_ap/alert@320.png"
+    },
+    "documents": {
+      "idle": "/mascots/documents/idle.png",
+      "idle_small": "/mascots/documents/idle@320.png",
+      "working": "/mascots/documents/working.png",
+      "working_small": "/mascots/documents/working@320.png",
+      "alert": "/mascots/documents/alert.png",
+      "alert_small": "/mascots/documents/alert@320.png"
+    },
+    "risk": {
+      "idle": "/mascots/risk/idle.png",
+      "idle_small": "/mascots/risk/idle@320.png",
+      "working": "/mascots/risk/working.png",
+      "working_small": "/mascots/risk/working@320.png",
+      "alert": "/mascots/risk/alert.png",
+      "alert_small": "/mascots/risk/alert@320.png"
+    },
+    "verification": {
+      "idle": "/mascots/verification/idle.png",
+      "idle_small": "/mascots/verification/idle@320.png",
+      "working": "/mascots/verification/working.png",
+      "working_small": "/mascots/verification/working@320.png",
+      "alert": "/mascots/verification/alert.png",
+      "alert_small": "/mascots/verification/alert@320.png"
+    },
+    "controller": {
+      "idle": "/mascots/controller/idle.png",
+      "idle_small": "/mascots/controller/idle@320.png",
+      "working": "/mascots/controller/working.png",
+      "working_small": "/mascots/controller/working@320.png",
+      "alert": "/mascots/controller/alert.png",
+      "alert_small": "/mascots/controller/alert@320.png"
+    },
+    "voice_desk": {
+      "idle": "/mascots/voice_desk/idle.png",
+      "idle_small": "/mascots/voice_desk/idle@320.png",
+      "working": "/mascots/voice_desk/working.png",
+      "working_small": "/mascots/voice_desk/working@320.png",
+      "alert": "/mascots/voice_desk/alert.png",
+      "alert_small": "/mascots/voice_desk/alert@320.png"
+    },
+    "cfo": {
+      "idle": "/mascots/cfo/idle.png",
+      "idle_small": "/mascots/cfo/idle@320.png",
+      "working": "/mascots/cfo/working.png",
+      "working_small": "/mascots/cfo/working@320.png",
+      "alert": "/mascots/cfo/alert.png",
+      "alert_small": "/mascots/cfo/alert@320.png"
+    },
+    "validator": {
+      "idle": "/mascots/validator/idle.png",
+      "idle_small": "/mascots/validator/idle@320.png",
+      "working": "/mascots/validator/working.png",
+      "working_small": "/mascots/validator/working@320.png",
+      "alert": "/mascots/validator/alert.png",
+      "alert_small": "/mascots/validator/alert@320.png"
+    },
+    "shipper_ar": {
+      "idle": "/mascots/shipper_ar/idle.png",
+      "idle_small": "/mascots/shipper_ar/idle@320.png",
+      "working": "/mascots/shipper_ar/working.png",
+      "working_small": "/mascots/shipper_ar/working@320.png",
+      "alert": "/mascots/shipper_ar/alert.png",
+      "alert_small": "/mascots/shipper_ar/alert@320.png"
+    }
+  }
+}

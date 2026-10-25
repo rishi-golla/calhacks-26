@@ -14,7 +14,7 @@ from typing import Any
 from common.agent_support import child_envelope, evidence, money, number, rows
 from common.config import AGENTS, CALL_PURPOSES, SKILL_OWNER
 from common.envelope import DelegationMeta, TaskEnvelope
-from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
+from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode, source_fixtures_only
 
 
 @dataclass(frozen=True)
@@ -106,10 +106,30 @@ async def read_settlement_state(ctx: ToolContext, arguments: dict) -> dict:
     result = {}
     for table, fixture_key in (("hold", "holds"), ("payment_proposal", "payment_proposals"),
                                ("approval", "approvals")):
-        result[fixture_key] = source.get(fixture_key, []) if fixture_mode() else await rows(
+        result[fixture_key] = source.get(fixture_key, []) if source_fixtures_only() else await rows(
             ctx.agent.name, table, "case_id", ctx.env.case_id)
     result["paid_amount"] = source.get("paid_amount", 0)
     return _with_refs(source, ctx, result)
+
+
+async def find_similar_cases(ctx: ToolContext, arguments: dict) -> dict:
+    """Advisory recall of resolved precedents and lessons; never authorizes or changes an outcome."""
+    from common import agent_recall
+
+    source = await _source(ctx)
+    if not agent_recall.enabled():
+        return _with_refs(source, ctx, {"available": False, "cases": [],
+                                        "missing_configuration": ["ELASTIC_CLOUD_URL",
+                                                                  "ELASTIC_AGENT_MEMORY_READER_KEY"]})
+    dispute = source.get("dispute")
+    text = " ".join(str(v) for v in (source.get("claim_type"), source.get("lane"),
+                                     dispute if isinstance(dispute, str) else "") if v)
+    cases = await agent_recall.similar_cases(
+        carrier_id=str(source.get("carrier_id") or ""), claim_type=str(source.get("claim_type") or ""),
+        lane=str(source.get("lane") or ""), skill=ctx.env.task_type, text=text)
+    # A case never counts as its own precedent.
+    cases = [c for c in cases if c.get("case_id") != ctx.env.case_id]
+    return _with_refs(source, ctx, {"available": True, "cases": cases})
 
 
 def _matched_deposits(source: dict) -> tuple[list[dict], Decimal]:
@@ -174,7 +194,7 @@ async def read_credit_evidence(ctx: ToolContext, arguments: dict) -> dict:
 
 async def inspect_journal(ctx: ToolContext, arguments: dict) -> dict:
     source = await _source(ctx)
-    requests = source.get("journal_requests", []) if fixture_mode() else await rows(
+    requests = source.get("journal_requests", []) if source_fixtures_only() else await rows(
         ctx.agent.name, "journal_request", "case_id", ctx.env.case_id)
     lines = source.get("journal_lines", [])
     debit = sum((money(line.get("debit", 0)) for line in lines), Decimal(0))
@@ -467,17 +487,17 @@ async def delegate_specialist(ctx: ToolContext, arguments: dict) -> dict:
 # narrow source/state contract; neither arbitrary SQL nor a generic mutation exists.
 _ROLE_TOOLS = {
     "carrier_ap": (match_carrier_invoice, find_duplicate_invoices, inspect_document_packet,
-                   read_settlement_state, audit_accessorials),
+                   read_settlement_state, audit_accessorials, find_similar_cases),
     "shipper_ar": (match_customer_deposits, read_credit_evidence, inspect_journal, read_verified_directory,
                    inspect_company_website, inspect_outreach_readiness),
     "cfo": (calculate_load_margin, calculate_cash_exposure, read_settlement_state),
     "risk": (audit_accessorials, find_duplicate_invoices, inspect_document_packet, inspect_verification_evidence,
-             lookup_carrier_authority),
-    "controller": (read_settlement_state, inspect_journal, audit_accessorials),
+             lookup_carrier_authority, find_similar_cases),
+    "controller": (read_settlement_state, inspect_journal, audit_accessorials, find_similar_cases),
     "verification": (read_verified_directory, inspect_verification_evidence, inspect_document_packet,
                      lookup_carrier_authority, inspect_company_website, inspect_outreach_readiness),
     "voice_desk": (read_verified_directory, read_inbound_transcript, inspect_outreach_readiness),
-    "validator": (inspect_review_target, check_review_quality),
+    "validator": (inspect_review_target, check_review_quality, find_similar_cases),
     "documents": (inspect_document_packet, read_verified_directory, inspect_company_website, inspect_outreach_readiness),
 }
 _DESCRIPTIONS = {
@@ -504,6 +524,8 @@ _DESCRIPTIONS = {
                                "Discovered contacts remain unverified; do not dial or email them directly.",
     "inspect_outreach_readiness": "Check Cartesia configuration for this role's call purpose without placing a call "
                                   "or exposing credentials. Actual calls use the guarded assigned workflow.",
+    "find_similar_cases": "Recall resolved precedents and approved lessons for this carrier, claim type and lane "
+                          "from shared agent memory. Advisory: cite them, but the guarded workflow decides.",
     "integration_availability": "Report actual external connector availability and missing configuration names, never keys.",
 }
 

@@ -236,10 +236,14 @@ async def test_failed_write_leaves_the_entry_unacked_and_the_retry_resends_ident
     finally:
         db.close()
     assert redis.acked[-1] == "retry-0" and not spacetime.rejected
-    # Writes that landed before the failure replay as no-ops with the same write_id and payload, except source
-    # records: their digests are cached, so only dataset:meta (a new generated_at) is written again.
-    assert {payload["write_id"]: payload for _kind, name, payload in failed if name != SOURCE} == \
+    # Case writes that landed before the failure replay as no-ops with the same write_id and payload. Directory
+    # writes the module acknowledged are not resent by this process, and source records are skipped by digest, so
+    # only dataset:meta (a new generated_at) is written again.
+    directory = spacetime_mirror.DIRECTORY_REDUCERS
+    assert any(name in directory for _kind, name, _payload in failed)
+    assert {payload["write_id"]: payload for _kind, name, payload in failed if name not in {SOURCE, *directory}} == \
         {payload["write_id"]: payload for kind, _name, payload in retried if kind == "noop"}
+    assert not [name for _kind, name, _payload in retried if name in directory]
     assert {name for kind, name, _payload in retried if kind == "write"} == {"upsert_invoice", SOURCE}
     assert [payload["id"] for _kind, name, payload in retried if name == SOURCE] == ["dataset:meta"]
     assert spacetime.row("upsert_invoice", next(iter(spacetime.writes("upsert_invoice")))["id"])["case_id"] == \

@@ -345,6 +345,10 @@ class Enrichment:
         return self.cache[company["id"]]
 
 
+DIRECTORY_REDUCERS = {"upsert_company", "upsert_contact"}
+SENT_DIRECTORY_WRITES_MAX = 20_000
+
+
 class Mirror:
     def __init__(self, client: SpacetimeClient | None = None, enrichment: Enrichment | None = None,
                  digests: SourceDigests | None = None):
@@ -354,6 +358,10 @@ class Mirror:
         # Bounds the concurrent requests of one case's writes and of a source-dataset pass.
         self.gate = asyncio.Semaphore(DIRECTORY_CONCURRENCY)
         self.background: set[asyncio.Task] = set()
+        # Directory write IDs this process has already had acknowledged. Every case re-mirrors its carrier and
+        # shipper; the module treats an identical write ID as a no-op, but under load the round trips were most of
+        # ingest's time per case. Case and invoice writes are never skipped, so a retry still resends them.
+        self._sent_directory: dict[str, None] = {}
         self.backlog: dict[str, dict] = {}  # source records of the last export not mirrored yet
         self.rejected: dict[str, str] = {}  # id -> digest the module refused; resent once the record changes
         self.retry_s, self.retry_at = 1.0, 0.0
@@ -364,7 +372,15 @@ class Mirror:
         return self.client.disabled
 
     async def write(self, reducer: str, key: str, payload: dict) -> None:
-        await self.client.mutate(reducer, {"write_id": write_id(reducer, key, payload), **payload})
+        identifier = write_id(reducer, key, payload)
+        directory_write = reducer in DIRECTORY_REDUCERS
+        if directory_write and identifier in self._sent_directory:
+            return
+        await self.client.mutate(reducer, {"write_id": identifier, **payload})
+        if directory_write:
+            self._sent_directory[identifier] = None
+            if len(self._sent_directory) > SENT_DIRECTORY_WRITES_MAX:
+                del self._sent_directory[next(iter(self._sent_directory))]
 
     async def put_source(self, record: dict, stop: list | None = None) -> bool:
         """Write one source record unless SpacetimeDB already holds its digest; False when skipped. A write that

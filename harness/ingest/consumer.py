@@ -104,9 +104,10 @@ async def _telemetry(entry_id, ev: dict, res: dict, received_ms: int, pins: Disp
         prior = res.get("prior") or res.get("dispatch") or {}
         if prior.get("agent") and prior.get("skill"):   # only a routed (queued or accepted) event has a route
             # A queued event's task is created later by the dispatch worker, so the router may not know it.
-            await record_dispatch(entry_id, ev, "duplicate", "re-delivered event", agent=prior["agent"],
-                                  skill=prior["skill"], task_id=prior.get("task_id") or "", received_ms=received_ms,
-                                  pins=pins)
+            # `reason` is intake memory's P-007 duplicate (another event); otherwise Redis delivered it again.
+            await record_dispatch(entry_id, ev, "duplicate", res.get("reason") or "re-delivered event",
+                                  agent=prior["agent"], skill=prior["skill"], task_id=prior.get("task_id") or "",
+                                  received_ms=received_ms, pins=pins)
     elif status == "triage":
         await record_dispatch(entry_id, ev, "triage", reason, received_ms=received_ms, pins=pins)
     elif status == "not_routed" and ev.get("type") != "gps.ping":

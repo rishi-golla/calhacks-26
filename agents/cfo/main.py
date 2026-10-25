@@ -6,6 +6,7 @@ from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
 from common.source_repository import SourceRepository, SourceUnavailable
+from common.workings import refs_for, working
 
 
 class CfoAgent(FreightAgent):
@@ -45,12 +46,33 @@ class CfoAgent(FreightAgent):
         revenue = money(source.get("shipper_invoice_amount"))
         cost = money(source.get("invoice_amount"))
         contract = money(source.get("contract_rate"))
+        revenue_refs = refs_for(source, "shipper_invoice_amount")
+        cost_refs = refs_for(source, "invoice_amount", "contract_rate")
         findings = {"load_id": source.get("load_id"), "revenue": number(revenue),
                     "invoiced_carrier_cost": number(cost), "contracted_carrier_cost": number(contract),
                     "invoiced_margin": number(revenue - cost), "contracted_margin": number(revenue - contract),
                     "expected_collections": number(incoming), "outstanding_carrier_cost": number(outgoing),
                     "net_cash": number(net), "period": period,
-                    "assumptions": ["Outstanding invoices are included at face value; holds do not erase obligations."]}
+                    "assumptions": ["Outstanding invoices are included at face value; holds do not erase obligations."],
+                    "workings": [
+                        working("Margin as invoiced", "revenue - invoiced_carrier_cost",
+                                {"revenue": revenue, "invoiced_carrier_cost": cost}, revenue - cost,
+                                evidence_refs=revenue_refs + cost_refs, basis="load profitability"),
+                        working("Margin at contract", "revenue - contracted_carrier_cost",
+                                {"revenue": revenue, "contracted_carrier_cost": contract}, revenue - contract,
+                                evidence_refs=revenue_refs + cost_refs, basis="load profitability"),
+                        working("Expected collections", "sum(receivable amount - collected)",
+                                {f"receivable_{i + 1}": {"amount": r["amount"], "collected": r.get("collected", 0)}
+                                 for i, r in enumerate(receivables)}, incoming,
+                                evidence_refs=revenue_refs, basis="open AR at face value"),
+                        working("Outstanding carrier cost", "sum(payable amount - paid)",
+                                {f"payable_{i + 1}": {"amount": p["amount"], "paid": p.get("paid", 0)}
+                                 for i, p in enumerate(payables)}, outgoing,
+                                evidence_refs=cost_refs, basis="open AP at face value; holds do not erase obligations"),
+                        working("Net cash on this load", "expected_collections - outstanding_carrier_cost",
+                                {"expected_collections": incoming, "outstanding_carrier_cost": outgoing}, net,
+                                evidence_refs=revenue_refs + cost_refs, basis="cash forecast"),
+                    ]}
         receipts = []
         # Store cash-flow components; the derived net is not another cash flow.
         for category, amount in (("collections", incoming), ("carrier_payables", -outgoing)):

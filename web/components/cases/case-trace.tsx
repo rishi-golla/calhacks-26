@@ -383,17 +383,23 @@ const EFFECT_TONE: Record<string, string> = {
 };
 
 function SideEffects({ trace, cursor, onSelect }: { trace: Trace; cursor: number; onSelect: (id: string) => void }) {
-  const items = trace.sideEffects
-    .filter((s) => s.kind !== "forecast")
-    .map((s) => ({ s, status: sideEffectAt(s, cursor) }))
-    .filter((x) => x.status);
-  if (!items.length) return null;
+  const all = trace.sideEffects.filter((s) => s.kind !== "forecast");
+  // Hidden only for a case that never touches the ledger, so replay does not shift the page when the first entry lands.
+  if (!all.length) return null;
+  const items = all.map((s) => ({ s, status: sideEffectAt(s, cursor) })).filter((x) => x.status);
   return (
     <div className="ct-effects" aria-label="Ledger">
       <span className="fl-section ct-effects-label" style={{ "--accent": "var(--yellow)" } as CSSProperties}>
         Ledger
       </span>
       <div className="ct-effects-list">
+        {/* Before the first entry lands (replay), an invisible chip holds the strip at its full height. */}
+        {!items.length && (
+          <span className="ct-effect" aria-hidden style={{ visibility: "hidden" }}>
+            <span className="fl-num">$0</span>
+            <span className="fl-chip outline ct-mini-chip">posted</span>
+          </span>
+        )}
         {items.map(({ s, status }) => {
           const target = s.kind === "approval" ? `human:${String(s.row.id)}` : trace.nodeById.has(s.taskId) ? s.taskId : "";
           const amount = sideEffectAmountAt(s, cursor);

@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from agents.carrier_ap.tools import deposit_inputs
 from agents.shipper_ar.card import DESCRIPTIONS
 from common.agent_support import child_envelope, evidence, finish, identifier, money, mutate, number, rows
 from common.envelope import DelegationMeta, TaskEnvelope
@@ -48,14 +49,15 @@ class ShipperArAgent(FreightAgent):
             seen.add(deposit_id)
             total += money(deposit.get("amount"))
         balance = owed - total
-        applied = {str(deposit["id"]): number(money(deposit["amount"])) for deposit in matched}
+        applied = deposit_inputs(matched)
         invoice_refs = refs_for(source, "shipper_invoice_amount")
         findings = {"shipper_invoice_id": invoice_id, "invoice_amount": number(owed),
                     "matched_amount": number(total), "balance": number(balance),
                     "matched_deposit_ids": sorted(seen),
                     "unmatched_deposit_ids": [item.get("id") for item in deposits if item not in matched],
                     "workings": [
-                        working("Cash applied to this invoice", " + ".join(applied) if applied else "0", applied, total,
+                        working("Cash applied to this invoice (" + ", ".join(sorted(seen)) + ")",
+                                " + ".join(applied) if applied else "0", applied, total,
                                 evidence_refs=invoice_refs, basis="each deposit applies once, to its own invoice"),
                         working("Open balance", "shipper_invoice_amount - matched_amount",
                                 {"shipper_invoice_amount": owed, "matched_amount": total}, balance,

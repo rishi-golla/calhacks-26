@@ -1,4 +1,5 @@
 """Deterministic carrier-settlement checks against a source bundle."""
+import re
 from datetime import datetime
 from decimal import Decimal
 
@@ -44,15 +45,29 @@ def three_way_match(subject: dict) -> dict:
             "reason": "invoice exceeds the agreed rate tolerance" if above_tolerance else "source matching"}
 
 
+def input_name(raw: str, index: int) -> str:
+    """A formula identifier (letters, digits, underscores) so the dashboard can substitute and recompute."""
+    name = re.sub(r"[^a-z0-9_]+", "_", str(raw).lower()).strip("_")
+    if not name or name[0].isdigit():
+        name = f"line_{index}"
+    return name
+
+
 def line_inputs(line_items: list[dict]) -> dict[str, float]:
     """One named input per invoice line; repeated kinds get a position suffix."""
     inputs: dict[str, float] = {}
     for index, item in enumerate(line_items, start=1):
-        name = str(item.get("kind") or item.get("desc") or f"line_{index}").replace(" ", "_").lower()
+        name = input_name(item.get("kind") or item.get("desc") or f"line_{index}", index)
         if name in inputs:
             name = f"{name}_{index}"
         inputs[name] = number(money(item.get("amount"), signed=True))
     return inputs
+
+
+def deposit_inputs(deposits: list[dict]) -> dict[str, float]:
+    """Deposit amounts under formula-safe names; the deposit IDs belong in the label, not the formula."""
+    return {f"deposit_{index}": number(money(deposit.get("amount")))
+            for index, deposit in enumerate(deposits, start=1)}
 
 
 def match_workings(source: dict, match: dict) -> list[dict]:

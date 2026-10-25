@@ -383,7 +383,11 @@ export function recheckWorking(w: Pick<Working, "formula" | "inputs" | "result" 
   }
   const s = toNumber(stated);
   if (s === null) return { status: "unchecked" };
-  const tol = w.unit === "usd" ? 0.005 : Math.max(1e-6, Math.abs(s) * 1e-6);
+  // Agents publish results rounded to display precision (cents, 0.01 h); a stated value that
+  // matches the recomputation once rounded the same way is a match, not an accusation.
+  const tol = w.unit === "usd" || w.unit === "h" || w.unit === "min" || w.unit === "mi" || w.unit === "ratio"
+    ? 0.005
+    : Math.max(1e-6, Math.abs(s) * 1e-6);
   return { status: Math.abs(s - computed) <= tol ? "match" : "mismatch", computed };
 }
 

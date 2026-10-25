@@ -754,7 +754,7 @@ test("task details carry shown work, bounded and sanitized", () => {
   const working = {
     label: "Delta vs contract",
     formula: "invoice_amount - contract_rate",
-    inputs: { invoice_amount: 2150, contract_rate: 2000, dispatcher_phone: "+1 775 555 0112" },
+    inputs: { invoice_amount: 2150, contract_rate: 2000, dispatcher_phone: "+1 775 555 0112", bank_change: true, account_1: 5 },
     result: 150,
     unit: "usd",
     evidence_refs: ["doc:INV-LD-1", "doc:RC-LD-1"],
@@ -766,7 +766,8 @@ test("task details carry shown work, bounded and sanitized", () => {
   assert.equal(workings.length, 1);
   assert.equal(workings[0].label, "Delta vs contract");
   assert.deepEqual(workings[0].evidence_refs, ["doc:INV-LD-1", "doc:RC-LD-1"]);
-  assert.deepEqual(workings[0].inputs, { invoice_amount: 2150, contract_rate: 2000, dispatcher_phone: "[redacted]" });
+  // Numbers and booleans are the arithmetic itself and stay visible even under sensitive-looking keys.
+  assert.deepEqual(workings[0].inputs, { invoice_amount: 2150, contract_rate: 2000, dispatcher_phone: "[redacted]", bank_change: true, account_1: 5 });
   snapshot.task = [{ ...task }];
   assert.equal((buildAgentMessages(snapshot)[0].details as Row).workings, undefined);
 });

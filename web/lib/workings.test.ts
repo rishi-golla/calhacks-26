@@ -125,6 +125,9 @@ test("recheckWorking compares the stated result", () => {
   assert.deepEqual(recheckWorking(delta), { status: "match", computed: 150 });
   assert.equal(recheckWorking({ ...delta, result: 140 }).status, "mismatch");
   assert.equal(recheckWorking({ ...delta, result: 150.004 }).status, "match");
+  // Agents round hours to 0.01; a correctly rounded result is a match, not an accusation.
+  assert.equal(recheckWorking({ formula: "max(d - f, 0) / 60", inputs: { d: 200, f: 120 }, result: 1.33, unit: "h" }).status, "match");
+  assert.equal(recheckWorking({ formula: "max(d - f, 0) / 60", inputs: { d: 200, f: 120 }, result: 1.4, unit: "h" }).status, "mismatch");
   assert.equal(recheckWorking({ formula: "a <= b", inputs: { a: 1, b: 2 }, result: true, unit: "bool" }).status, "match");
   assert.equal(recheckWorking({ formula: "a <= b", inputs: { a: 3, b: 2 }, result: true, unit: "bool" }).status, "mismatch");
   assert.equal(recheckWorking({ formula: "lookup(carrier)", inputs: {}, result: "ACTIVE", unit: "text" }).status, "unchecked");

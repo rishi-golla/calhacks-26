@@ -89,7 +89,7 @@ async def test_controller_cfo_and_ar_show_their_formulas():
         {"id": "D-1", "invoice_id": "AR-1", "shipper_id": "S-OTHER", "amount": 1000}])
     applied = await run_handler(ShipperArAgent, "reconcile_customer_payment", receivable, delegate=delegate)
     items = {w["label"]: w for w in applied.findings["workings"]}
-    assert items["Cash applied to this invoice"]["inputs"] == {"D-1": 1000}
+    assert items["Cash applied to this invoice (D-1)"]["inputs"] == {"deposit_1": 1000}
     assert items["Open balance"]["result"] == 600
 
 

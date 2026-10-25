@@ -8,13 +8,15 @@ stored for the dashboard.
 """
 from __future__ import annotations
 
+import asyncio
 import difflib
 import json
+import re
 from decimal import Decimal
 
 from pydantic import ValidationError
 
-from agents.carrier_ap.tools import duplicate_invoices, match_workings, three_way_match
+from agents.carrier_ap.tools import deposit_inputs, duplicate_invoices, match_workings, three_way_match
 from agents.documents.tools import check_packet
 from agents.risk.tools import audit_charges, charge_workings
 from common.agent_support import identifier, matched_deposit_total, money
@@ -129,9 +131,11 @@ async def load_review(env, db) -> dict:
         source = await SourceRepository().load(env)
     except SourceUnavailable as error:
         source = {"source_error": str(error)}
-    for key, table in LEDGER_TABLES:
-        source[key] = await lookup(db, table, "case_id", env.case_id)
-    history = await lookup(db, "audit_event", "task_id", str(target_id))
+    rows = await asyncio.gather(*(lookup(db, table, "case_id", env.case_id) for _, table in LEDGER_TABLES),
+                                lookup(db, "audit_event", "task_id", str(target_id)))
+    for (key, _), value in zip(LEDGER_TABLES, rows, strict=False):
+        source[key] = value
+    history = rows[-1]
     return {"target": target, "artifact": artifact, "source": source, "history": history,
             "flag": flag, "simulated": False}
 
@@ -222,9 +226,14 @@ def settlement_blockers(source: dict, match: dict) -> dict[str, bool]:
 
 def approval_checks(c: Checks, source: dict, approval_id, *, requested_by: str | None = None) -> None:
     """P-003: money above the threshold moves only on a decided human approval, never self-approved."""
-    c.add("approval_present", bool(approval_id), "human approval reference", approval_id, basis="P-003")
+    if not c.add("approval_present", bool(approval_id), "human approval reference", approval_id, basis="P-003"):
+        return
     row = next((item for item in source.get("approvals", []) if item.get("id") == approval_id), None)
     if row is None:
+        # Unverifiable means blocked: a reference the case's approval rows cannot resolve is not an approval.
+        # Fixture bundles that carry no approval table at all are recorded as advisory, not fabricated.
+        c.add("approval_resolved", False, "approval row in this case", approval_id, basis="P-003",
+              severity=ISSUE if "approvals" in source else ADVISORY)
         return
     c.add("approval_decided", row.get("decision") == "approved" and row.get("code_ok") is not False,
           "approved with a verified code", {"decision": row.get("decision"), "code_ok": row.get("code_ok")},
@@ -436,10 +445,11 @@ def review_shipper_ar(c: Checks, artifact: ResultArtifact, source: dict, skill: 
     total = sum((money(x["amount"]) for x in matched), Decimal(0))
     owed = money(source.get("shipper_invoice_amount"))
     balance = owed - total
-    applied = {str(x.get("id")): money(x["amount"]) for x in matched}
+    applied = deposit_inputs(matched)
     invoice_refs = refs_for(source, "shipper_invoice_amount")
     c.equal("matched_amount", total, findings.get("matched_amount"), work=working(
-        "Cash applied to this invoice", " + ".join(applied) if applied else "0", applied, total,
+        "Cash applied to this invoice (" + ", ".join(str(x.get("id")) for x in matched) + ")",
+        " + ".join(applied) if applied else "0", applied, total,
         evidence_refs=invoice_refs, basis="each deposit applies once, to its own invoice"))
     c.equal("balance", balance, findings.get("balance"), work=working(
         "Open balance", "shipper_invoice_amount - matched_amount", {"shipper_invoice_amount": owed, "matched_amount": total},
@@ -452,9 +462,11 @@ def review_shipper_ar(c: Checks, artifact: ResultArtifact, source: dict, skill: 
     c.add("outcome_matches_balance", outcome == expected or not_due, expected, outcome,
           basis="short pay is partial, overpayment is suspicious, settled is verified")
     if balance > 0 and total > 0:
-        c.add("short_pay_explained", bool(source.get("deduction_reason") or findings.get("outreach")
-                                          or findings.get("cash_impact")),
-              "deduction reason, collections contact or cash impact", False, severity=ADVISORY,
+        explanation = {"deduction_reason": source.get("deduction_reason"), "outreach": bool(findings.get("outreach")),
+                       "cash_impact": bool(findings.get("cash_impact"))}
+        c.add("short_pay_explained", bool(explanation["deduction_reason"] or explanation["outreach"]
+                                          or explanation["cash_impact"]),
+              "deduction reason, collections contact or cash impact", explanation, severity=ADVISORY,
               basis="a short pay needs a reason code or a collections follow-up")
     if skill == "reconcile_customer_payment" and total > 0:
         posted = bool(findings.get("controller"))
@@ -635,7 +647,9 @@ def grounded_issues(issues: list[str], checks: list[dict]) -> tuple[list[str], l
     mention is commentary, not a contradiction. Grounded issues add explanation to a failure
     the deterministic checks already established."""
     anchors = {item["name"] for item in checks if not item["ok"] and item.get("severity", ISSUE) == ISSUE}
-    grounded = [issue for issue in issues if any(anchor in issue for anchor in anchors)]
+    patterns = [re.compile(rf"(?<![A-Za-z0-9_]){re.escape(anchor)}(?![A-Za-z0-9_])", re.IGNORECASE)
+                for anchor in anchors]
+    grounded = [issue for issue in issues if any(pattern.search(issue) for pattern in patterns)]
     return grounded, [issue for issue in issues if issue not in grounded]
 
 

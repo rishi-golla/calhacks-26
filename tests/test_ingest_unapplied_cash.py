@@ -85,6 +85,9 @@ def test_unique_open_invoice_of_the_shipper_is_routed_for_review_not_applied():
         assert payload["invoices_applied"] == [] and payload["candidate_invoice_id"] == "SINV-L1"
         assert payload["match_basis"] == "shipper_and_amount" and payload["ingest_flags"] == ["reference_mismatch"]
         assert payload["shipper_id"] == "S-1" and payload["chase"] is False
+        assert payload["counterparty"] == "ACME FOODS" and payload["shipper_known"] is True
+        stored = json.loads(db.execute("SELECT json FROM deposits WHERE txn_id='BNK-1'").fetchone()[0])
+        assert stored["shipper_id"] is None and stored["candidate_shipper_id"] == "S-1"
         assert spacetime_mirror.routed_case_ids(derived) == ["CASE-L1-AR"]
 
         cases = source_export.build_cases(db)
@@ -177,6 +180,40 @@ def test_remittance_advice_po_breaks_a_tie():
         assert event["payload"]["case_id"] == "CASE-L2-AR"
         assert event["payload"]["match_basis"] == "shipper_and_amount_and_remittance_po"
         assert "mail:MAIL-9" in event["payload"]["evidence_refs"]
+    finally:
+        db.close()
+
+
+def test_remittance_advice_po_rules_out_a_lone_candidate_on_another_po():
+    db = connect()
+    try:
+        setup(db, [("L1", ACME, 1000.0)])
+        advice = {"mail_id": "MAIL-9", "body": "Payment of $1,000.00 sent via ACH for invoice SINV-MISSING-L7 (PO PO-L7)."}
+        ingest_main._remittance_advice({"event_id": "EVT-M"}, advice, db)
+        derived = run(db, [deposit("BNK-1", 1000.0, "SINV-MISSING-L7", "ACME FOODS")])
+        assert [event["type"] for event in routable(derived)] == ["bank.event"]
+        review = next(event["payload"] for event in derived if event["type"] == "document.extracted")
+        assert review["fields"]["reason"] == "ambiguous" and review["fields"]["candidate_invoice_ids"] == ["SINV-L1"]
+    finally:
+        db.close()
+
+
+def test_cash_whose_own_invoice_is_issued_later_is_not_counted_twice():
+    db = connect()
+    try:
+        setup(db, [("L1", ACME, 1000.0)])
+        run(db, [tendered("L2", ACME)])
+        # The cash names SINV-L2 before it is issued, so ingest offers it to the open SINV-L1 for review...
+        [first] = routable(run(db, [deposit("BNK-1", 1000.0, "SINV-L2", "ACME FOODS")]))
+        assert first["payload"]["case_id"] == "CASE-L1-AR" and first["payload"]["reference_mismatch"] is True
+        run(db, [issued("L2", ACME, 1000.0)])
+        # ...but once SINV-L2 exists the deposit is cash on its own invoice only.
+        cases = source_export.build_cases(db)
+        assert [item["id"] for item in cases["CASE-L2-AR"]["deposits"]] == ["BNK-1"]
+        assert "unapplied_deposits" not in cases["CASE-L1-AR"]
+        # SINV-L1 is open again and SINV-L2 is not: the next unreferenced $1,000 goes to SINV-L1.
+        [second] = routable(run(db, [deposit("BNK-2", 1000.0, "SINV-MISSING", "ACME FOODS")]))
+        assert second["payload"]["case_id"] == "CASE-L1-AR"
     finally:
         db.close()
 

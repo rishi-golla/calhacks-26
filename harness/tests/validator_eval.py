@@ -290,7 +290,7 @@ def flip_decision(row: dict, artifact: dict, source: dict) -> dict | None:
             return mutated
         return None
     if agent == "shipper_ar" and skill in {"reconcile_customer_payment", "chase_overdue"}:
-        flips = {"verified": "partial", "partial": "verified", "suspicious": "verified"}
+        flips = {"verified": "partial", "partial": "verified", "suspicious": "verified", "hold": "verified"}
         if outcome in flips:
             mutated["outcome"] = flips[outcome]
             return mutated

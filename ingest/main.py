@@ -504,17 +504,18 @@ def _unapplied_cash(db: sqlite3.Connection, txn_id: str, amount: float, counterp
                     reference: str | None) -> dict:
     """Match a deposit whose remittance reference names no shipper invoice the way a collections clerk applies
     unreferenced cash: the one open shipper invoice of the remitting shipper whose open balance is exactly this
-    amount; across every shipper only when the remitter is not a known shipper. Several candidates are narrowed by
-    the PO of a remittance advice that cited this reference. The result's `invoice` is None unless exactly one
-    invoice is left; the match is a candidate for review, never an applied payment."""
+    amount; across every shipper only when the remitter is not a known shipper. When a remittance advice cited this
+    reference with a PO, candidates on another PO are dropped, and none left is ambiguous. The result's `invoice` is
+    None unless exactly one invoice is left; the match is a candidate for review, never an applied payment."""
+    invoices = [json.loads(row) for (row,) in db.execute("SELECT json FROM shipper_invoices")]
+    invoice_ids = {invoice["invoice_id"] for invoice in invoices}
     applied: dict[str, int] = {}
     for (row,) in db.execute("SELECT json FROM deposits"):
         deposit = json.loads(row)
-        target = deposit.get("matched_invoice_id") or deposit.get("invoice_id")
+        target = source_export.candidate_target(deposit, invoice_ids)
         if deposit.get("id") != txn_id and target:
             applied[target] = applied.get(target, 0) + (_cents(deposit.get("amount")) or 0)
     paid = _cents(amount)
-    invoices = [json.loads(row) for (row,) in db.execute("SELECT json FROM shipper_invoices")]
     same_amount = []
     for invoice in invoices:
         billed = _cents(invoice.get("amount"))
@@ -530,14 +531,18 @@ def _unapplied_cash(db: sqlite3.Connection, txn_id: str, amount: float, counterp
         basis, candidates = "amount_only", same_amount
     advice = _read_json(db.execute("SELECT json FROM remittances WHERE reference=?", (reference,)).fetchone()) \
         if reference else None
-    if len(candidates) > 1 and advice:
-        narrowed = [invoice for invoice in candidates if _same_identifier(invoice.get("po"), (advice or {}).get("po"))]
-        if len(narrowed) == 1:
-            basis, candidates = f"{basis}_and_remittance_po", narrowed
-    return {"invoice": candidates[0] if len(candidates) == 1 else None, "basis": basis,
-            "shipper_known": known, "advice_refs": list((advice or {}).get("evidence_refs") or []),
+    po_conflict = False
+    if candidates and advice and advice.get("po"):
+        # The advice for this reference names a PO: a candidate on another PO is not this cash, even if alone.
+        narrowed = [invoice for invoice in candidates if _same_identifier(invoice.get("po"), advice["po"])]
+        basis, po_conflict = f"{basis}_and_remittance_po", not narrowed
+        candidates = narrowed or candidates
+    return {"invoice": candidates[0] if len(candidates) == 1 and not po_conflict else None, "basis": basis,
+            "shipper_known": known, "counterparty": counterparty,
+            "advice_refs": list((advice or {}).get("evidence_refs") or []),
             "candidate_invoice_ids": sorted(invoice["invoice_id"] for invoice in candidates),
-            "reason": "matched" if len(candidates) == 1 else "ambiguous" if candidates else "no_open_invoice"}
+            "reason": "ambiguous" if po_conflict or len(candidates) > 1 else
+                      "matched" if candidates else "no_open_invoice"}
 
 
 def _payment_event(trigger: dict, invoice: dict, line: str, txn_id: str | None, paid_amount: float,
@@ -562,6 +567,7 @@ def _payment_event(trigger: dict, invoice: dict, line: str, txn_id: str | None, 
     if match is not None:
         payload.update(
             reference_mismatch=True, invoices_applied=[], candidate_invoice_id=invoice_id,
+            counterparty=match["counterparty"], shipper_known=match["shipper_known"],
             match_basis=match["basis"], ingest_flags=["reference_mismatch"],
             review_reason=f"remittance reference {reference!r} matches no shipper invoice; {invoice_id} is the only "
                           f"open invoice matching by {match['basis'].replace('_', ' ')}. Unapplied cash: review "
@@ -635,8 +641,10 @@ def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
                        "counterparty": counterparty, "posted_at": trigger.get("sim_ts"), "file": filename}
             if match and match["invoice"]:
                 # Bank truth stays: the deposit keeps its own reference and is not cash on the candidate invoice.
-                deposit.update(shipper_id=(match["invoice"].get("shipper") or {}).get("id"), reference_mismatch=True,
-                               matched_invoice_id=match["invoice"]["invoice_id"], match_basis=match["basis"])
+                # shipper_id stays as the bank line gave it, so the cash never counts as this shipper's deposit.
+                deposit.update(candidate_shipper_id=(match["invoice"].get("shipper") or {}).get("id"),
+                               reference_mismatch=True, matched_invoice_id=match["invoice"]["invoice_id"],
+                               match_basis=match["basis"])
             db.execute("INSERT OR IGNORE INTO deposits(txn_id, invoice_id, json) VALUES (?,?,?)",
                        (txn_id, reference, _dump(deposit)))
         if not invoice and not (match and match["invoice"]):

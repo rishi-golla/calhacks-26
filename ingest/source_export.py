@@ -94,7 +94,16 @@ def _load_facts(load: dict, brokerage: str | None) -> dict:
     return facts
 
 
-def _receivable(shipper_invoice: dict | None, deposits: list[dict]) -> dict:
+def candidate_target(deposit: dict, invoice_ids: set[str]) -> str | None:
+    """The invoice a deposit is cash on: its own reference once that names a shipper invoice (an invoice issued after
+    the cash arrived), else the invoice ingest matched it to as unapplied cash, else its reference."""
+    reference = deposit.get("invoice_id")
+    if reference in invoice_ids:
+        return reference
+    return deposit.get("matched_invoice_id") or reference
+
+
+def _receivable(shipper_invoice: dict | None, deposits: list[dict], invoice_ids: set[str] | None = None) -> dict:
     if not shipper_invoice:
         return {}
     invoice_id = shipper_invoice["invoice_id"]
@@ -104,11 +113,14 @@ def _receivable(shipper_invoice: dict | None, deposits: list[dict]) -> dict:
                   "deduction_reason": shipper_invoice.get("deduction_reason")}
     # Cash whose bank reference named no invoice, matched to this one by shipper and amount: a candidate for
     # review, never cash applied (`deposits`). Only present when there is some, so other cases keep their digest.
-    unapplied = [{"id": deposit["id"], "shipper_id": deposit.get("shipper_id"), "amount": deposit.get("amount"),
+    invoice_ids = invoice_ids if invoice_ids is not None else {invoice_id}
+    unapplied = [{"id": deposit["id"], "shipper_id": deposit.get("candidate_shipper_id"),
+                  "amount": deposit.get("amount"),
                   "posted_at": deposit.get("posted_at"), "remittance_ref": deposit.get("invoice_id"),
                   "candidate_invoice_id": invoice_id, "match_basis": deposit.get("match_basis"),
                   "reference_mismatch": True}
-                 for deposit in deposits if deposit.get("matched_invoice_id") == invoice_id]
+                 for deposit in deposits if deposit.get("matched_invoice_id") == invoice_id
+                 and candidate_target(deposit, invoice_ids) == invoice_id]
     if unapplied:
         receivable["unapplied_deposits"] = unapplied
     return receivable
@@ -155,6 +167,7 @@ def build_cases(db: sqlite3.Connection, brokerage: str | None = None) -> dict[st
     invoices = _rows(db, "invoices")
     shipper_invoices = {item.get("load_id"): item for item in _rows(db, "shipper_invoices")}
     deposits = _rows(db, "deposits")
+    invoice_ids = {item["invoice_id"] for item in shipper_invoices.values() if item.get("invoice_id")}
     changes = _rows(db, "bank_changes")
     by_load: dict[str, list[dict]] = {}
     for invoice in invoices:
@@ -167,7 +180,7 @@ def build_cases(db: sqlite3.Connection, brokerage: str | None = None) -> dict[st
     for load_id, load in loads.items():
         facts = _load_facts(load, brokerage)
         doc_refs = [doc["ref"] for doc in facts["documents"]]
-        receivable = _receivable(shipper_invoices.get(load_id), deposits)
+        receivable = _receivable(shipper_invoices.get(load_id), deposits, invoice_ids)
         sinv_refs = (shipper_invoices.get(load_id) or {}).get("_evidence_refs", [])
         load_invoices = by_load.get(load_id, [])
         for invoice in load_invoices:

@@ -36,14 +36,16 @@ class ValidatorAgent(FreightAgent):
     async def handle(self, env, meta, task_id, updater):
         from common.providers import mode
         if mode() == "live":
-            from common.tool_loop import run_tool_loop
+            from common.tool_loop import GuardedSkillFailed, run_tool_loop
             try:
                 return await run_tool_loop(self, env, meta, task_id)
-            except ProviderError as error:
+            except (ProviderError, GuardedSkillFailed) as error:
                 # The verdict is the deterministic two-sided review's; the model only selects inspections and adds
-                # grounded commentary. A model loop that fails before the guarded workflow returns (cut short,
-                # budget, provider outage) therefore runs that workflow directly instead of failing the review.
-                # Its checkpoints and write IDs are the ones the tool would have used, so nothing is done twice.
+                # grounded commentary. A model loop that ends before the guarded workflow returns (cut short,
+                # budget, provider outage, or the workflow failing inside the loop and a limit ending it) therefore
+                # runs that workflow once more, directly, instead of failing the review. Its checkpoints and write
+                # IDs are the ones the tool used, so nothing is done twice; if it fails again, its own error ends
+                # the task.
                 log.warning("validator task %s: model tool loop failed (%s); running the deterministic review",
                             task_id, error)
                 result = await self.run_workflow(env, meta, task_id, updater)

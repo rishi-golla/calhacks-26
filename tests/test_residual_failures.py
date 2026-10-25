@@ -421,3 +421,48 @@ async def test_a_model_limit_after_a_failed_workflow_still_reports_the_workflow_
     expected = ("model tool call budget exhausted" if limit == "budget"
                 else "tool response incomplete (max_messages)")
     assert failure.value.reason == f"ProviderError: evidence exceeds inference input limit; then {expected}"
+
+
+async def test_a_review_whose_guarded_call_failed_before_a_model_limit_keeps_the_deterministic_verdict(
+        review_world, monkeypatch):
+    """Devin on #44: the loop reports a guarded failure followed by a model limit as GuardedSkillFailed; the
+    Validator must still fall back to its deterministic review instead of failing."""
+    world = review_world
+    tries = []
+
+    async def execute(ctx, args):
+        tries.append(ctx.tool_call_id)
+        raise ProviderError("evidence exceeds inference input limit")  # the guarded call fails inside the loop
+
+    async def settings(*_):
+        return {"provider": "openai", "model": "test", "instructions": "Review", "instr_version": 0, "memories": []}
+
+    async def queue(payload):
+        return None
+
+    turns = 0
+
+    async def model(*args, **kwargs):
+        nonlocal turns
+        turns += 1
+        if turns == 1:
+            return response("execute_current_skill", "x1")
+        raise ProviderError("tool response incomplete (max_messages)")  # then a model limit ends the loop
+
+    monkeypatch.setattr("common.providers.mode", lambda: "live")
+    monkeypatch.setattr(tool_loop, "_settings", settings)
+    monkeypatch.setattr(tool_loop, "configuration", lambda *_: ProviderConfig("openai", "test", "secret", ""))
+    monkeypatch.setattr(tool_loop, "model_turn", model)
+    monkeypatch.setattr(tool_loop, "TURN_RETRY_BACKOFF_S", 0)
+    monkeypatch.setattr(tool_registry, "registry_for", lambda _: {
+        "execute_current_skill": ToolSpec("execute_current_skill", "Execute", EMPTY_PARAMETERS, execute)})
+    world["agent"].queue_tool_audit = queue
+    try:
+        result = await world["agent"].handle(world["env"], world["meta"], "review-limit", None)
+    finally:
+        await world["store"].close()
+    assert tries == ["x1"]
+    assert result.outcome == deterministic_review(world["bundle"]).verdict == "pass"
+    assert result.findings["tool_loop_unavailable"] == ("ProviderError: evidence exceeds inference input limit; "
+                                                        "then tool response incomplete (max_messages)")
+    assert world["writes"]["add_review"]["verdict"] == "pass"

@@ -482,17 +482,61 @@ test("buildFinance computes balances from ledger lines", () => {
   assert.equal(f.heldInvoices.count, 2); // I2 (hold) + I4 (status)
   assert.equal(f.heldInvoices.amount, 200);
   assert.deepEqual(f.paymentsProposed, { count: 2, amount: 150 });
-  assert.deepEqual(f.forecast.map((p) => p.period), ["2026-10-25", "2026-11-01"]);
-  const nov = f.forecast[1];
+  // Oct: posted cash (+500) plus its forecast (+10); Nov: forecast only.
+  assert.deepEqual(f.forecast.map((p) => p.period), ["2026-10", "2026-11"]);
+  const [oct, nov] = f.forecast;
+  assert.equal(oct.inflow, 510);
+  assert.equal(oct.outflow, 0);
+  assert.ok(oct.projected);
+  assert.ok(Math.abs(oct.confidence - (500 + 10 * 0.5) / 510) < 1e-9);
   assert.equal(nov.inflow, 100);
   assert.equal(nov.outflow, 40);
   assert.equal(nov.net, 60);
-  assert.ok(Math.abs(nov.confidence - 0.7) < 1e-9);
+  assert.ok(Math.abs(nov.confidence - (100 * 0.8 + 40 * 0.6) / 140) < 1e-9);
   for (const series of Object.values(f.trends)) assert.equal(series.length, 31);
   assert.equal(f.trends.cash.at(-1)!.value, 500);
   assert.equal(f.trends.cash[0].value, 0);
   assert.equal(f.trends.revenue.reduce((a, p) => a + p.value, 0), 1000);
   assert.equal(f.trends.ap.at(-1)!.value, 800);
+});
+
+test("buildFinance cash flow covers past months and drops forecasts outside the window", () => {
+  const cash = (id: string, posted: string, debit: number, credit: number) => ({
+    id,
+    posted_at: posted,
+    lines: [{ account: "cash", debit, credit }, { account: "accounts_payable", debit: credit, credit: debit }],
+  });
+  const s = snap({
+    ledger_entry: [
+      cash("old", "2026-03-10T12:00:00Z", 999, 0), // before the 5-month window
+      {
+        id: "opening",
+        posted_at: "2026-07-01T12:00:00Z",
+        lines: [{ account: "cash", debit: 250_000, credit: 0 }, { account: "opening_balance_equity", debit: 0, credit: 250_000 }],
+      },
+      cash("aug", "2026-08-05T12:00:00Z", 300, 0),
+      cash("aug2", "2026-08-20T12:00:00Z", 0, 120),
+      cash("oct", "2026-10-02T12:00:00Z", 0, 50),
+      cash("ahead", "2027-07-05T12:00:00Z", 0, 9_999), // a sim clock that ran ahead
+    ],
+    cash_forecast: [
+      { id: "F1", period: "2027-07", amount: -39_500, confidence: 0.8 },
+      { id: "F2", period: "2026-09", amount: 70, confidence: 0.8 }, // stale: before this month
+      { id: "F3", period: "2026-10-05", amount: 1_000, confidence: 0.8 }, // that week has ended
+      { id: "F4", period: "2026-11", amount: 0, confidence: 0.8 }, // nothing outstanding, still a forecast
+    ],
+  });
+  const f = buildFinance(s, NOW);
+  assert.deepEqual(
+    f.forecast.map((p) => [p.period, p.inflow, p.outflow, p.projected]),
+    [
+      ["2026-08", 300, 120, false],
+      ["2026-09", 0, 0, false],
+      ["2026-10", 0, 50, false],
+      ["2026-11", 0, 0, true],
+    ],
+  );
+  assert.ok(f.forecast.every((p) => p.confidence === 1));
 });
 
 test("buildFinance on an empty snapshot is all zeros", () => {

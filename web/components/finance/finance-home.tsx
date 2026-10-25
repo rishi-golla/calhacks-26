@@ -4,7 +4,7 @@
  * back office that keeps it, in real time. Everything renders from `useOps()`
  * (live SpacetimeDB or the labeled browser simulation); nothing polls.
  *
- * Top to bottom: 4 KPI tiles → cash + forecast | work queue.
+ * Top to bottom: 4 KPI tiles → cash + monthly cash flow | work queue.
  * Operations and invoices live on their own routes (/operations, /invoices).
  */
 import { Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
@@ -13,7 +13,7 @@ import { useOps } from "@/components/data-provider";
 import { ShowWork } from "@/components/show-work";
 import { dsoWorkings, marginWorkings } from "@/lib/show-work";
 import { AttentionQueue } from "./attention-queue";
-import { ForecastBars, LineChart, Sparkline } from "./charts";
+import { CashFlowBars, LineChart, Sparkline } from "./charts";
 import { CountUp } from "./count-up";
 import { change, count, dayLabel, emptyNote, usd, usdShort } from "./format";
 import "./finance.css";
@@ -182,7 +182,7 @@ function CashPanel() {
   const hasLedger = snapshot.ledger_entry.length > 0;
   const delta = change(points);
   const hovered = hover != null ? points[hover] : null;
-  const forecast = finance.forecast.slice(0, 8);
+  const flow = finance.forecast;
 
   return (
     <section className="fl-panel fh-cash" aria-label="Cash position">
@@ -229,10 +229,10 @@ function CashPanel() {
       <div className="fh-fc-wrap">
         <div className="fh-fc-head">
           <span className="fl-section" style={{ "--accent": "var(--aqua)" } as CSSProperties}>
-            Forecast
+            Cash flow
           </span>
         </div>
-        {forecast.length ? <ForecastBars rows={forecast} /> : <div className="fh-empty-sub fh-fc-empty">{emptyNote(source, "No forecast yet")}</div>}
+        {flow.length ? <CashFlowBars rows={flow} /> : <div className="fh-empty-sub fh-fc-empty">{emptyNote(source, "No cash movements yet")}</div>}
       </div>
     </section>
   );

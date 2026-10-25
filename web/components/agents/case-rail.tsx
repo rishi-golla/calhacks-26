@@ -242,7 +242,7 @@ function CaseRow({
             <i key={a} className={live?.has(a) ? "live" : ""} style={{ "--c": agentColor(a) } as CSSProperties} title={AGENT_META[a].name} />
           ))}
         </span>
-        <span className="amt">{c.exposureUsd ? fmtMoney(c.exposureUsd) : "—"}</span>
+        {c.exposureUsd ? <span className="amt">{fmtMoney(c.exposureUsd)}</span> : null}
       </span>
     </div>
   );

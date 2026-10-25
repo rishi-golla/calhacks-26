@@ -603,6 +603,24 @@
   box-shadow: var(--card-edge);
   position: relative;
   z-index: 30;
+  overflow: hidden;
+}
+.fl.theme-glass .au-row {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+.fl.theme-glass .au-row.needs {
+  box-shadow: none;
+  background: rgba(255, 170, 80, 0.07);
+}
+.fl.theme-glass .au-row.sel {
+  box-shadow: none;
+}
+.fl.theme-glass .au-status {
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 .fl.theme-glass .au-map .mascot-bubble {
   display: none !important;
@@ -633,6 +651,20 @@
 .fl.theme-glass .fh-att-filter {
   flex-wrap: wrap;
   row-gap: 6px;
+}
+/* Group heads scroll with the list: a sticky opaque band read as a stray rectangle over the glass. */
+.fl.theme-glass .fh-att-group-head {
+  position: static;
+  background: transparent;
+  padding: 14px 16px 6px;
+  font-family: var(--font-body);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text-mute);
+}
+.fl.theme-glass .fh-att-body {
+  padding-bottom: 12px;
 }
 
 /* ------------------------------ mobile ------------------------------ */
@@ -891,4 +923,277 @@
   padding: 2px 8px;
   font-size: 10.5px;
   line-height: 16px;
+}
+
+/* ----------------------------- live log ----------------------------- */
+.fl.theme-glass .fl-log-btn.on {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+.fl.theme-glass .fl-log {
+  position: fixed;
+  left: var(--x);
+  top: var(--y);
+  width: var(--w);
+  height: var(--h);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(9, 30, 42, 0.8);
+  -webkit-backdrop-filter: blur(28px) saturate(120%);
+  backdrop-filter: blur(28px) saturate(120%);
+  box-shadow:
+    var(--card-edge),
+    0 30px 80px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-family: var(--font-body);
+  animation: fl-log-in 260ms var(--e-out) both;
+  touch-action: none;
+}
+@keyframes fl-log-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+.fl.theme-glass .fl-log-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 8px;
+  cursor: grab;
+  user-select: none;
+}
+.fl.theme-glass .fl-log-head:active {
+  cursor: grabbing;
+}
+.fl.theme-glass .fl-log-title {
+  font-family: var(--font-display, var(--font-body));
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.fl.theme-glass .fl-log-meta {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-mute);
+}
+.fl.theme-glass .fl-log-x {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: transparent;
+  color: var(--text-dim);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.fl.theme-glass .fl-log-x:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+}
+.fl.theme-glass .fl-log-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 16px 8px;
+}
+.fl.theme-glass .fl-log-chips button {
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    background-color 0.2s var(--e-out),
+    color 0.2s var(--e-out);
+}
+.fl.theme-glass .fl-log-chips button b {
+  margin-left: 5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.fl.theme-glass .fl-log-chips button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.fl.theme-glass .fl-log-chips button.on,
+.fl.theme-glass .fl-log-chips button.on b {
+  background: #fff;
+  color: #000;
+  border-color: #fff;
+}
+.fl.theme-glass .fl-log-search {
+  margin: 0 16px 8px;
+  padding: 7px 11px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.fl.theme-glass .fl-log-search::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+.fl.theme-glass .fl-log-rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0 8px;
+  list-style: none;
+  scrollbar-width: thin;
+}
+.fl.theme-glass .fl-log-row {
+  border-radius: 12px;
+}
+.fl.theme-glass .fl-log-row:hover,
+.fl.theme-glass .fl-log-row.open {
+  background: rgba(255, 255, 255, 0.07);
+}
+.fl.theme-glass .fl-log-row-main {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 52px 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 9px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.fl.theme-glass .fl-log-time {
+  padding-top: 1px;
+  font-size: 11px;
+  color: var(--text-mute);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.fl.theme-glass .fl-log-dot {
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.fl.theme-glass .fl-log-text {
+  min-width: 0;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.fl.theme-glass .fl-log-text b {
+  font-weight: 600;
+}
+.fl.theme-glass .fl-log-text small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-mute);
+}
+.fl.theme-glass .fl-log-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  font-size: 10.5px;
+  line-height: 16px;
+  vertical-align: 1px;
+  color: var(--text-dim);
+}
+.fl.theme-glass .fl-log-tag.ok {
+  color: #8fe3c0;
+  border-color: rgba(143, 227, 192, 0.5);
+}
+.fl.theme-glass .fl-log-tag.bad {
+  color: #ff9a8c;
+  border-color: rgba(255, 154, 140, 0.5);
+}
+.fl.theme-glass .fl-log-tag.warn {
+  color: #ffc46b;
+  border-color: rgba(255, 196, 107, 0.5);
+}
+.fl.theme-glass .fl-log-detail {
+  margin: 0 8px 10px 86px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.fl.theme-glass .fl-log-detail .ok {
+  color: #8fe3c0;
+}
+.fl.theme-glass .fl-log-detail .bad {
+  color: #ff9a8c;
+}
+.fl.theme-glass .fl-log-mono {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-mute);
+}
+.fl.theme-glass .fl-log-links {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 6px;
+}
+.fl.theme-glass .fl-log-links a {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.fl.theme-glass .fl-log-empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--text-mute);
+  font-size: 12px;
+}
+.fl.theme-glass .fl-log-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 16px 11px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 11px;
+  color: var(--text-mute);
+}
+.fl.theme-glass .fl-log-resize {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  border-right: 2px solid rgba(255, 255, 255, 0.3);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+  border-bottom-right-radius: 6px;
+}
+@media (max-width: 900px) {
+  .fl.theme-glass .fl-log {
+    left: 8px !important;
+    top: 8px !important;
+    width: calc(100vw - 16px) !important;
+    height: calc(100dvh - 92px) !important;
+  }
+  .fl.theme-glass .fl-log-resize {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fl.theme-glass .fl-log {
+    animation: none;
+  }
 }

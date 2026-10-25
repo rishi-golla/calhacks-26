@@ -9,7 +9,7 @@ import { Search, X } from "lucide-react";
 import { useLiveEvents, useOps } from "@/components/data-provider";
 import { Mascot } from "@/components/mascot";
 import { AGENT_META, skillLabel, type AgentId } from "@/lib/agents";
-import { str } from "@/lib/data";
+import { str, timestamp } from "@/lib/data";
 import { fmtDuration, fmtMoney, type AttentionKind, type CaseView } from "@/lib/ops";
 import { fmtSince } from "@/lib/view-epoch";
 import { EpochNote } from "@/components/shell/view-epoch";
@@ -112,6 +112,17 @@ const toggle = <T,>(list: T[], value: T) => (list.includes(value) ? list.filter(
 
 export default function CaseExplorer() {
   const { caseList, snapshot, now, ops, simulated, source, viewEpoch } = useOps();
+  /** Latest validator verdict per case: a passed review earns a "Validated" chip. */
+  const verdicts = useMemo(() => {
+    const latest = new Map<string, { at: number; verdict: string }>();
+    for (const r of snapshot.review) {
+      const id = str(r.case_id, "");
+      const at = timestamp(r.ts);
+      const prev = latest.get(id);
+      if (!prev || at >= prev.at) latest.set(id, { at, verdict: str(r.verdict, "") });
+    }
+    return new Map([...latest].map(([id, v]) => [id, v.verdict]));
+  }, [snapshot.review]);
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const hydrated = useRef(false);
   useEffect(() => {
@@ -348,7 +359,7 @@ export default function CaseExplorer() {
           ) : (
             <div className="cx-rows" style={{ height: rows.length * ROW_H }}>
               {rows.slice(first, last).map(({ c, kind }, i) => (
-                <CaseRow key={c.caseId} c={c} kind={kind} now={now} top={(first + i) * ROW_H} fresh={fresh.has(c.caseId)} />
+                <CaseRow key={c.caseId} c={c} kind={kind} now={now} top={(first + i) * ROW_H} fresh={fresh.has(c.caseId)} verdict={verdicts.get(c.caseId)} />
               ))}
             </div>
           )}
@@ -359,7 +370,7 @@ export default function CaseExplorer() {
   );
 }
 
-function CaseRow({ c, kind, now, top, fresh }: { c: CaseView; kind: CaseKind; now: number; top: number; fresh: boolean }) {
+function CaseRow({ c, kind, now, top, fresh, verdict }: { c: CaseView; kind: CaseKind; now: number; top: number; fresh: boolean; verdict?: string }) {
   const resolved = c.status === "resolved";
   return (
     <Link
@@ -400,6 +411,7 @@ function CaseRow({ c, kind, now, top, fresh }: { c: CaseView; kind: CaseKind; no
       </span>
       <span className={`num fl-mono cx-age ${resolved ? "" : "live"}`}>{c.openedAt ? shortDur(caseDuration(c, now)) : "—"}</span>
       <span className="cx-attn">
+        {verdict === "pass" && <span className="fl-chip outline ok cx-chip">Validated</span>}
         {c.attention.map((k) => (
           <span key={k} className={`fl-chip outline ${ATTENTION_META[k].tone} cx-chip`}>
             {ATTENTION_META[k].label}

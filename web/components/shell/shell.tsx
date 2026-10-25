@@ -6,6 +6,7 @@ import { Activity, Bell, Database, FlaskConical, Home, ListTree, Network, Play, 
 import { useOps, type DataMode } from "../data-provider";
 import { agentLabel } from "@/lib/agents";
 import { fmtAgo, fmtMoney, type AttentionItem } from "@/lib/ops";
+import { LogButton, LogWindow, useLogHotkeys } from "./log-overlay";
 import { Mascot } from "../mascot";
 import BurstControl from "./burst-control";
 import Intro from "./intro";
@@ -22,6 +23,8 @@ const NAV = [
 
 export default function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const [logOpen, setLogOpen] = useState(false);
+  useLogHotkeys(logOpen, setLogOpen);
   const { ops } = useOps();
   const [ready, setReady] = useState(false);
   const title = NAV.find((n) => (n.exact ? pathname === n.href : pathname.startsWith(n.href)))?.label ?? "FreightLine";
@@ -55,6 +58,7 @@ export default function Shell({ children }: { children: ReactNode }) {
               <strong>{title}</strong>
             </span>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <LogButton open={logOpen} onToggle={() => setLogOpen((v) => !v)} />
               <Notifications />
               {pathname.startsWith("/demo") && <StartFresh />}
               <BurstControl />
@@ -62,6 +66,7 @@ export default function Shell({ children }: { children: ReactNode }) {
             </div>
           </header>
           <main className="fl-main">{children}</main>
+          {logOpen && <LogWindow onClose={() => setLogOpen(false)} />}
         </div>
       </div>
     </>
@@ -227,9 +232,6 @@ function SourcePill() {
               <RefreshCw size={12} /> Reconnect
             </button>
           )}
-          <Link href="/ops" className="fl-micro" style={{ display: "block", marginTop: 12, textDecoration: "underline", textUnderlineOffset: 3 }} onClick={() => setOpen(false)}>
-            Admin console
-          </Link>
         </div>
       )}
     </div>

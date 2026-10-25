@@ -43,3 +43,22 @@ def test_rollback_to_baseline_and_then_publish_again():
     assert reconstruct_instructions("carrier_ap", rows) == (base, 2)
     rows.append({"version": 3, "diff": patch(base, changed)})
     assert reconstruct_instructions("carrier_ap", rows) == (changed, 3)
+
+
+def test_human_revert_recovers_from_a_corrupted_later_patch():
+    """A stored row whose diff no longer applies (a fixture seed, or a patch against an older baseline) must not
+    brick the agent once a human reverts to an earlier version: only the reverted chain is replayed."""
+    base = (ROOT / "agents/carrier_ap/instructions.md").read_text()
+    first = base + "\nCheck source evidence before making a recommendation.\n"
+    corrupted = [
+        {"version": 1, "diff": patch(base, first)},
+        {"version": 2, "diff": "+ Retrieve the rate confirmation before evaluating detention (W2 fixture).\n"},
+    ]
+    with pytest.raises(InvalidInstructionPatch):
+        reconstruct_instructions("carrier_ap", corrupted)
+    reverted_to_one = [*corrupted, {"version": 3, "reverts_version": 1, "diff": ""}]
+    assert reconstruct_instructions("carrier_ap", reverted_to_one) == (first, 3)
+    reverted_to_base = [*corrupted, {"version": 3, "reverts_version": 0, "diff": ""}]
+    assert reconstruct_instructions("carrier_ap", reverted_to_base) == (base, 3)
+    with pytest.raises(InvalidInstructionPatch):
+        reconstruct_instructions("carrier_ap", [*corrupted, {"version": 3, "reverts_version": 3, "diff": ""}])

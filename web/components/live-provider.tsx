@@ -271,6 +271,8 @@ export function LiveProvider({
             : undefined;
           // Slide the window forward: subscribe the newer cutoff, then drop the
           // old one once the new one is applied, so shared rows never blink out.
+          // The new window is a subset of the old one, so nothing arrives in
+          // bulk; rows leaving the window come through the delete callbacks.
           let sliding = false;
           const slide = () => {
             const next = windowCutoff(Date.now(), minutes);
@@ -285,7 +287,6 @@ export function LiveProvider({
                 windowSub = nextSub;
                 cutoff = next;
                 setSince(next);
-                bulkLoaded(queries);
               },
               failed,
             );

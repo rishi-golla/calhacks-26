@@ -822,7 +822,8 @@ export function diffSnapshots(prev: Snapshot | null, next: Snapshot): LiveEvent[
   }
   for (const { row: e, before } of delta("delegation_edge", "id"))
     if (!before) events.push({ type: "delegation", at: timestamp(e.ts), caseId: str(e.case_id), taskId: str(e.task_id), from: str(e.from_agent), to: str(e.to_agent), skill: str(e.skill) });
-  for (const { row: a, before } of delta("audit_event", "id")) {
+  const audits = delta("audit_event", "id");
+  for (const { row: a, before } of audits) {
     if (before) continue;
     if (a.kind === "tool_call") {
       const body = json<Record<string, unknown>>(a.summary, {});
@@ -830,8 +831,33 @@ export function diffSnapshots(prev: Snapshot | null, next: Snapshot): LiveEvent[
     } else if (a.kind === "place_hold" || a.kind === "release_hold") events.push({ type: "hold", at: timestamp(a.ts), caseId: str(a.case_id), agent: str(a.agent), amount: 0, status: a.kind === "place_hold" ? "placed" : "released" });
     else if (a.kind === "post_journal_entry") events.push({ type: "journal", at: timestamp(a.ts), caseId: str(a.case_id), amount: 0, memo: str(a.summary) });
   }
-  for (const { row: d, before } of delta("doc_read", "id"))
-    if (!before) events.push({ type: "doc_read", at: timestamp(d.ts) || Date.now(), caseId: str(d.case_id), taskId: str(d.task_id), agent: str(d.agent), docRef: str(d.doc_ref) });
+  // Live doc reads carry no timestamp, and a live row can reach the cache long
+  // after it was written: the dashboard keeps doc reads whose task changed
+  // recently, so a task update brings its old reads in. A live read is news
+  // only alongside the `record_doc_read` audit row its write produced, one
+  // read per audit row; simulated reads carry their own `ts`.
+  const docAudits = new Map<string, number[]>();
+  for (const { row: a, before } of audits)
+    if (!before && a.kind === "record_doc_read") {
+      const list = docAudits.get(str(a.task_id, "")) ?? [];
+      list.push(timestamp(a.ts) || Date.now());
+      docAudits.set(str(a.task_id, ""), list);
+    }
+  const newReads = delta("doc_read", "id").filter(({ before }) => !before);
+  // Rows arrive oldest first: when a task's old reads and a fresh one land
+  // together, match audit rows to the newest reads.
+  const reads: LiveEvent[] = [];
+  for (let i = newReads.length - 1; i >= 0; i--) {
+    const d = newReads[i].row;
+    let at = timestamp(d.ts);
+    if (!at) {
+      const list = docAudits.get(str(d.task_id, ""));
+      if (!list?.length) continue;
+      at = list.pop()!;
+    }
+    reads.push({ type: "doc_read", at, caseId: str(d.case_id), taskId: str(d.task_id), agent: str(d.agent), docRef: str(d.doc_ref) });
+  }
+  events.push(...reads.reverse());
   for (const { row: a, before } of delta("approval", "id")) {
     if (!before) events.push({ type: "approval", at: timestamp(a.requested_at) || Date.now(), caseId: str(a.case_id), agent: str(a.requested_by), amount: num(a.amount), decision: "pending" });
     else if (before.decision !== a.decision) events.push({ type: "approval", at: timestamp(a.decided_at) || Date.now(), caseId: str(a.case_id), agent: "human", amount: num(a.amount), decision: str(a.decision) });

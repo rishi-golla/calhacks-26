@@ -63,7 +63,8 @@ const OPS_WINDOWED: Partial<Record<TableName, TablePolicy>> = {
     sql: (cutoff) =>
       `SELECT "cell_change".* FROM "cell_change" JOIN "change_set" ON "cell_change"."change_set_id" = "change_set"."id" WHERE "change_set"."ts" > ${sqlString(cutoff)}`,
   },
-  routing_outbox: { kind: "window", sql: since("routing_outbox", "updated_at") },
+  // Undelivered work stays whatever its age: the human inbox looks it up.
+  routing_outbox: { kind: "window", sql: since("routing_outbox", "updated_at", ` OR "status" <> 'done'`) },
   llm_call: { kind: "window", sql: since("llm_call", "ts") },
 };
 

@@ -80,7 +80,7 @@ test("ops plan keeps every table, windowing the legacy history tables", () => {
   const windowed = new Map(plan.windowed.map((q) => [q.table, q.sql]));
   assert.deepEqual([...windowed.keys()].sort(), ["audit_event", "cell_change", "change_set", "doc_read", "llm_call", "routing_outbox"]);
   assert.equal(windowed.get("change_set"), `SELECT * FROM "change_set" WHERE "ts" > '${CUTOFF}'`);
-  assert.equal(windowed.get("routing_outbox"), `SELECT * FROM "routing_outbox" WHERE "updated_at" > '${CUTOFF}'`);
+  assert.equal(windowed.get("routing_outbox"), `SELECT * FROM "routing_outbox" WHERE "updated_at" > '${CUTOFF}' OR "status" <> 'done'`);
   assert.match(windowed.get("cell_change")!, /^SELECT "cell_change"\.\* FROM "cell_change" JOIN "change_set" ON .* WHERE "change_set"\."ts" > '/);
 });
 

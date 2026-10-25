@@ -14,7 +14,7 @@ import {
   timestamp,
   type Row,
 } from "@/lib/data";
-import { useLive } from "./live-provider";
+import { useCaseFocus, useLive } from "./live-provider";
 import {
   Badge,
   DataTable,
@@ -275,6 +275,8 @@ export function CasesView({
   notify: Notify;
 }) {
   const { data, mutate, state } = useLive();
+  // The selected case's full audit and doc-read history, not just the live window.
+  useCaseFocus(selected);
   const [agent, setAgent] = useState("");
   const [taskId, setTaskId] = useState("");
   const [busy, setBusy] = useState(false);

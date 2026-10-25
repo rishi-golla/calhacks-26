@@ -2,11 +2,22 @@ from decimal import Decimal
 
 from agents.carrier_ap.tools import deposit_inputs
 from agents.shipper_ar.card import DESCRIPTIONS
-from common.agent_support import child_envelope, evidence, finish, identifier, money, mutate, number, rows
+from common.agent_support import (
+    billing_journal_id,
+    billing_lines,
+    child_envelope,
+    evidence,
+    finish,
+    identifier,
+    journal_requests,
+    money,
+    number,
+    request_journal,
+)
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
-from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode, source_fixtures_only
+from common.source_repository import SourceRepository, SourceUnavailable
 from common.workings import refs_for, working
 
 
@@ -75,45 +86,43 @@ class ShipperArAgent(FreightAgent):
                                                         Decimal(0))),
                             review_reason="deposit reference matches no shipper invoice; a person must confirm "
                                           "the shipper-and-amount match before the cash is applied")
-        if env.task_type == "reconcile_customer_payment" and total > 0:
-            if not source.get("period"):
-                raise SourceUnavailable("journal period is required")
-            existing = source.get("journal_requests", []) if source_fixtures_only() else await rows(
-                self.name, "journal_request", "case_id", env.case_id)
-            requests, posted, pending = [], [], []
+        if env.task_type == "reconcile_customer_payment":
+            # No case exists when the shipper invoice is issued, so the invoice is recognised here, once per
+            # invoice (Dr receivable / Cr revenue), ahead of the cash applied against it in the same batch.
+            planned = []
+            if invoice_id and owed > 0:
+                planned.append((billing_journal_id(invoice_id), billing_lines(owed),
+                                "Customer billing: " + str(invoice_id), "billing"))
             for deposit in matched:
                 # Bind an entry to its bank deposit, so a later reconciliation
                 # with more deposits cannot post earlier cash a second time.
-                request_id = identifier(f"{source.get('shipper_id')}:{deposit['id']}", "receivable_journal_request")
-                stored = next((item for item in existing if item.get("id") == request_id), None)
                 amount = money(deposit["amount"])
-                lines = [{"account": "cash", "debit": number(amount), "credit": 0},
-                         {"account": "accounts_receivable", "debit": 0, "credit": number(amount)}]
-                if stored and stored.get("case_id") != env.case_id:
-                    raise SourceUnavailable("deposit journal belongs to a different case")
-                if stored and stored.get("posted_entry_id"):
-                    posted.append(stored["posted_entry_id"])
+                planned.append((identifier(f"{source.get('shipper_id')}:{deposit['id']}", "receivable_journal_request"),
+                                [{"account": "cash", "debit": number(amount), "credit": 0},
+                                 {"account": "accounts_receivable", "debit": 0, "credit": number(amount)}],
+                                "Matched source deposit: " + deposit["id"], "deposit"))
+            if planned and not source.get("period"):
+                raise SourceUnavailable("journal period is required")
+            billing_ids = [request_id for request_id, _, _, label in planned if label == "billing"]
+            existing = await journal_requests(self.name, env, source, *billing_ids) if planned else []
+            requests, posted, pending = [], [], []
+            for request_id, lines, memo, label in planned:
+                result = await request_journal(self, env, task_id, existing, request_id, period=source["period"],
+                                               lines=lines, memo=memo, label=label)
+                if result["posted_entry_id"]:
+                    posted.append(result["posted_entry_id"])
                     continue
-                if stored:
-                    request = {"executed": False, "existing": True, "request_id": request_id,
-                               "simulated": fixture_mode()}
-                else:
-                    request = await mutate(self, env, task_id, "request_journal_entry", {
-                        "id": request_id, "period": source["period"], "lines": lines,
-                        "memo": "Matched source deposit: " + deposit["id"],
-                    })
-                requests.append(request)
-                # A fixture mutation is only a proposal until independently
-                # represented in source data; live posting is a Controller task.
-                if request.get("executed") or stored:
+                requests.append(result["receipt"])
+                if result["pending"]:
                     pending.append(request_id)
             if pending:
-                # One Settlement Approvals child posts every deposit's request, so
-                # any number of deposits fits the fan-out bound beside cash impact.
+                # One Settlement Approvals child posts the billing and every deposit's request, billing first,
+                # so any number of deposits fits the fan-out bound beside cash impact.
                 posted.extend(await self.delegate("approve_entry", child_envelope(
                     env, "approve_entry", request_ids=pending), meta, task_id,
                     invocation_key="post_receivable_journals:" + identifier(",".join(pending), "journal_batch")))
-            findings["journal_requests"], findings["controller"] = requests, posted
+            if planned:
+                findings["journal_requests"], findings["controller"] = requests, posted
         if env.task_type == "chase_overdue" and balance > 0 and unapplied:
             # The shipper may already have paid under the wrong reference: apply that cash before chasing them.
             findings["outreach_needed"] = False

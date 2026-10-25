@@ -154,6 +154,12 @@ async def test_reconciliation_posts_every_matched_deposit_and_assesses_cash(agen
         "lines": [{"account": "cash", "debit": 300, "credit": 0},
                   {"account": "accounts_receivable", "debit": 0, "credit": 300}],
     } for i in range(deposit_count)]
+    # The customer billing, recorded but not yet posted, is recognised ahead of the cash in the same batch.
+    billing = {"id": identifier("AR-SHORT", "revenue_journal_request"), "case_id": source["case_id"],
+               "requested_by": "shipper_ar", "period": "2026-10",
+               "lines": [{"account": "accounts_receivable", "debit": 1600, "credit": 0},
+                         {"account": "freight_revenue", "debit": 0, "credit": 1600}]}
+    source["journal_requests"].append(billing)
     dataset["cases"][source["case_id"]] = source
     source_path.write_text(json.dumps(dataset))
     env = TaskEnvelope(task_type="reconcile_customer_payment", case_id=source["case_id"])
@@ -162,12 +168,40 @@ async def test_reconciliation_posts_every_matched_deposit_and_assesses_cash(agen
     complete = await await_state("shipper_ar", task.id, TaskState.TASK_STATE_COMPLETED)
     result = extract_artifact_data(complete)[-1]
     assert result["findings"]["matched_amount"] == 300 * deposit_count
-    assert len(result["findings"]["journal_requests"]) == deposit_count
+    assert len(result["findings"]["journal_requests"]) == deposit_count + 1
     approvals = result["findings"]["controller"]
+    assert len(approvals) == 1
     assert [entry["request_id"] for item in approvals for entry in item["findings"]["entries"]] == [
-        request["id"] for request in source["journal_requests"]]
+        billing["id"]] + [request["id"] for request in source["journal_requests"][:deposit_count]]
     assert all(item["outcome"] == "approve" for item in approvals)
     assert result["findings"]["cash_impact"][-1]["outcome"]
+
+
+async def test_proposed_carrier_bill_is_posted_to_expense_and_payable(agents):
+    await asyncio.gather(*(_wait_ready(spec.url) for spec in AGENTS.values()))
+    from common.agent_support import identifier
+    source_path = agents / "source.json"
+    dataset = json.loads(source_path.read_text())
+    source = json.loads(json.dumps(dataset["cases"]["CASE-CLEAN"]))
+    source["case_id"] = "CASE-PAYABLE"
+    # Recorded but not yet posted, as after a live request_journal_entry.
+    payable = {"id": identifier("INV-CLEAN", "payable_journal_request"), "case_id": source["case_id"],
+               "requested_by": "carrier_ap", "period": "2026-10",
+               "lines": [{"account": "freight_expense", "debit": 1275.5, "credit": 0},
+                         {"account": "accounts_payable", "debit": 0, "credit": 1275.5}]}
+    source["journal_requests"] = [payable]
+    dataset["cases"][source["case_id"]] = source
+    source_path.write_text(json.dumps(dataset))
+    env = TaskEnvelope(task_type="process_carrier_invoice", case_id=source["case_id"])
+    task = await send_task("carrier_ap", env, DelegationMeta(
+        case_id=env.case_id, from_agent="router", idempotency_key="payable-journal"))
+    result = extract_artifact_data(await await_state("carrier_ap", task.id, TaskState.TASK_STATE_COMPLETED))[-1]
+    assert result["outcome"] == "approve"
+    assert result["findings"]["journal_requests"] == [{"executed": False, "existing": True, "simulated": True,
+                                                       "request_id": payable["id"]}]
+    posting = result["findings"]["journal_posting"]
+    assert [entry["request_id"] for item in posting for entry in item["findings"]["entries"]] == [payable["id"]]
+    assert all(item["outcome"] == "approve" for item in posting)
 
 
 async def test_validator_passes_a_forecast_built_from_matched_deposits(agents):

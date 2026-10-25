@@ -19,7 +19,14 @@ from pydantic import ValidationError
 from agents.carrier_ap.tools import deposit_inputs, duplicate_invoices, match_workings, three_way_match
 from agents.documents.tools import check_packet
 from agents.risk.tools import audit_charges, charge_workings
-from common.agent_support import identifier, journal_lines, matched_deposit_total, money
+from common.agent_support import (
+    billing_journal_id,
+    identifier,
+    journal_lines,
+    matched_deposit_total,
+    money,
+    payable_journal_id,
+)
 from common.envelope import Friction, Lesson, ResultArtifact, ReviewOutput
 from common.learning import apply_instruction_patch, memory_scope
 from common.policy import APPROVAL_THRESHOLD_USD, CONTRACT_TOLERANCE
@@ -185,6 +192,29 @@ def totals(lines) -> tuple[Decimal, Decimal, list[dict]]:
     return debit, credit, items
 
 
+def journal_request_checks(c: Checks, name: str, receipts: list, stored: list[dict], request_id: str,
+                           amount: Decimal, debit_account: str, credit_account: str, *, posted: bool,
+                           basis: str) -> None:
+    """One expected journal request, matched by its deterministic ID: requested (or already posted) once,
+    balanced at the expected amount, and booked to the expected accounts."""
+    receipt = next((r for r in receipts if isinstance(r, dict) and (r.get("request_id") == request_id
+                    or (r.get("proposed_payload") or {}).get("id") == request_id)), None)
+    recorded = recorded_write(receipt, stored, request_id)
+    known = recorded is not None or receipt is not None or posted
+    if not c.add(f"{name}_requested", known, request_id[:12], known, basis=basis):
+        return
+    lines = (recorded or {}).get("lines")
+    if not lines:
+        return
+    debit, credit, items = totals(lines)
+    c.add(f"{name}_balanced", debit == credit == amount, str(amount),
+          {"debits": str(debit), "credits": str(credit)}, basis="P-006")
+    accounts = {"debit": sorted(str(x.get("account")) for x in items if money(x.get("debit", 0)) > 0),
+                "credit": sorted(str(x.get("account")) for x in items if money(x.get("credit", 0)) > 0)}
+    c.add(f"{name}_accounts", accounts == {"debit": [debit_account], "credit": [credit_account]},
+          {"debit": [debit_account], "credit": [credit_account]}, accounts, basis=basis)
+
+
 def active_holds(source: dict, invoice_id=None) -> list[dict]:
     return [hold for hold in source.get("holds", []) if hold.get("status") == "active"
             and (not invoice_id or not hold.get("invoice_id") or hold.get("invoice_id") == invoice_id)]
@@ -312,6 +342,17 @@ def review_carrier_ap(c: Checks, artifact: ResultArtifact, source: dict, skill: 
                   basis="an approve whose proposal was withdrawn paid nothing")
             if invoice > THRESHOLD:
                 approval_checks(c, source, recorded.get("approval_id"), requested_by="carrier_ap")
+        if expected_amount > 0 and source.get("invoice_id"):
+            # Proposing the bill accrues the carrier's cost once; no payment ever executes, so AP stays open.
+            if source.get("period") or source.get("issued_at"):
+                journal_request_checks(c, "payable_journal", findings.get("journal_requests") or [],
+                                       source.get("journal_requests", []), payable_journal_id(source["invoice_id"]),
+                                       expected_amount, "freight_expense", "accounts_payable",
+                                       posted=bool(findings.get("journal_posting")),
+                                       basis="a proposed carrier bill is booked once: Dr expense / Cr payable")
+            else:
+                c.add("payable_journal_requested", False, "an accounting period", None, severity=ADVISORY,
+                      basis="the carrier bill cannot be booked without a period")
     elif outcome in {"hold", "reject", "unverified"}:
         reasons = present + (["human_approval_rejected"] if human_rejected else []) \
             + (["approval_pending_above_threshold"] if pending_approval else [])
@@ -474,22 +515,20 @@ def review_shipper_ar(c: Checks, artifact: ResultArtifact, source: dict, skill: 
                                           or explanation["cash_impact"]),
               "deduction reason, collections contact or cash impact", explanation, severity=ADVISORY,
               basis="a short pay needs a reason code or a collections follow-up")
-    if skill == "reconcile_customer_payment" and total > 0:
+    if skill == "reconcile_customer_payment":
         posted = bool(findings.get("controller"))
         receipts = findings.get("journal_requests") or []
+        stored = source.get("journal_requests", [])
+        if invoice_id and owed > 0:
+            # The shipper invoice is recognised once, before any cash is applied against it.
+            journal_request_checks(c, "billing_journal", receipts, stored, billing_journal_id(invoice_id), owed,
+                                   "accounts_receivable", "freight_revenue", posted=posted,
+                                   basis="the shipper invoice is billed once: Dr receivable / Cr revenue")
         for deposit in matched:
-            request_id = identifier(f"{shipper_id}:{deposit['id']}", "receivable_journal_request")
-            receipt = next((r for r in receipts if isinstance(r, dict) and (r.get("request_id") == request_id
-                            or (r.get("proposed_payload") or {}).get("id") == request_id)), None)
-            recorded = recorded_write(receipt, source.get("journal_requests", []), request_id)
-            known = recorded is not None or receipt is not None or posted
-            if c.add("receivable_journal_requested", known, request_id[:12], known,
-                     basis="matched cash posts to the books once per deposit"):
-                debit, credit, lines = totals((recorded or {}).get("lines"))
-                if lines:
-                    c.add("receivable_journal_balanced", debit == credit == money(deposit["amount"]),
-                          str(money(deposit["amount"])), {"debits": str(debit), "credits": str(credit)},
-                          basis="P-006")
+            journal_request_checks(c, "receivable_journal", receipts, stored,
+                                   identifier(f"{shipper_id}:{deposit['id']}", "receivable_journal_request"),
+                                   money(deposit["amount"]), "cash", "accounts_receivable", posted=posted,
+                                   basis="matched cash posts to the books once per deposit")
 
 
 def review_cfo(c: Checks, artifact: ResultArtifact, source: dict) -> None:

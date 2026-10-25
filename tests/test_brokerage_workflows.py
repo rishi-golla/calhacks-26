@@ -238,7 +238,9 @@ async def test_repeated_collection_does_not_request_a_second_posted_deposit():
     source = invoice()
     source.update(shipper_invoice_id="AR-1", deposits=[{
         "id": "D-1", "invoice_id": "AR-1", "shipper_id": "S-OTHER", "amount": 600}],
-        journal_requests=[{"id": identifier("S-OTHER:D-1", "receivable_journal_request"),
+        journal_requests=[{"id": identifier("AR-1", "revenue_journal_request"),
+                           "case_id": source["case_id"], "posted_entry_id": "BILL-1"},
+                          {"id": identifier("S-OTHER:D-1", "receivable_journal_request"),
                            "case_id": source["case_id"], "posted_entry_id": "ENTRY-1"}])
     calls = []
     async def delegate(skill, *args, **kwargs):
@@ -246,7 +248,8 @@ async def test_repeated_collection_does_not_request_a_second_posted_deposit():
         return [{"outcome": "verified", "findings": {}}]
     result = await run_handler(ShipperArAgent, "reconcile_customer_payment", source, delegate=delegate)
     assert result.findings["journal_requests"] == []
-    assert result.findings["controller"] == ["ENTRY-1"]
+    # The billing was posted once already, ahead of the cash.
+    assert result.findings["controller"] == ["BILL-1", "ENTRY-1"]
     assert calls == ["assess_financial_impact"]
 
 
@@ -295,15 +298,19 @@ async def test_controller_rejects_an_unresolvable_batch_before_posting(request_i
 async def test_reconciliation_sends_all_deposit_requests_to_one_approval():
     source = invoice()
     deposits = [{"id": f"D-{i}", "invoice_id": "AR-1", "shipper_id": "S-OTHER", "amount": 300} for i in range(4)]
+    billing = journal_request(identifier("AR-1", "revenue_journal_request"), lines=[
+        {"account": "accounts_receivable", "debit": 1600, "credit": 0},
+        {"account": "freight_revenue", "debit": 0, "credit": 1600}])
     source.update(shipper_invoice_id="AR-1", deposits=deposits, journal_requests=[
-        journal_request(identifier(f"S-OTHER:D-{i}", "receivable_journal_request")) for i in range(4)])
+        journal_request(identifier(f"S-OTHER:D-{i}", "receivable_journal_request")) for i in range(4)] + [billing])
     calls = []
     async def delegate(skill, env, *args, **kwargs):
         calls.append((skill, env.subject.get("request_ids")))
         return [{"outcome": "approve", "findings": {}}]
     result = await run_handler(ShipperArAgent, "reconcile_customer_payment", source, delegate=delegate)
     assert result.findings["matched_amount"] == 1200
-    assert calls == [("approve_entry", [request["id"] for request in source["journal_requests"]]),
+    # One batch: the customer billing first, then every deposit, beside the cash impact.
+    assert calls == [("approve_entry", [billing["id"]] + [request["id"] for request in source["journal_requests"][:4]]),
                      ("assess_financial_impact", None)]
 
 def test_fixture_source_contains_multiple_financial_scenarios():

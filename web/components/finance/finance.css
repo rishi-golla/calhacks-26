@@ -929,22 +929,53 @@ a.fh-tick-text:hover {
   gap: 6px;
   white-space: nowrap;
 }
-.fh .fh-more {
-  width: 100%;
-  padding: 12px;
-  border-top: 1px solid var(--line-soft);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  transition:
-    color var(--t-hover) var(--ease-hover),
-    background-color var(--t-hover) var(--ease-hover);
+/* The invoices page fills the viewport and the table body scrolls in place.
+   The header sits outside the scroller rather than sticking over it: a nested
+   backdrop blur does not frost the rows beneath it, and an opaque band reads as
+   a stray rectangle over glass. Subgrid keeps the columns content-sized. */
+.fl-page.fh-inv-page {
+  height: 100%;
+  grid-template-rows: minmax(0, 1fr);
+  padding-bottom: 24px;
 }
-.fh .fh-more:hover {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.03);
+.fh-inv-page .fh-row-bottom,
+.fh-inv-page .fh-inv {
+  min-height: 0;
+}
+.fh-inv-page .fh-table-wrap {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.fh-inv-page .fh-table {
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) repeat(3, auto);
+  grid-template-rows: auto minmax(0, 1fr);
+  flex: 1 1 0;
+  min-height: 0;
+}
+.fh-inv-page .fh-table :is(thead, tbody, tr) {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+}
+.fh-inv-page .fh-table tbody {
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+/* Cells stretch so row rules line up; their content centers as vertical-align did. */
+.fh-inv-page .fh-table td {
+  /* globals.css caps bare tds at 340px, which real table cells ignore and grid items do not. */
+  max-width: none;
+  display: grid;
+  align-content: center;
+}
+.fh-inv-page .fh-table td > .fl-chip {
+  justify-self: start;
 }
 
 /* ------------------------------ responsive ------------------------------ */
@@ -967,6 +998,17 @@ a.fh-tick-text:hover {
   .fh-ticker-body {
     flex: none;
     height: 400px;
+  }
+  /* Stacked layout: the page scrolls again and the table gets its own cap. */
+  .fl-page.fh-inv-page {
+    height: auto;
+    grid-template-rows: none;
+  }
+  .fh-inv-page :is(.fh-table-wrap, .fh-table) {
+    flex: none;
+  }
+  .fh-inv-page .fh-table tbody {
+    max-height: 70vh;
   }
   /* The lineup becomes a swipeable strip. */
   .fh-crew {
@@ -1045,7 +1087,8 @@ a.fh-tick-text:hover {
   .fh-stat-value {
     font-size: 22px;
   }
-  .fh-opt {
+  .fh-opt,
+  .fh-inv-page .fh-table .fh-opt {
     display: none;
   }
   .fh-tick {

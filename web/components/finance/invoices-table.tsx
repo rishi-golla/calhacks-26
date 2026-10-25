@@ -1,8 +1,9 @@
 "use client";
 /**
  * Invoices & payments: open carrier invoices (with contract delta and hold
- * state) and payment proposals. Rows remount when their status changes, so a
- * status flip flashes the row.
+ * state) and payment proposals. Every row renders; the table scrolls inside
+ * the panel. Rows remount when their status changes, so a status flip flashes
+ * the row.
  */
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -14,7 +15,6 @@ import { fmtAgo, invoiceContractDelta } from "@/lib/ops";
 import { emptyNote, humanize, nick, usd, usdShort } from "./format";
 import { FreshTr, useSettled } from "./fresh";
 
-const LIMIT = 8;
 const OUTSTANDING = new Set(["proposed", "awaiting_approval"]);
 
 const STATUS_CHIP: Record<string, string> = {
@@ -46,7 +46,6 @@ function IdCell({ id, caseId, title }: { id: string; caseId: string; title?: str
 export function InvoicesPanel() {
   const { snapshot, now, finance, source } = useOps();
   const [tab, setTab] = useState<"invoices" | "proposals">("invoices");
-  const [showAll, setShowAll] = useState(false);
   const settled = useSettled();
 
   const companies = useMemo(() => new Map(snapshot.company.map((c) => [str(c.id), str(c.name)])), [snapshot.company]);
@@ -104,7 +103,6 @@ export function InvoicesPanel() {
 
   const needApproval = proposals.filter((p) => p.status === "awaiting_approval").length;
   const rows = tab === "invoices" ? invoices : proposals;
-  const visible = showAll ? rows : rows.slice(0, LIMIT);
 
   return (
     <section className="fl-panel fh-inv" aria-label="Invoices and payments">
@@ -164,7 +162,7 @@ export function InvoicesPanel() {
               </tr>
             </thead>
             <tbody>
-              {(visible as typeof invoices).map((r) => (
+              {invoices.map((r) => (
                 <FreshTr key={`${r.id}:${r.status}`} settled={settled}>
                   <td>
                     <IdCell
@@ -203,7 +201,7 @@ export function InvoicesPanel() {
               </tr>
             </thead>
             <tbody>
-              {(visible as typeof proposals).map((r) => (
+              {proposals.map((r) => (
                 <FreshTr key={`${r.id}:${r.status}`} settled={settled}>
                   <td>
                     <IdCell id={r.id} caseId={r.caseId} title={[r.at && `Proposed ${fmtAgo(r.at, now)}`, r.caseId && `Open ${r.caseId}`].filter(Boolean).join(" · ") || undefined} />
@@ -228,11 +226,6 @@ export function InvoicesPanel() {
           </table>
         )}
       </div>
-      {rows.length > LIMIT && (
-        <button className="fh-more" onClick={() => setShowAll((v) => !v)}>
-          {showAll ? "Show fewer" : "Show all"}
-        </button>
-      )}
     </section>
   );
 }

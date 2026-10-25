@@ -57,14 +57,16 @@ def test_apply_replaces_only_fixtures_in_state_and_remaps_lanes():
                        {"id": "L3", "carrier_id": "C-OFF-2"}]}
     reno = candidate()
     sparks = candidate(id="C-90000", usdot="90000", city="Sparks")
-    seeded, remap = seed.apply(world, {"run": RUN, "carriers": [reno, sparks]})
-    assert remap == {"C-OFF-1": "C-80806", "C-OFF-2": "C-90000"}  # same state first, then any unused carrier
+    stockton = candidate(id="C-70000", usdot="70000", city="Stockton", state="CA")
+    seeded, remap = seed.apply(world, {"run": RUN, "carriers": [reno, sparks, stockton]})
+    # Same state first, then any unused carrier; the hero keeps its record and hands over its lane.
+    assert remap == {"C-311": "C-70000", "C-OFF-1": "C-80806", "C-OFF-2": "C-90000"}
     assert seeded["carriers"][0] == world["carriers"][0]
-    assert seeded["carriers"][1]["terms"] == "QuickPay 2% / 2 days"
-    assert [lane["carrier_id"] for lane in seeded["lanes"]] == ["C-80806", "C-311", "C-90000"]
+    assert seeded["carriers"][2]["terms"] == "QuickPay 2% / 2 days"
+    assert [lane["carrier_id"] for lane in seeded["lanes"]] == ["C-80806", "C-70000", "C-90000"]
     assert "RUN12345" in seeded["sources"]["carriers"]
     with pytest.raises(SystemExit):
-        seed.apply(world, {"run": RUN, "carriers": [reno]})
+        seed.apply(world, {"run": RUN, "carriers": [reno, sparks]})
 
 
 def test_committed_snapshot_is_real_confirmed_and_unique():
@@ -102,3 +104,15 @@ def test_seeding_needs_an_existing_world(monkeypatch, tmp_path):
     monkeypatch.setattr("sys.argv", ["seed_real_carriers"])
     with pytest.raises(SystemExit, match="build a world first"):
         seed.main()
+
+
+def test_hero_carriers_keep_their_records_but_hand_their_lanes_to_real_carriers():
+    world = {"carriers": [{"id": "C-311", "usdot": "3141592", "state": "NV", "source": "prd_hero_fixture"},
+                          {"id": "C-77", "usdot": "7700770", "state": "NV", "source": "prd_hero_fixture"},
+                          {"id": "C-REAL", "usdot": "1", "state": "NV", "source": "fmcsa_census"}],
+             "lanes": [{"id": "L1", "carrier_id": "C-311"}, {"id": "L2", "carrier_id": "C-REAL"}]}
+    seeded, remap = seed.apply(world, {"run": RUN, "carriers": [candidate()]})
+    assert remap == {"C-311": "C-80806"}, "a hero carrier with no lanes is left alone"
+    assert [c["id"] for c in seeded["carriers"]] == ["C-311", "C-80806", "C-77", "C-REAL"]
+    assert [lane["carrier_id"] for lane in seeded["lanes"]] == ["C-80806", "C-REAL"]
+    assert seed.apply(seeded, {"run": RUN, "carriers": [candidate()]})[1] == {}, "re-applying changes nothing"

@@ -495,7 +495,7 @@ async def delegate_specialist(ctx: ToolContext, arguments: dict) -> dict:
 # narrow source/state contract; neither arbitrary SQL nor a generic mutation exists.
 _ROLE_TOOLS = {
     "carrier_ap": (match_carrier_invoice, find_duplicate_invoices, inspect_document_packet,
-                   read_settlement_state, audit_accessorials, find_similar_cases),
+                   read_settlement_state, audit_accessorials, find_similar_cases, lookup_carrier_authority),
     "shipper_ar": (match_customer_deposits, read_credit_evidence, inspect_journal, read_verified_directory,
                    inspect_company_website, inspect_outreach_readiness),
     "cfo": (calculate_load_margin, calculate_cash_exposure, read_settlement_state),
@@ -537,6 +537,21 @@ _DESCRIPTIONS = {
                           "from shared agent memory. Advisory: cite them, but the guarded workflow decides.",
     "integration_availability": "Report actual external connector availability and missing configuration names, never keys.",
 }
+
+
+# Checks a skill always runs, as the model's first call: the loop offers only these until each has been called,
+# so the call is a real, audited tool call the model reads and cites. A brokerage confirms the carrier's public
+# registration before it settles that carrier's bill; the result is evidence and never blocks the workflow.
+_FIRST_CALLS = {
+    "carrier_ap": {"process_carrier_invoice": ("lookup_carrier_authority",),
+                   "propose_payment": ("lookup_carrier_authority",)},
+}
+
+
+def first_calls(ctx: ToolContext, registry: dict[str, ToolSpec]) -> tuple[str, ...]:
+    """Tools this skill must call before any other, limited to tools the registry actually offers."""
+    required = _FIRST_CALLS.get(ctx.agent.name, {}).get(ctx.env.task_type, ())
+    return tuple(name for name in required if name in registry)
 
 
 def registry_for(ctx: ToolContext) -> dict[str, ToolSpec]:

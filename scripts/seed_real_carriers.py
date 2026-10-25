@@ -7,7 +7,9 @@ dockets, so every live `lookup_carrier_authority` came back `no_matching_source_
            company email domain whose website answers, confirms them in ONE pinned Apify FMCSA actor run (live
            SAFER authority, docket and status; ~$0.003 per carrier) and writes sim/fixtures/fmcsa_carriers.json.
   default  applies that snapshot: each offline_fixture carrier becomes a real one in the same state under a new
-           `C-<usdot>` id, and lanes are remapped. Hero fixtures are untouched. New ids keep already-ingested
+           `C-<usdot>` id, and lanes are remapped. The old hero carriers keep their records (code still names
+           them) but their lanes move to real carriers too, so every burst load settles with a real carrier.
+           New ids keep already-ingested
            cases from seeing a different USDOT under their old carrier id.
 
     make seed-carriers ARGS=--fetch    # spends Apify credit once (APIFY_TOKEN from ENV_FILE)
@@ -36,6 +38,8 @@ from sim import geo
 ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT = ROOT / "sim/fixtures/fmcsa_carriers.json"
 FIXTURE_SOURCE = "offline_fixture"
+# Fictional carriers kept by id (`sim.world.ensure` re-adds them) whose lanes still move to real carriers.
+LANE_ONLY_SOURCES = {"prd_hero_fixture"}
 # Mailbox providers say nothing about the carrier's own website.
 FREEMAIL = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "icloud.com", "live.com", "msn.com",
             "comcast.net", "att.net", "sbcglobal.net", "verizon.net", "ymail.com", "me.com", "protonmail.com",
@@ -170,16 +174,20 @@ def fetch(world: dict) -> dict:
 
 
 def apply(world: dict, snapshot: dict) -> tuple[dict, dict]:
-    """Slot each fixture carrier to an unused real carrier, same state first. Returns (world, old id -> new id)."""
+    """Slot each fixture carrier to an unused real carrier, same state first. Returns (world, old id -> new id).
+
+    An offline fixture is replaced outright; a hero carrier keeps its record and only hands its lanes over."""
     pool = defaultdict(list)
     for c in snapshot["carriers"]:
         pool[c["state"]].append(c)
     taken = {c.get("usdot") for c in world["carriers"] if c.get("source") != FIXTURE_SOURCE}
+    laned = {lane["carrier_id"] for lane in world["lanes"]}
     remap, carriers = {}, []
     for old in world["carriers"]:
         if old.get("source") != FIXTURE_SOURCE:
-            carriers.append(old)
-            continue
+            carriers.append(old)  # real carriers and hero records stay
+            if not (old.get("source") in LANE_ONLY_SOURCES and old["id"] in laned):
+                continue
         choices = [c for c in pool[old.get("state")] if c["usdot"] not in taken] \
             or [c for cs in pool.values() for c in cs if c["usdot"] not in taken]
         if not choices:

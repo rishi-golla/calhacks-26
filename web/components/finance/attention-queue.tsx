@@ -30,7 +30,7 @@ const KINDS: { kind: Kind; tag: string; group: string }[] = [
   { kind: "call_no_answer", tag: "No answer", group: "Unanswered calls" },
   { kind: "stale_agent", tag: "Stale", group: "Stale agents" },
 ];
-const KIND_META = Object.fromEntries(KINDS.map((k) => [k.kind, k])) as Record<Kind, (typeof KINDS)[number]>;
+export const KIND_META = Object.fromEntries(KINDS.map((k) => [k.kind, k])) as Record<Kind, (typeof KINDS)[number]>;
 /** Approval actions read better as plain requests than as reducer names. */
 const APPROVAL_TITLE: Record<string, string> = {
   propose_payment: "Release carrier payment",
@@ -38,7 +38,7 @@ const APPROVAL_TITLE: Record<string, string> = {
   post_journal_entry: "Post journal entry",
   set_credit_limit: "Set credit limit",
 };
-const titleFor = (item: AttentionItem) =>
+export const titleFor = (item: AttentionItem) =>
   item.kind === "approval_pending" ? (APPROVAL_TITLE[str(item.row.action, "")] ?? item.title) : item.title;
 const PER_GROUP = 4;
 
@@ -182,7 +182,7 @@ function AttentionRow({ item, settled }: { item: AttentionItem; settled: boolean
   );
 }
 
-function ApprovalActions({ item }: { item: AttentionItem }) {
+export function ApprovalActions({ item }: { item: AttentionItem }) {
   const { source, identity, mutate, simulated } = useOps();
   const [decision, setDecision] = useState<"approved" | "rejected" | null>(null);
   const [code, setCode] = useState("");

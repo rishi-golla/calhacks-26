@@ -1,8 +1,8 @@
 "use client";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Database, FlaskConical, Home, ListTree, Network, RefreshCw, Table2, Zap } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Activity, ArrowRight, Bell, Database, FlaskConical, Home, ListTree, Network, RefreshCw, Search, Sparkles, Table2, Zap } from "lucide-react";
 import { useOps, type DataMode } from "../data-provider";
 import { fmtAgo } from "@/lib/ops";
 import { Mascot } from "../mascot";
@@ -19,9 +19,10 @@ export default function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { ops } = useOps();
   const [ready, setReady] = useState(false);
+  const light = pathname === "/";
   const title = NAV.find((n) => (n.exact ? pathname === n.href : pathname.startsWith(n.href)))?.label ?? "FreightLine";
   return (
-    <div className="fl">
+    <div className={`fl ${light ? "theme-light" : ""}`}>
       <Intro onDone={() => setReady(true)} />
       <div className="fl-shell" style={{ opacity: ready ? 1 : 0, transition: "opacity 400ms var(--ease-out)" }}>
         <aside className="fl-rail">
@@ -57,22 +58,68 @@ export default function Shell({ children }: { children: ReactNode }) {
               </Link>
             ))}
           </nav>
-          <RailFoot />
+          {light ? <RailPromo /> : <RailFoot />}
         </aside>
         <header className="fl-topbar">
-          <span className="fl-crumb">
-            FreightLine <span style={{ color: "var(--text-mute)" }}>/</span> <strong>{title}</strong>
-          </span>
+          {light ? (
+            <TopSearch />
+          ) : (
+            <span className="fl-crumb">
+              FreightLine <span style={{ color: "var(--text-mute)" }}>/</span> <strong>{title}</strong>
+            </span>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Link href="/?focus=attention" className="fl-btn quiet small" aria-label={`${ops.approvalsPending} pending approvals`}>
               <Bell size={14} />
               {ops.approvalsPending > 0 && <span className="fl-num" style={{ color: "var(--orange)" }}>{ops.approvalsPending}</span>}
             </Link>
             <SourcePill />
+            {light && (
+              <span className="fl-user">
+                <Mascot id="human" size={32} />
+                <span>
+                  Controller
+                  <small>Golden Gate Freight</small>
+                </span>
+              </span>
+            )}
           </div>
         </header>
         <main className="fl-main">{children}</main>
       </div>
+    </div>
+  );
+}
+
+/** Searches cases (the Cases page reads `?q=`). */
+function TopSearch() {
+  const router = useRouter();
+  const [q, setQ] = useState("");
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    router.push(q.trim() ? `/cases?q=${encodeURIComponent(q.trim())}` : "/cases");
+  };
+  return (
+    <form className="fl-search" role="search" onSubmit={submit}>
+      <Search size={16} />
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search cases, carriers, invoices, loads…" aria-label="Search cases" />
+    </form>
+  );
+}
+
+function RailPromo() {
+  const { ops, workloads } = useOps();
+  const working = Object.values(workloads).filter((w) => w.status === "working").length;
+  return (
+    <div className="fl-rail-foot fl-promo">
+      <Sparkles size={18} />
+      <b>Your back office runs itself</b>
+      <span>
+        {working}/{Object.keys(workloads).length} agents busy · {ops.tasksActive} tasks · {ops.casesActive} open cases
+      </span>
+      <Link href="/agents" className="fl-promo-btn">
+        Open agent map <ArrowRight size={13} />
+      </Link>
     </div>
   );
 }

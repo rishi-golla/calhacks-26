@@ -4,47 +4,59 @@
  * back office that keeps it, in real time. Everything renders from `useOps()`
  * (live SpacetimeDB or the labeled browser simulation); nothing polls.
  *
- * Top to bottom: header → 4 KPI tiles → cash position + forecast | needs
- * attention → autonomous operations → agent crew → invoices & payments | live
- * ledger ticker.
+ * Layout: greeting → 4 KPI cards → needs attention | cash flow, cash position
+ * + operations | payables breakdown, live ledger, automation goal → agent crew
+ * → invoices & payments.
  */
-import { Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import Link from "next/link";
+import { Suspense, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useSearchParams } from "next/navigation";
+import { ArrowDown, ArrowRight, ArrowUp, CalendarDays, HandCoins, Lightbulb, Receipt, Target, TrendingUp, Wallet, type LucideIcon } from "lucide-react";
 import { useOps } from "@/components/data-provider";
-import { AGENT_IDS } from "@/lib/agents";
-import { fmtAgo, fmtDuration } from "@/lib/ops";
+import { Mascot } from "@/components/mascot";
+import { fmtAgo, fmtDuration, type AttentionItem, type TrendPoint } from "@/lib/ops";
 import { AgentCrew } from "./agent-crew";
-import { AttentionQueue } from "./attention-queue";
-import { ForecastBars, LineChart, MiniBars, Sparkline } from "./charts";
+import { ApprovalActions, KIND_META, titleFor } from "./attention-queue";
+import { LineChart } from "./charts";
 import { CountUp } from "./count-up";
-import { change, count, dayLabel, emptyNote, signedShort, usd, usdShort } from "./format";
+import { change, count, dayLabel, emptyNote, nick, periodLabel, usd, usdShort } from "./format";
 import { InvoicesPanel } from "./invoices-table";
 import { LiveTicker } from "./live-ticker";
 import "./finance.css";
+import "./finora.css";
 
-const pct1 = (v: number) => `${v.toFixed(1)}%`;
-const perHour = (v: number) => `${Math.round(v)}/h`;
-const hours = (v: number) => `${count(v)} h`;
-const reveal = (i: number) => ({ "--delay": `${i * 70}ms` }) as CSSProperties;
+type Range = 7 | 30;
+const pct0 = (v: number) => `${Math.round(v)}%`;
+const reveal = (i: number) => ({ "--delay": `${i * 60}ms` }) as CSSProperties;
+const GOAL = 0.8;
 
 export default function FinanceHome() {
+  const [range, setRange] = useState<Range>(30);
   return (
-    <div className="fl-page fh">
-      <Header />
-      <KpiTiles />
-      <div className="fh-row fh-row-main fl-reveal" style={reveal(2)}>
-        <CashPanel />
-        <AttentionQueue id="attention" />
-      </div>
-      <div className="fl-reveal" style={reveal(3)}>
-        <OpsStrip />
+    <div className="fl-page fh fn">
+      <div className="fn-grid">
+        <div className="fn-main">
+          <Greeting range={range} setRange={setRange} />
+          <KpiCards range={range} />
+          <div className="fn-row2 fl-reveal" style={reveal(2)}>
+            <AttentionList />
+            <CashFlow />
+          </div>
+          <div className="fl-reveal" style={reveal(3)}>
+            <CashPosition range={range} />
+          </div>
+        </div>
+        <aside className="fn-side fl-reveal" style={reveal(1)}>
+          <PayablesDonut />
+          <LiveTicker />
+          <AutomationGoal />
+        </aside>
       </div>
       <div className="fl-reveal" style={reveal(4)}>
         <AgentCrew />
       </div>
-      <div className="fh-row fh-row-bottom fl-reveal" style={reveal(5)}>
+      <div className="fl-reveal" style={reveal(5)}>
         <InvoicesPanel />
-        <LiveTicker />
       </div>
       <Suspense fallback={null}>
         <FocusFromQuery />
@@ -53,371 +65,373 @@ export default function FinanceHome() {
   );
 }
 
-/* ------------------------------- header ------------------------------- */
-
-function Header() {
-  const { source, simulated, ops, attention, now, lastUpdated } = useOps();
-  const total = AGENT_IDS.length;
-  const online = Math.min(total, ops.agentsOnline);
-  const provenance = simulated ? "Simulated" : source === "live" ? "Live" : source === "fallback" ? "Snapshot" : source === "connecting" ? "Connecting" : "Offline";
+function CardHead({ title, href, more = "View all" }: { title: string; href?: string; more?: string }) {
   return (
-    <header className="fh-header fl-reveal" style={reveal(0)}>
-      <div className="fh-header-id">
-        <div className="fl-section" style={{ "--accent": simulated ? "var(--lilac)" : "var(--teal)" } as CSSProperties}>
-          Financial health · {provenance}
-        </div>
-        <h1 className="fl-display fh-wordmark">Golden Gate Freight</h1>
-        <div className="fh-header-sub">
-          Autonomous back office · <span className="fl-num">{count(ops.casesActive)}</span> open cases ·{" "}
-          <span className="fl-num">{count(ops.tasksActive)}</span> tasks in flight
-        </div>
-      </div>
-      <div className="fh-header-status">
-        <div className="fh-chips">
-          {simulated && (
-            <span className="fl-chip agent outline" title="Rows are generated in this browser and are not recorded anywhere">
-              Simulated
-            </span>
-          )}
-          <span className={`fl-chip outline ${online === total ? "ok" : online > 0 ? "warn" : ""}`}>
-            <i className={`fl-dot ${online ? "pulse" : ""}`} />
-            {online}/{total} agents online
-          </span>
-          <a href="#attention" className={`fl-chip outline ${attention.length ? "hot" : source === "live" || simulated ? "ok" : ""}`}>
+    <header className="fn-card-head">
+      <h2>{title}</h2>
+      {href && (
+        <Link href={href} className="fn-more">
+          {more} <ArrowRight size={13} />
+        </Link>
+      )}
+    </header>
+  );
+}
+
+function Greeting({ range, setRange }: { range: Range; setRange: (r: Range) => void }) {
+  const { source, simulated, ops, attention, now, lastUpdated } = useOps();
+  const hour = new Date(now).getHours();
+  const part = hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+  const provenance = simulated ? "Simulated" : source === "live" ? "Live" : source === "fallback" ? "Snapshot" : source === "connecting" ? "Connecting" : "Offline";
+  const from = now - (range - 1) * 86_400_000;
+  return (
+    <header className="fn-greet fl-reveal" style={reveal(0)}>
+      <div>
+        <h1>
+          Good {part}, Controller <span className="fn-sun" aria-hidden />
+        </h1>
+        <p>
+          Here&apos;s your back office at a glance.{" "}
+          <span className={`fn-prov ${source}`}>
+            <i /> {provenance}
+          </span>{" "}
+          {lastUpdated ? `updated ${fmtAgo(lastUpdated, now)}` : "no updates yet"}
+          {simulated && " · browser simulation, nothing is written"}
+        </p>
+        <div className="fn-chips">
+          <Link href="/cases">{count(ops.casesActive)} active cases</Link>
+          <Link href="/agents">{count(ops.tasksActive)} tasks in flight</Link>
+          <Link href="/agents">{ops.agentsOnline}/9 agents online</Link>
+          <a href="#attention" className={attention.length ? "hot" : "ok"}>
             {attention.length} need attention
           </a>
         </div>
-        <div className="fl-micro" suppressHydrationWarning>
-          {lastUpdated ? `Updated ${fmtAgo(lastUpdated, now)}` : source === "connecting" ? "Connecting…" : "No updates yet"}
+      </div>
+      <div className="fn-range" role="group" aria-label="Date range">
+        <CalendarDays size={15} />
+        <span>
+          {dayLabel(from)} – {dayLabel(now)}
+        </span>
+        <div className="fn-seg">
+          {([7, 30] as const).map((r) => (
+            <button key={r} className={range === r ? "on" : ""} onClick={() => setRange(r)} aria-pressed={range === r}>
+              {r}D
+            </button>
+          ))}
         </div>
       </div>
     </header>
   );
 }
 
-/* ------------------------------ KPI tiles ------------------------------ */
+const KPIS: { key: "cash" | "ap" | "ar" | "revenue"; label: string; icon: LucideIcon; tone: string; good: "up" | "down" }[] = [
+  { key: "cash", label: "Cash balance", icon: Wallet, tone: "green", good: "up" },
+  { key: "ar", label: "Receivables", icon: HandCoins, tone: "violet", good: "up" },
+  { key: "ap", label: "Payables", icon: Receipt, tone: "blue", good: "down" },
+  { key: "revenue", label: "Revenue MTD", icon: TrendingUp, tone: "pink", good: "up" },
+];
 
-type Tile = {
-  key: string;
-  label: string;
-  /** Used on phones where the long label would truncate. */
-  short: string;
-  value: number;
-  color: string;
-  series: number[];
-  good: "up" | "down" | "none";
-  delta: ReactNode;
-  foot: ReactNode;
-};
-
-/** Change over the series: percent when the start is non-zero, else the dollar change. */
-function Delta({ change: c, good }: { change: { abs: number; pct: number | null }; good: "up" | "down" | "none" }) {
-  const v = c.pct ?? c.abs;
-  const eps = c.pct == null ? 0.5 : 0.0005;
-  const dir = v > eps ? "up" : v < -eps ? "down" : "flat";
-  const tone = good === "none" || dir === "flat" ? "flat" : dir === good ? "ok" : "hot";
+function KpiCards({ range }: { range: Range }) {
+  const { finance } = useOps();
+  const values = { cash: finance.cash, ap: finance.ap, ar: finance.ar, revenue: finance.revenueMtd };
   return (
-    <span className={`fh-delta ${tone}`}>
-      {dir === "up" ? "▲" : dir === "down" ? "▼" : "■"} {c.pct == null ? usdShort(Math.abs(c.abs)) : `${Math.abs(c.pct * 100).toFixed(1)}%`}
-      <span className="fh-delta-span"> 30d</span>
-    </span>
-  );
-}
-
-function KpiTiles() {
-  const { finance, snapshot, source } = useOps();
-  const hasLedger = snapshot.ledger_entry.length > 0;
-  const series = useMemo(
-    () => ({
-      cash: finance.trends.cash.map((p) => p.value),
-      ap: finance.trends.ap.map((p) => p.value),
-      ar: finance.trends.ar.map((p) => p.value),
-      revenue: finance.trends.revenue.map((p) => p.value),
-    }),
-    [finance.trends],
-  );
-  const cashChange = change(finance.trends.cash);
-  const dso = finance.revenue30d > 0 ? finance.ar / (finance.revenue30d / 30) : 0;
-  const tiles: Tile[] = [
-    {
-      key: "cash",
-      label: "Cash",
-      short: "Cash",
-      value: finance.cash,
-      color: "var(--teal)",
-      series: series.cash,
-      good: "up",
-      delta: <Delta change={cashChange} good="up" />,
-      foot: (
-        <>
-          <span className={cashChange.abs >= 0 ? "fh-ok" : "fh-hot"}>{signedShort(cashChange.abs)}</span> vs 30 days ago
-        </>
-      ),
-    },
-    {
-      key: "ap",
-      label: "Accounts payable",
-      short: "Payables",
-      value: finance.ap,
-      color: "var(--aqua)",
-      series: series.ap,
-      good: "none",
-      delta: <Delta change={change(finance.trends.ap)} good="none" />,
-      foot: (
-        <>
-          <b className="fl-num">{count(finance.outstandingInvoices.count)}</b> open invoices · <b className="fl-num">{count(finance.heldInvoices.count)}</b> held
-          {finance.overdueInvoices.count > 0 && (
-            <span className="fh-hot">
-              {" "}
-              · {count(finance.overdueInvoices.count)} overdue
+    <div className="fn-kpis fl-reveal" style={reveal(1)}>
+      {KPIS.map((k) => {
+        const series = finance.trends[k.key].slice(-range);
+        const d = change(series);
+        const up = d.abs >= 0;
+        const good = (up && k.good === "up") || (!up && k.good === "down");
+        return (
+          <section key={k.key} className="fn-card fn-kpi" aria-label={k.label}>
+            <span className={`fn-icon ${k.tone}`}>
+              <k.icon size={18} />
             </span>
-          )}
-        </>
-      ),
-    },
-    {
-      key: "ar",
-      label: "Accounts receivable",
-      short: "Receivables",
-      value: finance.ar,
-      color: "var(--lilac)",
-      series: series.ar,
-      good: "none",
-      delta: <Delta change={change(finance.trends.ar)} good="none" />,
-      foot: dso ? (
-        <>
-          <b className="fl-num">{Math.round(dso)}</b> days sales outstanding
-        </>
-      ) : (
-        "No revenue in the last 30 days"
-      ),
-    },
-    {
-      key: "revenue",
-      label: "Revenue MTD",
-      short: "Rev MTD",
-      value: finance.revenueMtd,
-      color: "var(--yellow)",
-      series: series.revenue,
-      good: "up",
-      delta: <span className="fh-delta flat">30d {usdShort(finance.revenue30d)}</span>,
-      foot: (
-        <>
-          Gross margin <b className="fl-num">{pct1(finance.grossMarginPct)}</b> · 30 days
-        </>
-      ),
-    },
-  ];
-  const note = emptyNote(source, "No ledger entries yet");
-  return (
-    <div className="fh-kpis fl-reveal" style={reveal(1)}>
-      {tiles.map((t) => (
-        <section key={t.key} className="fh-kpi" aria-label={`${t.label}: ${hasLedger ? usd(t.value) : note}`} style={{ "--c": t.color } as CSSProperties}>
-          <div className="fh-kpi-head">
-            <span className="fh-kpi-label">
-              <span className="fh-long">{t.label}</span>
-              <span className="fh-short" aria-hidden>
-                {t.short}
-              </span>
-            </span>
-            {hasLedger && t.delta}
-          </div>
-          <div className="fh-kpi-value fl-num">{hasLedger ? <CountUp value={t.value} format={usd} good={t.good} /> : <span className="fh-mute">—</span>}</div>
-          <div className="fh-kpi-spark">{hasLedger ? <Sparkline values={t.series} color={t.color} height={40} /> : <div className="fh-spark-empty" />}</div>
-          <div className="fh-kpi-foot">{hasLedger ? t.foot : note}</div>
-        </section>
-      ))}
+            <div className="fn-kpi-label">{k.label}</div>
+            <div className="fn-kpi-value">
+              <CountUp value={values[k.key]} format={usd} good={k.good} />
+            </div>
+            <div className={`fn-delta ${d.abs === 0 ? "" : good ? "good" : "bad"}`}>
+              {d.abs !== 0 && (up ? <ArrowUp size={13} /> : <ArrowDown size={13} />)}
+              {d.pct === null ? usdShort(Math.abs(d.abs)) : `${Math.abs(d.pct * 100).toFixed(1)}%`}
+            </div>
+            <div className="fn-kpi-foot">vs. {range} days ago</div>
+          </section>
+        );
+      })}
     </div>
   );
 }
 
-/* ---------------------------- cash position ---------------------------- */
+const TONE: Record<AttentionItem["severity"], string> = { critical: "red", high: "amber", medium: "violet", low: "grey" };
 
-function CashPanel() {
-  const { finance, snapshot, source } = useOps();
-  const [range, setRange] = useState<7 | 30>(30);
-  const [hover, setHover] = useState<number | null>(null);
-  const points = useMemo(() => finance.trends.cash.slice(-(range + 1)), [finance.trends.cash, range]);
-  const hasLedger = snapshot.ledger_entry.length > 0;
-  const delta = change(points);
-  const hovered = hover != null ? points[hover] : null;
-  const forecast = finance.forecast.slice(0, 8);
-  const sevenDayNet = forecast.slice(0, 1)[0]?.net ?? 0;
-
+function AttentionList() {
+  const { attention, source, now } = useOps();
+  const [filter, setFilter] = useState<AttentionItem["kind"] | "all">("all");
+  const [all, setAll] = useState(false);
+  const kinds = useMemo(() => {
+    const m = new Map<AttentionItem["kind"], number>();
+    for (const a of attention) m.set(a.kind, (m.get(a.kind) ?? 0) + 1);
+    return [...m.entries()];
+  }, [attention]);
+  const shown = attention.filter((a) => filter === "all" || a.kind === filter);
+  const rows = all ? shown : shown.slice(0, 5);
   return (
-    <section className="fl-panel fh-cash" aria-label="Cash position">
-      <header className="fl-panel-head">
-        <span className="fl-section">Cash position · {range} days</span>
-        <div className="fl-tabs fh-range" role="tablist" aria-label="Range">
-          {([7, 30] as const).map((r) => (
-            <button
-              key={r}
-              role="tab"
-              aria-selected={range === r}
-              className={`fl-tab ${range === r ? "active" : ""}`}
-              onClick={() => {
-                setRange(r);
-                setHover(null);
-              }}
-            >
-              {r}D
+    <section id="attention" className="fn-card fn-att" aria-label="Needs attention">
+      <header className="fn-card-head">
+        <h2>
+          Needs attention <span className="fn-badge">{attention.length}</span>
+        </h2>
+        {shown.length > 5 && (
+          <button className="fn-more" onClick={() => setAll((v) => !v)}>
+            {all ? "Show less" : `View all ${shown.length}`} <ArrowRight size={13} />
+          </button>
+        )}
+      </header>
+      {kinds.length > 1 && (
+        <div className="fn-filter" role="tablist" aria-label="Filter by kind">
+          <button className={filter === "all" ? "on" : ""} onClick={() => setFilter("all")} role="tab" aria-selected={filter === "all"}>
+            All
+          </button>
+          {kinds.map(([k, n]) => (
+            <button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)} role="tab" aria-selected={filter === k}>
+              {KIND_META[k].tag} <b>{n}</b>
             </button>
           ))}
         </div>
-      </header>
-      {hasLedger ? (
-        <>
-          <div className="fh-cash-top">
-            <div className="fh-cash-value fl-num">
-              <span className={hovered ? "fh-hidden" : ""}>
-                <CountUp value={finance.cash} format={usd} good="up" />
-              </span>
-              {hovered && <span className="fh-cash-hover">{usd(hovered.value)}</span>}
-            </div>
-            <div className="fh-cash-sub">
-              {hovered ? (
-                <span className="fl-micro">{hover === points.length - 1 ? "Today" : dayLabel(hovered.t)} · closing balance</span>
-              ) : (
-                <>
-                  <span className={delta.abs >= 0 ? "fh-ok" : "fh-hot"}>
-                    {delta.abs >= 0 ? "▲" : "▼"} {signedShort(delta.abs)}
-                    {delta.pct != null && ` (${Math.abs(delta.pct * 100).toFixed(1)}%)`}
-                  </span>
-                  <span className="fl-micro">past {range} days</span>
-                </>
-              )}
-            </div>
-          </div>
-          <LineChart
-            points={points}
-            color="var(--teal)"
-            drawKey={String(range)}
-            hover={hover}
-            onHover={setHover}
-            label={`Cash position over ${range} days, currently ${usd(finance.cash)}, ${delta.abs >= 0 ? "up" : "down"} ${usd(Math.abs(delta.abs))}`}
-          />
-        </>
-      ) : (
-        <div className="fh-empty fh-cash-empty">
-          <div>
-            <div className="fl-label strong">{emptyNote(source, "No ledger entries yet")}</div>
-            <div className="fh-empty-sub">
-              {source === "offline" ? "Reconnect from the source menu in the top bar." : "The cash line starts with the first posted journal entry."}
-            </div>
-          </div>
-        </div>
       )}
-      <div className="fh-fc-wrap">
-        <div className="fh-fc-head">
-          <span className="fl-section" style={{ "--accent": "var(--aqua)" } as CSSProperties}>
-            Cash forecast
-          </span>
-          {forecast.length > 0 && (
-            <span className="fh-legend">
-              <span>
-                <i className="in" /> Inflow
-              </span>
-              <span>
-                <i className="out" /> Outflow
-              </span>
-              <span>
-                <i className="net" /> Net
-              </span>
-              <span className="fh-legend-note">Fade = lower confidence</span>
-            </span>
-          )}
+      {rows.length === 0 ? (
+        <div className="fn-empty">
+          <Mascot id="validator" size={56} mood={source === "live" || source === "simulation" ? "success" : "sleeping"} />
+          <span>{emptyNote(source, "All clear. Nothing is waiting on a person.")}</span>
         </div>
-        {forecast.length ? (
-          <>
-            <ForecastBars rows={forecast} />
-            <div className="fh-fc-note">
-              Next period nets <b className={`fl-num ${sevenDayNet >= 0 ? "fh-ok" : "fh-hot"}`}>{signedShort(sevenDayNet)}</b> · {forecast.length} periods forecast
-            </div>
-          </>
-        ) : (
-          <div className="fh-empty-sub fh-fc-empty">
-            {source === "offline" || source === "connecting" ? emptyNote(source, "") : "No forecast rows yet. Load Profitability (Margin) writes them as cases settle."}
-          </div>
-        )}
-      </div>
+      ) : (
+        <ul className="fn-list">
+          {rows.map((item) => (
+            <li key={item.id} className="fn-att-row">
+              <span className="fn-avatar">
+                <Mascot id={item.agent || "human"} size={30} title={nick(item.agent)} />
+              </span>
+              <div className="fn-row-main">
+                <Link href={item.caseId ? `/cases/${encodeURIComponent(item.caseId)}` : "/cases"} className="fn-row-title">
+                  {titleFor(item)}
+                </Link>
+                <div className="fn-row-sub">
+                  {nick(item.agent)} · {item.caseId || "no case"} · {fmtAgo(item.at, now)}
+                </div>
+                {item.kind === "approval_pending" && <ApprovalActions item={item} />}
+              </div>
+              <div className="fn-row-right">
+                {item.amount > 0 && <span className="fn-amt">{usd(item.amount)}</span>}
+                <span className={`fn-pill ${TONE[item.severity]}`}>{KIND_META[item.kind].tag}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
 
-/* ------------------------- autonomous operations ------------------------- */
+function CashFlow() {
+  const { finance, source } = useOps();
+  const rows = finance.forecast;
+  const max = Math.max(1, ...rows.flatMap((r) => [r.inflow, r.outflow]));
+  const net = rows.reduce((s, r) => s + r.net, 0);
+  return (
+    <section className="fn-card fn-flow" aria-label="Cash flow forecast">
+      <header className="fn-card-head">
+        <h2>Cash flow</h2>
+        <div className="fn-legend">
+          <span>
+            <i className="green" /> Inflow
+          </span>
+          <span>
+            <i className="violet" /> Outflow
+          </span>
+        </div>
+      </header>
+      {rows.length === 0 ? (
+        <div className="fn-empty">{emptyNote(source, "No forecast yet.")}</div>
+      ) : (
+        <>
+          <div className="fn-bars" role="img" aria-label={`Forecast net ${usdShort(net)}`}>
+            {[1, 0.75, 0.5, 0.25, 0].map((f) => (
+              <span key={f} className="fn-bars-grid" style={{ bottom: `${f * 100}%` }}>
+                {usdShort(max * f)}
+              </span>
+            ))}
+            {rows.map((r) => (
+              <div key={r.period} className="fn-bar-col" title={`${periodLabel(r.period)}: in ${usd(r.inflow)}, out ${usd(r.outflow)}, net ${usd(r.net)}`}>
+                <div className="fn-bar-pair">
+                  <span className="fn-bar green" style={{ height: `${(r.inflow / max) * 100}%` }} />
+                  <span className="fn-bar violet" style={{ height: `${(r.outflow / max) * 100}%` }} />
+                </div>
+                <span className="fn-bar-label">{periodLabel(r.period)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="fn-flow-foot">
+            Projected net <b className={net >= 0 ? "good" : "bad"}>{usd(net)}</b> over {rows.length} periods
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
 
-const BUCKET_MS = 600_000;
-const BUCKETS = 12;
-
-function OpsStrip() {
-  const { ops, caseList, now } = useOps();
-  const bucketEnd = (Math.floor(now / BUCKET_MS) + 1) * BUCKET_MS;
-  const dayStart = new Date(now).setHours(0, 0, 0, 0);
-  const { buckets, today } = useMemo(() => {
-    const b = new Array<number>(BUCKETS).fill(0);
-    let opened = 0;
-    for (const c of caseList) {
-      if (c.openedAt >= dayStart) opened++;
-      if (!c.resolvedAt) continue;
-      const i = BUCKETS - 1 - Math.floor((bucketEnd - 1 - c.resolvedAt) / BUCKET_MS);
-      if (i >= 0 && i < BUCKETS) b[i]++;
-    }
-    return { buckets: b, today: opened };
-  }, [caseList, bucketEnd, dayStart]);
-
-  const stats: { label: string; value: number; format: (n: number) => string; sub: string }[] = [
-    { label: "Cases today", value: today, format: count, sub: `${count(ops.casesTotal)} all time` },
-    { label: "Automation", value: ops.automationRate * 100, format: pct1, sub: "no human touch · last 20 min" },
-    { label: "Active cases", value: ops.casesActive, format: count, sub: `${count(ops.tasksActive)} tasks in flight` },
-    { label: "Throughput", value: ops.throughputPerHour, format: perHour, sub: "resolved, last hour" },
-    { label: "Time saved", value: ops.minutesSaved / 60, format: hours, sub: "est. 18 min per case" },
-    { label: "Handoffs", value: ops.handoffs, format: count, sub: "agent → agent" },
-    { label: "Tool calls", value: ops.toolCalls, format: count, sub: "completed" },
-    { label: "Median resolution", value: ops.medianResolutionS, format: fmtDuration, sub: "opened → resolved" },
+function CashPosition({ range }: { range: Range }) {
+  const { finance, ops, source } = useOps();
+  const [hover, setHover] = useState<number | null>(null);
+  const points: TrendPoint[] = finance.trends.cash.slice(-range);
+  const d = change(points);
+  const at = hover === null ? null : points[hover];
+  const stats = [
+    { label: "Cases resolved today", value: count(ops.casesResolvedToday), tone: "green" },
+    { label: "Throughput", value: `${Math.round(ops.throughputPerHour)}/h`, tone: "violet" },
+    { label: "Median resolution", value: fmtDuration(ops.medianResolutionS), tone: "blue" },
+    { label: "Clerk time saved", value: `${count(ops.minutesSaved / 60)} h`, tone: "amber" },
+    { label: "Handoffs · tool calls", value: `${count(ops.handoffs)} · ${count(ops.toolCalls)}`, tone: "pink" },
   ];
   return (
-    <section className="fl-panel fh-ops" aria-label="Autonomous operations">
-      <header className="fl-panel-head">
-        <span className="fl-section" style={{ "--accent": "var(--lilac)" } as CSSProperties}>
-          Autonomous operations
-        </span>
-        <span className="fl-micro">
-          {count(ops.approvalsPending)} approvals pending · {count(ops.holdsActive)} holds active
-        </span>
-      </header>
-      <div className="fh-ops-grid">
-        <div className="fh-ops-hero">
-          <div className="fh-stat-label">Cases resolved</div>
-          <div className="fh-stat-value fl-num">
-            <CountUp value={ops.casesResolved} format={count} />
-          </div>
-          <div className="fh-stat-sub">
-            {count(ops.casesResolvedToday)} today · per 10 min below
-          </div>
-          <div role="img" aria-label={`Cases resolved per 10 minutes over the last 2 hours: ${buckets.join(", ")}`}>
-            <MiniBars values={buckets} color="var(--lilac)" />
-            <div className="fh-minibars-axis">
-              <span>−2h</span>
-              <span>−1h</span>
-              <span>{buckets[BUCKETS - 1]} now</span>
+    <section className="fn-card fn-pos" aria-label="Cash position">
+      <div className="fn-pos-chart">
+        <CardHead title="Cash position" />
+        <div className="fn-pos-top">
+          <div className="fn-pos-value">{usd(at ? at.value : finance.cash)}</div>
+          <div className="fn-kpi-foot">{at ? dayLabel(at.t) : `Today · last ${range} days`}</div>
+          {!at && points.length > 1 && (
+            <div className={`fn-delta ${d.abs >= 0 ? "good" : "bad"}`}>
+              {d.abs >= 0 ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+              {d.pct === null ? usdShort(Math.abs(d.abs)) : `${Math.abs(d.pct * 100).toFixed(1)}%`}
             </div>
-          </div>
+          )}
         </div>
-        {stats.map((s) => (
-          <div key={s.label} className="fh-stat">
-            <div className="fh-stat-label">{s.label}</div>
-            <div className="fh-stat-value fl-num">
-              <CountUp value={s.value} format={s.format} good="none" />
-            </div>
-            <div className="fh-stat-sub">{s.sub}</div>
-          </div>
-        ))}
+        {points.length < 2 ? (
+          <div className="fn-empty">{emptyNote(source, "Not enough history to chart yet.")}</div>
+        ) : (
+          <LineChart points={points} color="#7c5cfc" height={170} drawKey={`cash-${range}`} label="Cash position" hover={hover} onHover={setHover} />
+        )}
+      </div>
+      <div className="fn-pos-stats">
+        <CardHead title="Operations" href="/agents" more="Agents" />
+        <ul className="fn-list">
+          {stats.map((s) => (
+            <li key={s.label} className="fn-stat">
+              <span className={`fn-dot ${s.tone}`} />
+              <span className="fn-stat-label">{s.label}</span>
+              <span className="fn-stat-value">{s.value}</span>
+            </li>
+          ))}
+        </ul>
       </div>
     </section>
   );
 }
 
-/* ------------------------------ deep links ------------------------------ */
+const DONUT_TONES = ["#7c5cfc", "#f5a524", "#ef5d6c", "#22c08a"];
+
+function PayablesDonut() {
+  const { finance, source } = useOps();
+  const held = finance.heldInvoices.amount;
+  const overdue = Math.min(finance.overdueInvoices.amount, Math.max(0, finance.outstandingInvoices.amount - held));
+  const clear = Math.max(0, finance.outstandingInvoices.amount - held - overdue);
+  const segs = [
+    { label: "Open, on terms", amount: clear, n: Math.max(0, finance.outstandingInvoices.count - finance.heldInvoices.count) },
+    { label: "Overdue 30d+", amount: overdue, n: finance.overdueInvoices.count },
+    { label: "On hold", amount: held, n: finance.heldInvoices.count },
+    { label: "Payments proposed", amount: finance.paymentsProposed.amount, n: finance.paymentsProposed.count },
+  ];
+  const total = segs.reduce((s, x) => s + x.amount, 0);
+  const R = 52;
+  const C = 2 * Math.PI * R;
+  let acc = 0;
+  return (
+    <section className="fn-card fn-donut" aria-label="Payables breakdown">
+      <CardHead title="Payables breakdown" href="/cases" />
+      {total <= 0 ? (
+        <div className="fn-empty">{emptyNote(source, "No open carrier invoices.")}</div>
+      ) : (
+        <div className="fn-donut-body">
+          <div className="fn-donut-ring">
+            <svg viewBox="0 0 140 140" aria-hidden>
+              <circle cx="70" cy="70" r={R} className="fn-donut-track" />
+              {segs.map((s, i) => {
+                const len = (s.amount / total) * C;
+                const el = (
+                  <circle
+                    key={s.label}
+                    cx="70"
+                    cy="70"
+                    r={R}
+                    stroke={DONUT_TONES[i]}
+                    strokeDasharray={`${Math.max(0, len - 3)} ${C}`}
+                    strokeDashoffset={-acc}
+                    className="fn-donut-seg"
+                  />
+                );
+                acc += len;
+                return el;
+              })}
+            </svg>
+            <div className="fn-donut-center">
+              <b>{usdShort(total)}</b>
+              <span>Committed</span>
+            </div>
+          </div>
+          <ul className="fn-donut-legend">
+            {segs.map((s, i) => (
+              <li key={s.label}>
+                <i style={{ background: DONUT_TONES[i] }} />
+                <span>
+                  {s.label}
+                  <small>{s.n} items</small>
+                </span>
+                <em>{pct0((s.amount / total) * 100)}</em>
+                <b>{usdShort(s.amount)}</b>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AutomationGoal() {
+  const { ops } = useOps();
+  const rate = ops.automationRate;
+  const onTrack = rate >= GOAL;
+  return (
+    <section className="fn-card fn-goal" aria-label="Automation goal">
+      <header className="fn-card-head">
+        <h2>
+          <span className="fn-icon violet sm">
+            <Target size={15} />
+          </span>
+          Automation goal
+        </h2>
+      </header>
+      <div className="fn-goal-row">
+        <span>Cases closed with no human touch</span>
+        <b>
+          {pct0(rate * 100)} <small>/ {pct0(GOAL * 100)}</small>
+        </b>
+      </div>
+      <div className="fn-progress" role="progressbar" aria-valuenow={Math.round(rate * 100)} aria-valuemin={0} aria-valuemax={100}>
+        <span style={{ width: `${Math.min(100, (rate / GOAL) * 100)}%` }} />
+      </div>
+      <Link href="/agents" className="fn-tip">
+        <Lightbulb size={16} />
+        <span>
+          {onTrack
+            ? `On track: ${count(ops.casesResolved)} of ${count(ops.casesTotal)} cases resolved.`
+            : `${count(ops.casesNeedingAttention)} cases need a person; clearing them lifts the rate.`}
+        </span>
+        <ArrowRight size={14} />
+      </Link>
+    </section>
+  );
+}
 
 /** `/?focus=attention` (the top-bar bell) scrolls the queue into view. */
 function FocusFromQuery() {

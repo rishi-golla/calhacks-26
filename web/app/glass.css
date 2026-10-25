@@ -878,8 +878,9 @@
   grid-template-columns: 120px minmax(200px, 1fr) 40px 112px 84px 128px 64px 236px;
 }
 .fl.theme-glass .cx-attn {
-  overflow: clip visible;
-  padding: 2px 0;
+  overflow: visible;
+  padding: 3px 0 3px 4px;
+  margin-left: -4px;
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
 }

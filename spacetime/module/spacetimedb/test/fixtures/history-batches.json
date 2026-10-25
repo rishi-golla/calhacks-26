@@ -1,0 +1,1431 @@
+{
+ "generated_by": "tests/test_seed_history.py (UPDATE_HISTORY_FIXTURE=1 rewrites it)",
+ "large": [
+  {
+   "source": "golden-gate-books",
+   "companies": [
+    {
+     "id": "C-77",
+     "kind": "carrier",
+     "name": "Rapid Ridge Transport",
+     "usdot": "7700770",
+     "mc": "",
+     "phone": "+15550770077",
+     "website": "",
+     "source_url": "fixture://directory/C-77"
+    },
+    {
+     "id": "S-OFF-2",
+     "kind": "shipper",
+     "name": "Valley Market Foods",
+     "usdot": "",
+     "mc": "",
+     "phone": "+15550080008",
+     "website": "",
+     "source_url": "fixture://directory/S-OFF-2"
+    },
+    {
+     "id": "S-07",
+     "kind": "shipper",
+     "name": "Bay Produce Co",
+     "usdot": "",
+     "mc": "",
+     "phone": "+15550070007",
+     "website": "",
+     "source_url": "fixture://directory/S-07"
+    },
+    {
+     "id": "C-OFF-2",
+     "kind": "carrier",
+     "name": "Sage Valley Carriers",
+     "usdot": "8800880",
+     "mc": "MC-880088",
+     "phone": "+15550880088",
+     "website": "",
+     "source_url": "fixture://directory/C-OFF-2"
+    },
+    {
+     "id": "C-311",
+     "kind": "carrier",
+     "name": "Sierra Haul LLC",
+     "usdot": "3141592",
+     "mc": "",
+     "phone": "+15550143159",
+     "website": "",
+     "source_url": "fixture://directory/C-311"
+    }
+   ],
+   "cases": [
+    {
+     "case_id": "HIST-LD-0922-742187",
+     "load_id": "LD-0922-742187",
+     "title": "Rapid Ridge Transport invoice on LD-0922-742187",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-09-22T17:37:00.000Z",
+     "resolved_at": "2026-09-22T19:40:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-0923-42C5E0",
+     "load_id": "LD-0923-42C5E0",
+     "title": "Sage Valley Carriers invoice on LD-0923-42C5E0",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-09-23T23:55:00.000Z",
+     "resolved_at": "2026-09-24T22:18:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-0924-E36957",
+     "load_id": "LD-0924-E36957",
+     "title": "Rapid Ridge Transport invoice on LD-0924-E36957",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-09-25T03:20:00.000Z",
+     "resolved_at": "2026-09-25T21:18:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-1001-DA696E",
+     "load_id": "LD-1001-DA696E",
+     "title": "Sage Valley Carriers invoice on LD-1001-DA696E",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-10-02T10:58:00.000Z",
+     "resolved_at": "2026-10-02T19:36:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-1006-05DC63",
+     "load_id": "LD-1006-05DC63",
+     "title": "Sierra Haul LLC invoice on LD-1006-05DC63",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-10-06T23:37:00.000Z",
+     "resolved_at": "2026-10-08T00:53:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-1007-C0AA2C",
+     "load_id": "LD-1007-C0AA2C",
+     "title": "Rapid Ridge Transport invoice on LD-1007-C0AA2C",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-10-08T10:30:00.000Z",
+     "resolved_at": "2026-10-08T18:06:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-1012-9520C2",
+     "load_id": "LD-1012-9520C2",
+     "title": "Sierra Haul LLC invoice on LD-1012-9520C2",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-10-13T01:03:00.000Z",
+     "resolved_at": "2026-10-13T05:44:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-1013-9DEA43",
+     "load_id": "LD-1013-9DEA43",
+     "title": "Sierra Haul LLC invoice on LD-1013-9DEA43",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-10-14T01:39:00.000Z",
+     "resolved_at": "2026-10-14T05:34:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-1016-2BA2DB",
+     "load_id": "LD-1016-2BA2DB",
+     "title": "Sage Valley Carriers invoice on LD-1016-2BA2DB",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-10-17T04:35:00.000Z",
+     "resolved_at": "2026-10-17T07:29:00.000Z"
+    }
+   ],
+   "invoices": [
+    {
+     "id": "INV-7700770-INV770820733356",
+     "case_id": "HIST-LD-0922-742187",
+     "carrier_id": "C-77",
+     "load_id": "LD-0922-742187",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 1907.59,
+     "issued_at": "2026-09-22T17:37:00.000Z",
+     "status": "paid"
+    },
+    {
+     "id": "INV-8800880-727674061",
+     "case_id": "HIST-LD-0923-42C5E0",
+     "carrier_id": "C-OFF-2",
+     "load_id": "LD-0923-42C5E0",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-09-23T23:55:00.000Z",
+     "status": "open"
+    },
+    {
+     "id": "INV-7700770-INV770638951394",
+     "case_id": "HIST-LD-0924-E36957",
+     "carrier_id": "C-77",
+     "load_id": "LD-0924-E36957",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-09-25T03:20:00.000Z",
+     "status": "open"
+    },
+    {
+     "id": "INV-8800880-28885398",
+     "case_id": "HIST-LD-1001-DA696E",
+     "carrier_id": "C-OFF-2",
+     "load_id": "LD-1001-DA696E",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-10-02T10:58:00.000Z",
+     "status": "open"
+    },
+    {
+     "id": "INV-3141592-SHL-883664909",
+     "case_id": "HIST-LD-1006-05DC63",
+     "carrier_id": "C-311",
+     "load_id": "LD-1006-05DC63",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-10-06T23:37:00.000Z",
+     "status": "open"
+    },
+    {
+     "id": "INV-7700770-INV770564153965",
+     "case_id": "HIST-LD-1007-C0AA2C",
+     "carrier_id": "C-77",
+     "load_id": "LD-1007-C0AA2C",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-10-08T10:30:00.000Z",
+     "status": "open"
+    },
+    {
+     "id": "INV-3141592-SHL-925480270",
+     "case_id": "HIST-LD-1012-9520C2",
+     "carrier_id": "C-311",
+     "load_id": "LD-1012-9520C2",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-10-13T01:03:00.000Z",
+     "status": "open"
+    },
+    {
+     "id": "INV-3141592-SHL-961121245",
+     "case_id": "HIST-LD-1013-9DEA43",
+     "carrier_id": "C-311",
+     "load_id": "LD-1013-9DEA43",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-10-14T01:39:00.000Z",
+     "status": "open"
+    },
+    {
+     "id": "INV-8800880-963308992",
+     "case_id": "HIST-LD-1016-2BA2DB",
+     "carrier_id": "C-OFF-2",
+     "load_id": "LD-1016-2BA2DB",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-10-17T04:35:00.000Z",
+     "status": "open"
+    }
+   ],
+   "ledger_entries": [
+    {
+     "id": "HIST-JE-OPENING",
+     "case_id": "",
+     "period": "2026-09",
+     "posted_at": "2026-09-20T15:00:00.000Z",
+     "memo": "Opening balance",
+     "lines": [
+      {
+       "account": "cash",
+       "debit": 250000.0,
+       "credit": 0
+      },
+      {
+       "account": "opening_balance_equity",
+       "debit": 0,
+       "credit": 250000.0
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0922-742187-BILL",
+     "case_id": "HIST-LD-0922-742187",
+     "period": "2026-09",
+     "posted_at": "2026-09-23T17:35:00.000Z",
+     "memo": "Customer billing: SINV-LD-0922-742187",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0922-742187-COST",
+     "case_id": "HIST-LD-0922-742187",
+     "period": "2026-09",
+     "posted_at": "2026-09-22T19:40:00.000Z",
+     "memo": "Carrier settlement: INV-7700770-INV770820733356",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0922-742187-PAY",
+     "case_id": "HIST-LD-0922-742187",
+     "period": "2026-10",
+     "posted_at": "2026-10-20T20:27:00.000Z",
+     "memo": "Carrier payment: INV-7700770-INV770820733356",
+     "lines": [
+      {
+       "account": "accounts_payable",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "cash",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0923-42C5E0-BILL",
+     "case_id": "HIST-LD-0923-42C5E0",
+     "period": "2026-09",
+     "posted_at": "2026-09-25T12:22:00.000Z",
+     "memo": "Customer billing: SINV-LD-0923-42C5E0",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0923-42C5E0-COST",
+     "case_id": "HIST-LD-0923-42C5E0",
+     "period": "2026-09",
+     "posted_at": "2026-09-24T22:18:00.000Z",
+     "memo": "Carrier settlement: INV-8800880-727674061",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0924-E36957-BILL",
+     "case_id": "HIST-LD-0924-E36957",
+     "period": "2026-09",
+     "posted_at": "2026-09-26T01:10:00.000Z",
+     "memo": "Customer billing: SINV-LD-0924-E36957",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0924-E36957-COST",
+     "case_id": "HIST-LD-0924-E36957",
+     "period": "2026-09",
+     "posted_at": "2026-09-25T21:18:00.000Z",
+     "memo": "Carrier settlement: INV-7700770-INV770638951394",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1001-DA696E-BILL",
+     "case_id": "HIST-LD-1001-DA696E",
+     "period": "2026-10",
+     "posted_at": "2026-10-02T07:58:00.000Z",
+     "memo": "Customer billing: SINV-LD-1001-DA696E",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1001-DA696E-COST",
+     "case_id": "HIST-LD-1001-DA696E",
+     "period": "2026-10",
+     "posted_at": "2026-10-02T19:36:00.000Z",
+     "memo": "Carrier settlement: INV-8800880-28885398",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1006-05DC63-BILL",
+     "case_id": "HIST-LD-1006-05DC63",
+     "period": "2026-10",
+     "posted_at": "2026-10-07T04:38:00.000Z",
+     "memo": "Customer billing: SINV-LD-1006-05DC63",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1006-05DC63-COST",
+     "case_id": "HIST-LD-1006-05DC63",
+     "period": "2026-10",
+     "posted_at": "2026-10-08T00:53:00.000Z",
+     "memo": "Carrier settlement: INV-3141592-SHL-883664909",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1007-C0AA2C-BILL",
+     "case_id": "HIST-LD-1007-C0AA2C",
+     "period": "2026-10",
+     "posted_at": "2026-10-08T10:22:00.000Z",
+     "memo": "Customer billing: SINV-LD-1007-C0AA2C",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1007-C0AA2C-COST",
+     "case_id": "HIST-LD-1007-C0AA2C",
+     "period": "2026-10",
+     "posted_at": "2026-10-08T18:06:00.000Z",
+     "memo": "Carrier settlement: INV-7700770-INV770564153965",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1012-9520C2-BILL",
+     "case_id": "HIST-LD-1012-9520C2",
+     "period": "2026-10",
+     "posted_at": "2026-10-14T13:37:00.000Z",
+     "memo": "Customer billing: SINV-LD-1012-9520C2",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1012-9520C2-COST",
+     "case_id": "HIST-LD-1012-9520C2",
+     "period": "2026-10",
+     "posted_at": "2026-10-13T05:44:00.000Z",
+     "memo": "Carrier settlement: INV-3141592-SHL-925480270",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1013-9DEA43-BILL",
+     "case_id": "HIST-LD-1013-9DEA43",
+     "period": "2026-10",
+     "posted_at": "2026-10-14T05:25:00.000Z",
+     "memo": "Customer billing: SINV-LD-1013-9DEA43",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1013-9DEA43-COST",
+     "case_id": "HIST-LD-1013-9DEA43",
+     "period": "2026-10",
+     "posted_at": "2026-10-14T05:34:00.000Z",
+     "memo": "Carrier settlement: INV-3141592-SHL-961121245",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1016-2BA2DB-BILL",
+     "case_id": "HIST-LD-1016-2BA2DB",
+     "period": "2026-10",
+     "posted_at": "2026-10-17T09:29:00.000Z",
+     "memo": "Customer billing: SINV-LD-1016-2BA2DB",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1016-2BA2DB-COST",
+     "case_id": "HIST-LD-1016-2BA2DB",
+     "period": "2026-10",
+     "posted_at": "2026-10-17T07:29:00.000Z",
+     "memo": "Carrier settlement: INV-8800880-963308992",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    }
+   ],
+   "source_records": [
+    {
+     "id": "dataset:history",
+     "kind": "dataset",
+     "record_json": "{\"accounts\":{\"accessorial_expense\":\"5100\",\"accessorial_revenue\":\"4100\",\"accounts_payable\":\"2000\",\"accounts_receivable\":\"1200\",\"bad_debt_expense\":\"6900\",\"cash\":\"1000\",\"freight_expense\":\"5000\",\"freight_revenue\":\"4000\",\"opening_balance_equity\":\"\"},\"brokerage\":\"Golden Gate Freight\",\"counts\":{\"cases\":9,\"companies\":5,\"documents\":45,\"invoices\":9,\"ledger_entries\":20},\"days\":30,\"end\":\"2026-10-20\",\"id_prefix\":\"HIST-\",\"imported\":true,\"kind\":\"imported_history\",\"loads\":10,\"seed\":7,\"source\":\"golden-gate-books\",\"totals_at_end\":{\"ap\":15260.72,\"ar\":19418.31,\"cash\":248092.41,\"expense_30d\":17168.31,\"gross_margin_pct\":11.6,\"lowest_cash\":248092.41,\"revenue_30d\":19418.31,\"revenue_mtd\":12945.54},\"version\":\"history-v1\",\"world_lanes_digest\":\"32841d321099f4733634cbc6d281c7aaa47bc9f3cf7611ba7d7c7188e6e690fc\"}",
+     "digest": "49fc64e9358becc9b993ac47ff9108b4754e8a17b3d65055e503c375d4c49e0b"
+    },
+    {
+     "id": "case:HIST-LD-0922-742187",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL13317117\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-77\",\"name\":\"Rapid Ridge Transport\",\"usdot\":\"7700770\"},\"carrier_id\":\"C-77\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-0922-742187\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-0922-742187\",\"ref\":\"doc:RC-LD-0922-742187\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-0922-742187\",\"ref\":\"doc:BOL-LD-0922-742187\"},{\"kind\":\"pod\",\"load_id\":\"LD-0922-742187\",\"ref\":\"doc:POD-LD-0922-742187\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-0922-742187\",\"ref\":\"doc:INV-LD-0922-742187-1\"}],\"evidence_refs\":[\"doc:RC-LD-0922-742187\",\"doc:BOL-LD-0922-742187\",\"doc:POD-LD-0922-742187\",\"doc:INV-LD-0922-742187-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":75,\"free_time_min\":120},\"gps_dwell_min\":75,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"7700770\",\"invoice_id\":\"INV-7700770-INV770820733356\",\"invoice_number\":\"INV770820733356\",\"issued_at\":\"2026-09-22T17:37:00+00:00\",\"lane\":\"Reno, NV -> Stockton, CA\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-0922-742187\",\"period\":\"2026-09\",\"po\":\"PO-473267\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"510759\",\"remit_to\":{\"name\":\"Rapid Ridge Transport\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":\"2026-10-20T20:27:00+00:00\",\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000008\",\"id\":\"S-OFF-2\",\"name\":\"Valley Market Foods\"},\"shipper_id\":\"S-OFF-2\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-0922-742187\",\"synthetic\":true}",
+     "digest": "3b96c423973d393cf02b0a48a24be689aa48896c9fdb953732c86b15fe9333ff",
+     "updated_at": "2026-09-22T19:40:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-0923-42C5E0",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL65853181\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-OFF-2\",\"mc\":\"MC-880088\",\"name\":\"Sage Valley Carriers\",\"usdot\":\"8800880\"},\"carrier_id\":\"C-OFF-2\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-0923-42C5E0\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-0923-42C5E0\",\"ref\":\"doc:RC-LD-0923-42C5E0\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-0923-42C5E0\",\"ref\":\"doc:BOL-LD-0923-42C5E0\"},{\"kind\":\"pod\",\"load_id\":\"LD-0923-42C5E0\",\"ref\":\"doc:POD-LD-0923-42C5E0\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-0923-42C5E0\",\"ref\":\"doc:INV-LD-0923-42C5E0-1\"}],\"evidence_refs\":[\"doc:RC-LD-0923-42C5E0\",\"doc:BOL-LD-0923-42C5E0\",\"doc:POD-LD-0923-42C5E0\",\"doc:INV-LD-0923-42C5E0-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":94,\"free_time_min\":120},\"gps_dwell_min\":94,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"8800880\",\"invoice_id\":\"INV-8800880-727674061\",\"invoice_number\":\"727674061\",\"issued_at\":\"2026-09-23T23:55:00+00:00\",\"lane\":\"Stockton, CA -> Reno, NV\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-0923-42C5E0\",\"period\":\"2026-09\",\"po\":\"PO-666681\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"876032\",\"remit_to\":{\"name\":\"Sage Valley Carriers\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000007\",\"id\":\"S-07\",\"name\":\"Bay Produce Co\"},\"shipper_id\":\"S-07\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-0923-42C5E0\",\"synthetic\":true}",
+     "digest": "4964822d42094eb4a687811d4e2e57e592fb162969ef58fc3ca725dba91164dd",
+     "updated_at": "2026-09-24T22:18:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-0924-E36957",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL59694878\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-77\",\"name\":\"Rapid Ridge Transport\",\"usdot\":\"7700770\"},\"carrier_id\":\"C-77\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-0924-E36957\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-0924-E36957\",\"ref\":\"doc:RC-LD-0924-E36957\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-0924-E36957\",\"ref\":\"doc:BOL-LD-0924-E36957\"},{\"kind\":\"pod\",\"load_id\":\"LD-0924-E36957\",\"ref\":\"doc:POD-LD-0924-E36957\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-0924-E36957\",\"ref\":\"doc:INV-LD-0924-E36957-1\"}],\"evidence_refs\":[\"doc:RC-LD-0924-E36957\",\"doc:BOL-LD-0924-E36957\",\"doc:POD-LD-0924-E36957\",\"doc:INV-LD-0924-E36957-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":59,\"free_time_min\":120},\"gps_dwell_min\":59,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"7700770\",\"invoice_id\":\"INV-7700770-INV770638951394\",\"invoice_number\":\"INV770638951394\",\"issued_at\":\"2026-09-25T03:20:00+00:00\",\"lane\":\"Reno, NV -> Stockton, CA\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-0924-E36957\",\"period\":\"2026-09\",\"po\":\"PO-485341\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"603639\",\"remit_to\":{\"name\":\"Rapid Ridge Transport\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000008\",\"id\":\"S-OFF-2\",\"name\":\"Valley Market Foods\"},\"shipper_id\":\"S-OFF-2\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-0924-E36957\",\"synthetic\":true}",
+     "digest": "a5e1b52f3dbda1f267b9d6532dfeaa54fd92ca41abd5483e18d18641d6c287d3",
+     "updated_at": "2026-09-25T21:18:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-1001-DA696E",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL67283139\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-OFF-2\",\"mc\":\"MC-880088\",\"name\":\"Sage Valley Carriers\",\"usdot\":\"8800880\"},\"carrier_id\":\"C-OFF-2\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-1001-DA696E\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-1001-DA696E\",\"ref\":\"doc:RC-LD-1001-DA696E\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-1001-DA696E\",\"ref\":\"doc:BOL-LD-1001-DA696E\"},{\"kind\":\"pod\",\"load_id\":\"LD-1001-DA696E\",\"ref\":\"doc:POD-LD-1001-DA696E\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-1001-DA696E\",\"ref\":\"doc:INV-LD-1001-DA696E-1\"}],\"evidence_refs\":[\"doc:RC-LD-1001-DA696E\",\"doc:BOL-LD-1001-DA696E\",\"doc:POD-LD-1001-DA696E\",\"doc:INV-LD-1001-DA696E-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":49,\"free_time_min\":120},\"gps_dwell_min\":49,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"8800880\",\"invoice_id\":\"INV-8800880-28885398\",\"invoice_number\":\"28885398\",\"issued_at\":\"2026-10-02T10:58:00+00:00\",\"lane\":\"Stockton, CA -> Reno, NV\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-1001-DA696E\",\"period\":\"2026-10\",\"po\":\"PO-629323\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"913838\",\"remit_to\":{\"name\":\"Sage Valley Carriers\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000007\",\"id\":\"S-07\",\"name\":\"Bay Produce Co\"},\"shipper_id\":\"S-07\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-1001-DA696E\",\"synthetic\":true}",
+     "digest": "51303ed6675150f0e5909925ae3a1442ce702212929cd568a4d14fa74bad5124",
+     "updated_at": "2026-10-02T19:36:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-1006-05DC63",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL43706469\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-311\",\"name\":\"Sierra Haul LLC\",\"usdot\":\"3141592\"},\"carrier_id\":\"C-311\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-1006-05DC63\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-1006-05DC63\",\"ref\":\"doc:RC-LD-1006-05DC63\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-1006-05DC63\",\"ref\":\"doc:BOL-LD-1006-05DC63\"},{\"kind\":\"pod\",\"load_id\":\"LD-1006-05DC63\",\"ref\":\"doc:POD-LD-1006-05DC63\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-1006-05DC63\",\"ref\":\"doc:INV-LD-1006-05DC63-1\"}],\"evidence_refs\":[\"doc:RC-LD-1006-05DC63\",\"doc:BOL-LD-1006-05DC63\",\"doc:POD-LD-1006-05DC63\",\"doc:INV-LD-1006-05DC63-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":59,\"free_time_min\":120},\"gps_dwell_min\":59,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"3141592\",\"invoice_id\":\"INV-3141592-SHL-883664909\",\"invoice_number\":\"SHL-883664909\",\"issued_at\":\"2026-10-06T23:37:00+00:00\",\"lane\":\"Stockton, CA -> Reno, NV\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-1006-05DC63\",\"period\":\"2026-10\",\"po\":\"PO-573489\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"484099\",\"remit_to\":{\"name\":\"Sierra Haul LLC\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000007\",\"id\":\"S-07\",\"name\":\"Bay Produce Co\"},\"shipper_id\":\"S-07\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-1006-05DC63\",\"synthetic\":true}",
+     "digest": "ac273cf96507244843993e506117542f25bd48996e6c912ced85e496668f0cf4",
+     "updated_at": "2026-10-08T00:53:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-1007-C0AA2C",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL79859741\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-77\",\"name\":\"Rapid Ridge Transport\",\"usdot\":\"7700770\"},\"carrier_id\":\"C-77\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-1007-C0AA2C\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-1007-C0AA2C\",\"ref\":\"doc:RC-LD-1007-C0AA2C\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-1007-C0AA2C\",\"ref\":\"doc:BOL-LD-1007-C0AA2C\"},{\"kind\":\"pod\",\"load_id\":\"LD-1007-C0AA2C\",\"ref\":\"doc:POD-LD-1007-C0AA2C\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-1007-C0AA2C\",\"ref\":\"doc:INV-LD-1007-C0AA2C-1\"}],\"evidence_refs\":[\"doc:RC-LD-1007-C0AA2C\",\"doc:BOL-LD-1007-C0AA2C\",\"doc:POD-LD-1007-C0AA2C\",\"doc:INV-LD-1007-C0AA2C-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":82,\"free_time_min\":120},\"gps_dwell_min\":82,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"7700770\",\"invoice_id\":\"INV-7700770-INV770564153965\",\"invoice_number\":\"INV770564153965\",\"issued_at\":\"2026-10-08T10:30:00+00:00\",\"lane\":\"Reno, NV -> Stockton, CA\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-1007-C0AA2C\",\"period\":\"2026-10\",\"po\":\"PO-877332\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"126476\",\"remit_to\":{\"name\":\"Rapid Ridge Transport\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000008\",\"id\":\"S-OFF-2\",\"name\":\"Valley Market Foods\"},\"shipper_id\":\"S-OFF-2\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-1007-C0AA2C\",\"synthetic\":true}",
+     "digest": "ccc89f274957fbfa2f201120f13658a1d075f60d51cd59e2b2c1d7039ce628f4",
+     "updated_at": "2026-10-08T18:06:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-1012-9520C2",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL89212665\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-311\",\"name\":\"Sierra Haul LLC\",\"usdot\":\"3141592\"},\"carrier_id\":\"C-311\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-1012-9520C2\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-1012-9520C2\",\"ref\":\"doc:RC-LD-1012-9520C2\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-1012-9520C2\",\"ref\":\"doc:BOL-LD-1012-9520C2\"},{\"kind\":\"pod\",\"load_id\":\"LD-1012-9520C2\",\"ref\":\"doc:POD-LD-1012-9520C2\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-1012-9520C2\",\"ref\":\"doc:INV-LD-1012-9520C2-1\"}],\"evidence_refs\":[\"doc:RC-LD-1012-9520C2\",\"doc:BOL-LD-1012-9520C2\",\"doc:POD-LD-1012-9520C2\",\"doc:INV-LD-1012-9520C2-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":54,\"free_time_min\":120},\"gps_dwell_min\":54,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"3141592\",\"invoice_id\":\"INV-3141592-SHL-925480270\",\"invoice_number\":\"SHL-925480270\",\"issued_at\":\"2026-10-13T01:03:00+00:00\",\"lane\":\"Stockton, CA -> Reno, NV\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-1012-9520C2\",\"period\":\"2026-10\",\"po\":\"PO-676584\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"873250\",\"remit_to\":{\"name\":\"Sierra Haul LLC\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000007\",\"id\":\"S-07\",\"name\":\"Bay Produce Co\"},\"shipper_id\":\"S-07\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-1012-9520C2\",\"synthetic\":true}",
+     "digest": "b681096696dd2a3cdbfe22e5f43e1c34b7048df1f1afa76eb8c9bdc200198d73",
+     "updated_at": "2026-10-13T05:44:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-1013-9DEA43",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL43329126\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-311\",\"name\":\"Sierra Haul LLC\",\"usdot\":\"3141592\"},\"carrier_id\":\"C-311\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-1013-9DEA43\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-1013-9DEA43\",\"ref\":\"doc:RC-LD-1013-9DEA43\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-1013-9DEA43\",\"ref\":\"doc:BOL-LD-1013-9DEA43\"},{\"kind\":\"pod\",\"load_id\":\"LD-1013-9DEA43\",\"ref\":\"doc:POD-LD-1013-9DEA43\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-1013-9DEA43\",\"ref\":\"doc:INV-LD-1013-9DEA43-1\"}],\"evidence_refs\":[\"doc:RC-LD-1013-9DEA43\",\"doc:BOL-LD-1013-9DEA43\",\"doc:POD-LD-1013-9DEA43\",\"doc:INV-LD-1013-9DEA43-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":25,\"free_time_min\":120},\"gps_dwell_min\":25,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"3141592\",\"invoice_id\":\"INV-3141592-SHL-961121245\",\"invoice_number\":\"SHL-961121245\",\"issued_at\":\"2026-10-14T01:39:00+00:00\",\"lane\":\"Stockton, CA -> Reno, NV\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-1013-9DEA43\",\"period\":\"2026-10\",\"po\":\"PO-448008\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"549123\",\"remit_to\":{\"name\":\"Sierra Haul LLC\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000007\",\"id\":\"S-07\",\"name\":\"Bay Produce Co\"},\"shipper_id\":\"S-07\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-1013-9DEA43\",\"synthetic\":true}",
+     "digest": "ae98a32fc7030764dadc509620774e94e0ec4c87af3cf3b7a09512ac975de4e2",
+     "updated_at": "2026-10-14T05:34:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-1016-2BA2DB",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL93265966\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-OFF-2\",\"mc\":\"MC-880088\",\"name\":\"Sage Valley Carriers\",\"usdot\":\"8800880\"},\"carrier_id\":\"C-OFF-2\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-1016-2BA2DB\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-1016-2BA2DB\",\"ref\":\"doc:RC-LD-1016-2BA2DB\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-1016-2BA2DB\",\"ref\":\"doc:BOL-LD-1016-2BA2DB\"},{\"kind\":\"pod\",\"load_id\":\"LD-1016-2BA2DB\",\"ref\":\"doc:POD-LD-1016-2BA2DB\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-1016-2BA2DB\",\"ref\":\"doc:INV-LD-1016-2BA2DB-1\"}],\"evidence_refs\":[\"doc:RC-LD-1016-2BA2DB\",\"doc:BOL-LD-1016-2BA2DB\",\"doc:POD-LD-1016-2BA2DB\",\"doc:INV-LD-1016-2BA2DB-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":98,\"free_time_min\":120},\"gps_dwell_min\":98,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"8800880\",\"invoice_id\":\"INV-8800880-963308992\",\"invoice_number\":\"963308992\",\"issued_at\":\"2026-10-17T04:35:00+00:00\",\"lane\":\"Stockton, CA -> Reno, NV\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-1016-2BA2DB\",\"period\":\"2026-10\",\"po\":\"PO-607664\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"259739\",\"remit_to\":{\"name\":\"Sage Valley Carriers\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000007\",\"id\":\"S-07\",\"name\":\"Bay Produce Co\"},\"shipper_id\":\"S-07\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-1016-2BA2DB\",\"synthetic\":true}",
+     "digest": "a9964575e90f9705d8da71d64403a4593d3e7580fad9c6b888c9589a230a6411",
+     "updated_at": "2026-10-17T07:29:00.000Z"
+    }
+   ],
+   "write_id": "history:49fc64e9358becc9:000:e0b76b8c603c4239"
+  }
+ ],
+ "small": [
+  {
+   "source": "golden-gate-books",
+   "companies": [
+    {
+     "id": "C-77",
+     "kind": "carrier",
+     "name": "Rapid Ridge Transport",
+     "usdot": "7700770",
+     "mc": "",
+     "phone": "+15550770077",
+     "website": "",
+     "source_url": "fixture://directory/C-77"
+    },
+    {
+     "id": "S-OFF-2",
+     "kind": "shipper",
+     "name": "Valley Market Foods",
+     "usdot": "",
+     "mc": "",
+     "phone": "+15550080008",
+     "website": "",
+     "source_url": "fixture://directory/S-OFF-2"
+    },
+    {
+     "id": "S-07",
+     "kind": "shipper",
+     "name": "Bay Produce Co",
+     "usdot": "",
+     "mc": "",
+     "phone": "+15550070007",
+     "website": "",
+     "source_url": "fixture://directory/S-07"
+    },
+    {
+     "id": "C-OFF-2",
+     "kind": "carrier",
+     "name": "Sage Valley Carriers",
+     "usdot": "8800880",
+     "mc": "MC-880088",
+     "phone": "+15550880088",
+     "website": "",
+     "source_url": "fixture://directory/C-OFF-2"
+    }
+   ],
+   "cases": [
+    {
+     "case_id": "HIST-LD-0922-742187",
+     "load_id": "LD-0922-742187",
+     "title": "Rapid Ridge Transport invoice on LD-0922-742187",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-09-22T17:37:00.000Z",
+     "resolved_at": "2026-09-22T19:40:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-0923-42C5E0",
+     "load_id": "LD-0923-42C5E0",
+     "title": "Sage Valley Carriers invoice on LD-0923-42C5E0",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-09-23T23:55:00.000Z",
+     "resolved_at": "2026-09-24T22:18:00.000Z"
+    }
+   ],
+   "invoices": [
+    {
+     "id": "INV-7700770-INV770820733356",
+     "case_id": "HIST-LD-0922-742187",
+     "carrier_id": "C-77",
+     "load_id": "LD-0922-742187",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 1907.59,
+     "issued_at": "2026-09-22T17:37:00.000Z",
+     "status": "paid"
+    },
+    {
+     "id": "INV-8800880-727674061",
+     "case_id": "HIST-LD-0923-42C5E0",
+     "carrier_id": "C-OFF-2",
+     "load_id": "LD-0923-42C5E0",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-09-23T23:55:00.000Z",
+     "status": "open"
+    }
+   ],
+   "ledger_entries": [
+    {
+     "id": "HIST-JE-OPENING",
+     "case_id": "",
+     "period": "2026-09",
+     "posted_at": "2026-09-20T15:00:00.000Z",
+     "memo": "Opening balance",
+     "lines": [
+      {
+       "account": "cash",
+       "debit": 250000.0,
+       "credit": 0
+      },
+      {
+       "account": "opening_balance_equity",
+       "debit": 0,
+       "credit": 250000.0
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0922-742187-BILL",
+     "case_id": "HIST-LD-0922-742187",
+     "period": "2026-09",
+     "posted_at": "2026-09-23T17:35:00.000Z",
+     "memo": "Customer billing: SINV-LD-0922-742187",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0922-742187-COST",
+     "case_id": "HIST-LD-0922-742187",
+     "period": "2026-09",
+     "posted_at": "2026-09-22T19:40:00.000Z",
+     "memo": "Carrier settlement: INV-7700770-INV770820733356",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0922-742187-PAY",
+     "case_id": "HIST-LD-0922-742187",
+     "period": "2026-10",
+     "posted_at": "2026-10-20T20:27:00.000Z",
+     "memo": "Carrier payment: INV-7700770-INV770820733356",
+     "lines": [
+      {
+       "account": "accounts_payable",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "cash",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0923-42C5E0-BILL",
+     "case_id": "HIST-LD-0923-42C5E0",
+     "period": "2026-09",
+     "posted_at": "2026-09-25T12:22:00.000Z",
+     "memo": "Customer billing: SINV-LD-0923-42C5E0",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0923-42C5E0-COST",
+     "case_id": "HIST-LD-0923-42C5E0",
+     "period": "2026-09",
+     "posted_at": "2026-09-24T22:18:00.000Z",
+     "memo": "Carrier settlement: INV-8800880-727674061",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    }
+   ],
+   "source_records": [
+    {
+     "id": "dataset:history",
+     "kind": "dataset",
+     "record_json": "{\"accounts\":{\"accessorial_expense\":\"5100\",\"accessorial_revenue\":\"4100\",\"accounts_payable\":\"2000\",\"accounts_receivable\":\"1200\",\"bad_debt_expense\":\"6900\",\"cash\":\"1000\",\"freight_expense\":\"5000\",\"freight_revenue\":\"4000\",\"opening_balance_equity\":\"\"},\"brokerage\":\"Golden Gate Freight\",\"counts\":{\"cases\":9,\"companies\":5,\"documents\":45,\"invoices\":9,\"ledger_entries\":20},\"days\":30,\"end\":\"2026-10-20\",\"id_prefix\":\"HIST-\",\"imported\":true,\"kind\":\"imported_history\",\"loads\":10,\"seed\":7,\"source\":\"golden-gate-books\",\"totals_at_end\":{\"ap\":15260.72,\"ar\":19418.31,\"cash\":248092.41,\"expense_30d\":17168.31,\"gross_margin_pct\":11.6,\"lowest_cash\":248092.41,\"revenue_30d\":19418.31,\"revenue_mtd\":12945.54},\"version\":\"history-v1\",\"world_lanes_digest\":\"32841d321099f4733634cbc6d281c7aaa47bc9f3cf7611ba7d7c7188e6e690fc\"}",
+     "digest": "49fc64e9358becc9b993ac47ff9108b4754e8a17b3d65055e503c375d4c49e0b"
+    },
+    {
+     "id": "case:HIST-LD-0922-742187",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL13317117\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-77\",\"name\":\"Rapid Ridge Transport\",\"usdot\":\"7700770\"},\"carrier_id\":\"C-77\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-0922-742187\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-0922-742187\",\"ref\":\"doc:RC-LD-0922-742187\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-0922-742187\",\"ref\":\"doc:BOL-LD-0922-742187\"},{\"kind\":\"pod\",\"load_id\":\"LD-0922-742187\",\"ref\":\"doc:POD-LD-0922-742187\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-0922-742187\",\"ref\":\"doc:INV-LD-0922-742187-1\"}],\"evidence_refs\":[\"doc:RC-LD-0922-742187\",\"doc:BOL-LD-0922-742187\",\"doc:POD-LD-0922-742187\",\"doc:INV-LD-0922-742187-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":75,\"free_time_min\":120},\"gps_dwell_min\":75,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"7700770\",\"invoice_id\":\"INV-7700770-INV770820733356\",\"invoice_number\":\"INV770820733356\",\"issued_at\":\"2026-09-22T17:37:00+00:00\",\"lane\":\"Reno, NV -> Stockton, CA\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-0922-742187\",\"period\":\"2026-09\",\"po\":\"PO-473267\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"510759\",\"remit_to\":{\"name\":\"Rapid Ridge Transport\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":\"2026-10-20T20:27:00+00:00\",\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000008\",\"id\":\"S-OFF-2\",\"name\":\"Valley Market Foods\"},\"shipper_id\":\"S-OFF-2\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-0922-742187\",\"synthetic\":true}",
+     "digest": "3b96c423973d393cf02b0a48a24be689aa48896c9fdb953732c86b15fe9333ff",
+     "updated_at": "2026-09-22T19:40:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-0923-42C5E0",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL65853181\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-OFF-2\",\"mc\":\"MC-880088\",\"name\":\"Sage Valley Carriers\",\"usdot\":\"8800880\"},\"carrier_id\":\"C-OFF-2\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-0923-42C5E0\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-0923-42C5E0\",\"ref\":\"doc:RC-LD-0923-42C5E0\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-0923-42C5E0\",\"ref\":\"doc:BOL-LD-0923-42C5E0\"},{\"kind\":\"pod\",\"load_id\":\"LD-0923-42C5E0\",\"ref\":\"doc:POD-LD-0923-42C5E0\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-0923-42C5E0\",\"ref\":\"doc:INV-LD-0923-42C5E0-1\"}],\"evidence_refs\":[\"doc:RC-LD-0923-42C5E0\",\"doc:BOL-LD-0923-42C5E0\",\"doc:POD-LD-0923-42C5E0\",\"doc:INV-LD-0923-42C5E0-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":94,\"free_time_min\":120},\"gps_dwell_min\":94,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"8800880\",\"invoice_id\":\"INV-8800880-727674061\",\"invoice_number\":\"727674061\",\"issued_at\":\"2026-09-23T23:55:00+00:00\",\"lane\":\"Stockton, CA -> Reno, NV\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-0923-42C5E0\",\"period\":\"2026-09\",\"po\":\"PO-666681\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"876032\",\"remit_to\":{\"name\":\"Sage Valley Carriers\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000007\",\"id\":\"S-07\",\"name\":\"Bay Produce Co\"},\"shipper_id\":\"S-07\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-0923-42C5E0\",\"synthetic\":true}",
+     "digest": "4964822d42094eb4a687811d4e2e57e592fb162969ef58fc3ca725dba91164dd",
+     "updated_at": "2026-09-24T22:18:00.000Z"
+    }
+   ],
+   "write_id": "history:49fc64e9358becc9:000:ee00e299ffec54a7"
+  },
+  {
+   "source": "golden-gate-books",
+   "companies": [
+    {
+     "id": "C-311",
+     "kind": "carrier",
+     "name": "Sierra Haul LLC",
+     "usdot": "3141592",
+     "mc": "",
+     "phone": "+15550143159",
+     "website": "",
+     "source_url": "fixture://directory/C-311"
+    }
+   ],
+   "cases": [
+    {
+     "case_id": "HIST-LD-0924-E36957",
+     "load_id": "LD-0924-E36957",
+     "title": "Rapid Ridge Transport invoice on LD-0924-E36957",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-09-25T03:20:00.000Z",
+     "resolved_at": "2026-09-25T21:18:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-1001-DA696E",
+     "load_id": "LD-1001-DA696E",
+     "title": "Sage Valley Carriers invoice on LD-1001-DA696E",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-10-02T10:58:00.000Z",
+     "resolved_at": "2026-10-02T19:36:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-1006-05DC63",
+     "load_id": "LD-1006-05DC63",
+     "title": "Sierra Haul LLC invoice on LD-1006-05DC63",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-10-06T23:37:00.000Z",
+     "resolved_at": "2026-10-08T00:53:00.000Z"
+    }
+   ],
+   "invoices": [
+    {
+     "id": "INV-7700770-INV770638951394",
+     "case_id": "HIST-LD-0924-E36957",
+     "carrier_id": "C-77",
+     "load_id": "LD-0924-E36957",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-09-25T03:20:00.000Z",
+     "status": "open"
+    },
+    {
+     "id": "INV-8800880-28885398",
+     "case_id": "HIST-LD-1001-DA696E",
+     "carrier_id": "C-OFF-2",
+     "load_id": "LD-1001-DA696E",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-10-02T10:58:00.000Z",
+     "status": "open"
+    },
+    {
+     "id": "INV-3141592-SHL-883664909",
+     "case_id": "HIST-LD-1006-05DC63",
+     "carrier_id": "C-311",
+     "load_id": "LD-1006-05DC63",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-10-06T23:37:00.000Z",
+     "status": "open"
+    }
+   ],
+   "ledger_entries": [
+    {
+     "id": "HIST-JE-LD-0924-E36957-BILL",
+     "case_id": "HIST-LD-0924-E36957",
+     "period": "2026-09",
+     "posted_at": "2026-09-26T01:10:00.000Z",
+     "memo": "Customer billing: SINV-LD-0924-E36957",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-0924-E36957-COST",
+     "case_id": "HIST-LD-0924-E36957",
+     "period": "2026-09",
+     "posted_at": "2026-09-25T21:18:00.000Z",
+     "memo": "Carrier settlement: INV-7700770-INV770638951394",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1001-DA696E-BILL",
+     "case_id": "HIST-LD-1001-DA696E",
+     "period": "2026-10",
+     "posted_at": "2026-10-02T07:58:00.000Z",
+     "memo": "Customer billing: SINV-LD-1001-DA696E",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1001-DA696E-COST",
+     "case_id": "HIST-LD-1001-DA696E",
+     "period": "2026-10",
+     "posted_at": "2026-10-02T19:36:00.000Z",
+     "memo": "Carrier settlement: INV-8800880-28885398",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1006-05DC63-BILL",
+     "case_id": "HIST-LD-1006-05DC63",
+     "period": "2026-10",
+     "posted_at": "2026-10-07T04:38:00.000Z",
+     "memo": "Customer billing: SINV-LD-1006-05DC63",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1006-05DC63-COST",
+     "case_id": "HIST-LD-1006-05DC63",
+     "period": "2026-10",
+     "posted_at": "2026-10-08T00:53:00.000Z",
+     "memo": "Carrier settlement: INV-3141592-SHL-883664909",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    }
+   ],
+   "source_records": [
+    {
+     "id": "case:HIST-LD-0924-E36957",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL59694878\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-77\",\"name\":\"Rapid Ridge Transport\",\"usdot\":\"7700770\"},\"carrier_id\":\"C-77\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-0924-E36957\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-0924-E36957\",\"ref\":\"doc:RC-LD-0924-E36957\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-0924-E36957\",\"ref\":\"doc:BOL-LD-0924-E36957\"},{\"kind\":\"pod\",\"load_id\":\"LD-0924-E36957\",\"ref\":\"doc:POD-LD-0924-E36957\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-0924-E36957\",\"ref\":\"doc:INV-LD-0924-E36957-1\"}],\"evidence_refs\":[\"doc:RC-LD-0924-E36957\",\"doc:BOL-LD-0924-E36957\",\"doc:POD-LD-0924-E36957\",\"doc:INV-LD-0924-E36957-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":59,\"free_time_min\":120},\"gps_dwell_min\":59,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"7700770\",\"invoice_id\":\"INV-7700770-INV770638951394\",\"invoice_number\":\"INV770638951394\",\"issued_at\":\"2026-09-25T03:20:00+00:00\",\"lane\":\"Reno, NV -> Stockton, CA\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-0924-E36957\",\"period\":\"2026-09\",\"po\":\"PO-485341\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"603639\",\"remit_to\":{\"name\":\"Rapid Ridge Transport\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000008\",\"id\":\"S-OFF-2\",\"name\":\"Valley Market Foods\"},\"shipper_id\":\"S-OFF-2\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-0924-E36957\",\"synthetic\":true}",
+     "digest": "a5e1b52f3dbda1f267b9d6532dfeaa54fd92ca41abd5483e18d18641d6c287d3",
+     "updated_at": "2026-09-25T21:18:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-1001-DA696E",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL67283139\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-OFF-2\",\"mc\":\"MC-880088\",\"name\":\"Sage Valley Carriers\",\"usdot\":\"8800880\"},\"carrier_id\":\"C-OFF-2\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-1001-DA696E\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-1001-DA696E\",\"ref\":\"doc:RC-LD-1001-DA696E\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-1001-DA696E\",\"ref\":\"doc:BOL-LD-1001-DA696E\"},{\"kind\":\"pod\",\"load_id\":\"LD-1001-DA696E\",\"ref\":\"doc:POD-LD-1001-DA696E\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-1001-DA696E\",\"ref\":\"doc:INV-LD-1001-DA696E-1\"}],\"evidence_refs\":[\"doc:RC-LD-1001-DA696E\",\"doc:BOL-LD-1001-DA696E\",\"doc:POD-LD-1001-DA696E\",\"doc:INV-LD-1001-DA696E-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":49,\"free_time_min\":120},\"gps_dwell_min\":49,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"8800880\",\"invoice_id\":\"INV-8800880-28885398\",\"invoice_number\":\"28885398\",\"issued_at\":\"2026-10-02T10:58:00+00:00\",\"lane\":\"Stockton, CA -> Reno, NV\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-1001-DA696E\",\"period\":\"2026-10\",\"po\":\"PO-629323\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"913838\",\"remit_to\":{\"name\":\"Sage Valley Carriers\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000007\",\"id\":\"S-07\",\"name\":\"Bay Produce Co\"},\"shipper_id\":\"S-07\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-1001-DA696E\",\"synthetic\":true}",
+     "digest": "51303ed6675150f0e5909925ae3a1442ce702212929cd568a4d14fa74bad5124",
+     "updated_at": "2026-10-02T19:36:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-1006-05DC63",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL43706469\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-311\",\"name\":\"Sierra Haul LLC\",\"usdot\":\"3141592\"},\"carrier_id\":\"C-311\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-1006-05DC63\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-1006-05DC63\",\"ref\":\"doc:RC-LD-1006-05DC63\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-1006-05DC63\",\"ref\":\"doc:BOL-LD-1006-05DC63\"},{\"kind\":\"pod\",\"load_id\":\"LD-1006-05DC63\",\"ref\":\"doc:POD-LD-1006-05DC63\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-1006-05DC63\",\"ref\":\"doc:INV-LD-1006-05DC63-1\"}],\"evidence_refs\":[\"doc:RC-LD-1006-05DC63\",\"doc:BOL-LD-1006-05DC63\",\"doc:POD-LD-1006-05DC63\",\"doc:INV-LD-1006-05DC63-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":59,\"free_time_min\":120},\"gps_dwell_min\":59,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"3141592\",\"invoice_id\":\"INV-3141592-SHL-883664909\",\"invoice_number\":\"SHL-883664909\",\"issued_at\":\"2026-10-06T23:37:00+00:00\",\"lane\":\"Stockton, CA -> Reno, NV\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-1006-05DC63\",\"period\":\"2026-10\",\"po\":\"PO-573489\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"484099\",\"remit_to\":{\"name\":\"Sierra Haul LLC\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000007\",\"id\":\"S-07\",\"name\":\"Bay Produce Co\"},\"shipper_id\":\"S-07\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-1006-05DC63\",\"synthetic\":true}",
+     "digest": "ac273cf96507244843993e506117542f25bd48996e6c912ced85e496668f0cf4",
+     "updated_at": "2026-10-08T00:53:00.000Z"
+    }
+   ],
+   "write_id": "history:49fc64e9358becc9:001:f465c3653f49900b"
+  },
+  {
+   "source": "golden-gate-books",
+   "cases": [
+    {
+     "case_id": "HIST-LD-1007-C0AA2C",
+     "load_id": "LD-1007-C0AA2C",
+     "title": "Rapid Ridge Transport invoice on LD-1007-C0AA2C",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-10-08T10:30:00.000Z",
+     "resolved_at": "2026-10-08T18:06:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-1012-9520C2",
+     "load_id": "LD-1012-9520C2",
+     "title": "Sierra Haul LLC invoice on LD-1012-9520C2",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-10-13T01:03:00.000Z",
+     "resolved_at": "2026-10-13T05:44:00.000Z"
+    },
+    {
+     "case_id": "HIST-LD-1013-9DEA43",
+     "load_id": "LD-1013-9DEA43",
+     "title": "Sierra Haul LLC invoice on LD-1013-9DEA43",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-10-14T01:39:00.000Z",
+     "resolved_at": "2026-10-14T05:34:00.000Z"
+    }
+   ],
+   "invoices": [
+    {
+     "id": "INV-7700770-INV770564153965",
+     "case_id": "HIST-LD-1007-C0AA2C",
+     "carrier_id": "C-77",
+     "load_id": "LD-1007-C0AA2C",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-10-08T10:30:00.000Z",
+     "status": "open"
+    },
+    {
+     "id": "INV-3141592-SHL-925480270",
+     "case_id": "HIST-LD-1012-9520C2",
+     "carrier_id": "C-311",
+     "load_id": "LD-1012-9520C2",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-10-13T01:03:00.000Z",
+     "status": "open"
+    },
+    {
+     "id": "INV-3141592-SHL-961121245",
+     "case_id": "HIST-LD-1013-9DEA43",
+     "carrier_id": "C-311",
+     "load_id": "LD-1013-9DEA43",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-10-14T01:39:00.000Z",
+     "status": "open"
+    }
+   ],
+   "ledger_entries": [
+    {
+     "id": "HIST-JE-LD-1007-C0AA2C-BILL",
+     "case_id": "HIST-LD-1007-C0AA2C",
+     "period": "2026-10",
+     "posted_at": "2026-10-08T10:22:00.000Z",
+     "memo": "Customer billing: SINV-LD-1007-C0AA2C",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1007-C0AA2C-COST",
+     "case_id": "HIST-LD-1007-C0AA2C",
+     "period": "2026-10",
+     "posted_at": "2026-10-08T18:06:00.000Z",
+     "memo": "Carrier settlement: INV-7700770-INV770564153965",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1012-9520C2-BILL",
+     "case_id": "HIST-LD-1012-9520C2",
+     "period": "2026-10",
+     "posted_at": "2026-10-14T13:37:00.000Z",
+     "memo": "Customer billing: SINV-LD-1012-9520C2",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1012-9520C2-COST",
+     "case_id": "HIST-LD-1012-9520C2",
+     "period": "2026-10",
+     "posted_at": "2026-10-13T05:44:00.000Z",
+     "memo": "Carrier settlement: INV-3141592-SHL-925480270",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1013-9DEA43-BILL",
+     "case_id": "HIST-LD-1013-9DEA43",
+     "period": "2026-10",
+     "posted_at": "2026-10-14T05:25:00.000Z",
+     "memo": "Customer billing: SINV-LD-1013-9DEA43",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1013-9DEA43-COST",
+     "case_id": "HIST-LD-1013-9DEA43",
+     "period": "2026-10",
+     "posted_at": "2026-10-14T05:34:00.000Z",
+     "memo": "Carrier settlement: INV-3141592-SHL-961121245",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    }
+   ],
+   "source_records": [
+    {
+     "id": "case:HIST-LD-1007-C0AA2C",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL79859741\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-77\",\"name\":\"Rapid Ridge Transport\",\"usdot\":\"7700770\"},\"carrier_id\":\"C-77\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-1007-C0AA2C\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-1007-C0AA2C\",\"ref\":\"doc:RC-LD-1007-C0AA2C\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-1007-C0AA2C\",\"ref\":\"doc:BOL-LD-1007-C0AA2C\"},{\"kind\":\"pod\",\"load_id\":\"LD-1007-C0AA2C\",\"ref\":\"doc:POD-LD-1007-C0AA2C\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-1007-C0AA2C\",\"ref\":\"doc:INV-LD-1007-C0AA2C-1\"}],\"evidence_refs\":[\"doc:RC-LD-1007-C0AA2C\",\"doc:BOL-LD-1007-C0AA2C\",\"doc:POD-LD-1007-C0AA2C\",\"doc:INV-LD-1007-C0AA2C-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":82,\"free_time_min\":120},\"gps_dwell_min\":82,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"7700770\",\"invoice_id\":\"INV-7700770-INV770564153965\",\"invoice_number\":\"INV770564153965\",\"issued_at\":\"2026-10-08T10:30:00+00:00\",\"lane\":\"Reno, NV -> Stockton, CA\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-1007-C0AA2C\",\"period\":\"2026-10\",\"po\":\"PO-877332\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"126476\",\"remit_to\":{\"name\":\"Rapid Ridge Transport\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000008\",\"id\":\"S-OFF-2\",\"name\":\"Valley Market Foods\"},\"shipper_id\":\"S-OFF-2\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-1007-C0AA2C\",\"synthetic\":true}",
+     "digest": "ccc89f274957fbfa2f201120f13658a1d075f60d51cd59e2b2c1d7039ce628f4",
+     "updated_at": "2026-10-08T18:06:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-1012-9520C2",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL89212665\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-311\",\"name\":\"Sierra Haul LLC\",\"usdot\":\"3141592\"},\"carrier_id\":\"C-311\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-1012-9520C2\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-1012-9520C2\",\"ref\":\"doc:RC-LD-1012-9520C2\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-1012-9520C2\",\"ref\":\"doc:BOL-LD-1012-9520C2\"},{\"kind\":\"pod\",\"load_id\":\"LD-1012-9520C2\",\"ref\":\"doc:POD-LD-1012-9520C2\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-1012-9520C2\",\"ref\":\"doc:INV-LD-1012-9520C2-1\"}],\"evidence_refs\":[\"doc:RC-LD-1012-9520C2\",\"doc:BOL-LD-1012-9520C2\",\"doc:POD-LD-1012-9520C2\",\"doc:INV-LD-1012-9520C2-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":54,\"free_time_min\":120},\"gps_dwell_min\":54,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"3141592\",\"invoice_id\":\"INV-3141592-SHL-925480270\",\"invoice_number\":\"SHL-925480270\",\"issued_at\":\"2026-10-13T01:03:00+00:00\",\"lane\":\"Stockton, CA -> Reno, NV\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-1012-9520C2\",\"period\":\"2026-10\",\"po\":\"PO-676584\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"873250\",\"remit_to\":{\"name\":\"Sierra Haul LLC\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000007\",\"id\":\"S-07\",\"name\":\"Bay Produce Co\"},\"shipper_id\":\"S-07\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-1012-9520C2\",\"synthetic\":true}",
+     "digest": "b681096696dd2a3cdbfe22e5f43e1c34b7048df1f1afa76eb8c9bdc200198d73",
+     "updated_at": "2026-10-13T05:44:00.000Z"
+    },
+    {
+     "id": "case:HIST-LD-1013-9DEA43",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL43329126\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-311\",\"name\":\"Sierra Haul LLC\",\"usdot\":\"3141592\"},\"carrier_id\":\"C-311\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-1013-9DEA43\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-1013-9DEA43\",\"ref\":\"doc:RC-LD-1013-9DEA43\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-1013-9DEA43\",\"ref\":\"doc:BOL-LD-1013-9DEA43\"},{\"kind\":\"pod\",\"load_id\":\"LD-1013-9DEA43\",\"ref\":\"doc:POD-LD-1013-9DEA43\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-1013-9DEA43\",\"ref\":\"doc:INV-LD-1013-9DEA43-1\"}],\"evidence_refs\":[\"doc:RC-LD-1013-9DEA43\",\"doc:BOL-LD-1013-9DEA43\",\"doc:POD-LD-1013-9DEA43\",\"doc:INV-LD-1013-9DEA43-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":25,\"free_time_min\":120},\"gps_dwell_min\":25,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"3141592\",\"invoice_id\":\"INV-3141592-SHL-961121245\",\"invoice_number\":\"SHL-961121245\",\"issued_at\":\"2026-10-14T01:39:00+00:00\",\"lane\":\"Stockton, CA -> Reno, NV\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-1013-9DEA43\",\"period\":\"2026-10\",\"po\":\"PO-448008\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"549123\",\"remit_to\":{\"name\":\"Sierra Haul LLC\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000007\",\"id\":\"S-07\",\"name\":\"Bay Produce Co\"},\"shipper_id\":\"S-07\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-1013-9DEA43\",\"synthetic\":true}",
+     "digest": "ae98a32fc7030764dadc509620774e94e0ec4c87af3cf3b7a09512ac975de4e2",
+     "updated_at": "2026-10-14T05:34:00.000Z"
+    }
+   ],
+   "write_id": "history:49fc64e9358becc9:002:a8608fd4c6bdec2f"
+  },
+  {
+   "source": "golden-gate-books",
+   "cases": [
+    {
+     "case_id": "HIST-LD-1016-2BA2DB",
+     "load_id": "LD-1016-2BA2DB",
+     "title": "Sage Valley Carriers invoice on LD-1016-2BA2DB",
+     "priority": "P2",
+     "exposure_usd": 0.0,
+     "opened_at": "2026-10-17T04:35:00.000Z",
+     "resolved_at": "2026-10-17T07:29:00.000Z"
+    }
+   ],
+   "invoices": [
+    {
+     "id": "INV-8800880-963308992",
+     "case_id": "HIST-LD-1016-2BA2DB",
+     "carrier_id": "C-OFF-2",
+     "load_id": "LD-1016-2BA2DB",
+     "amount": 1907.59,
+     "contract_amount": 1907.59,
+     "paid_amount": 0,
+     "issued_at": "2026-10-17T04:35:00.000Z",
+     "status": "open"
+    }
+   ],
+   "ledger_entries": [
+    {
+     "id": "HIST-JE-LD-1016-2BA2DB-BILL",
+     "case_id": "HIST-LD-1016-2BA2DB",
+     "period": "2026-10",
+     "posted_at": "2026-10-17T09:29:00.000Z",
+     "memo": "Customer billing: SINV-LD-1016-2BA2DB",
+     "lines": [
+      {
+       "account": "accounts_receivable",
+       "debit": 2157.59,
+       "credit": 0
+      },
+      {
+       "account": "freight_revenue",
+       "debit": 0,
+       "credit": 2157.59
+      }
+     ]
+    },
+    {
+     "id": "HIST-JE-LD-1016-2BA2DB-COST",
+     "case_id": "HIST-LD-1016-2BA2DB",
+     "period": "2026-10",
+     "posted_at": "2026-10-17T07:29:00.000Z",
+     "memo": "Carrier settlement: INV-8800880-963308992",
+     "lines": [
+      {
+       "account": "freight_expense",
+       "debit": 1907.59,
+       "credit": 0
+      },
+      {
+       "account": "accounts_payable",
+       "debit": 0,
+       "credit": 1907.59
+      }
+     ]
+    }
+   ],
+   "source_records": [
+    {
+     "id": "case:HIST-LD-1016-2BA2DB",
+     "kind": "case",
+     "record_json": "{\"bol\":\"BOL93265966\",\"brokerage\":\"Golden Gate Freight\",\"carrier\":{\"id\":\"C-OFF-2\",\"mc\":\"MC-880088\",\"name\":\"Sage Valley Carriers\",\"usdot\":\"8800880\"},\"carrier_id\":\"C-OFF-2\",\"carrier_identity_mismatch\":false,\"case_id\":\"HIST-LD-1016-2BA2DB\",\"contract_rate\":1907.59,\"deposits\":[],\"detention_hours_claimed\":0,\"documents\":[{\"kind\":\"rate_confirmation\",\"load_id\":\"LD-1016-2BA2DB\",\"ref\":\"doc:RC-LD-1016-2BA2DB\"},{\"kind\":\"bill_of_lading\",\"load_id\":\"LD-1016-2BA2DB\",\"ref\":\"doc:BOL-LD-1016-2BA2DB\"},{\"kind\":\"pod\",\"load_id\":\"LD-1016-2BA2DB\",\"ref\":\"doc:POD-LD-1016-2BA2DB\",\"signed\":true},{\"kind\":\"carrier_invoice\",\"load_id\":\"LD-1016-2BA2DB\",\"ref\":\"doc:INV-LD-1016-2BA2DB-1\"}],\"evidence_refs\":[\"doc:RC-LD-1016-2BA2DB\",\"doc:BOL-LD-1016-2BA2DB\",\"doc:POD-LD-1016-2BA2DB\",\"doc:INV-LD-1016-2BA2DB-1\"],\"free_time_min\":120,\"gps\":{\"delivery_dwell_min\":98,\"free_time_min\":120},\"gps_dwell_min\":98,\"import_source\":\"golden-gate-books\",\"imported\":true,\"ingest_flags\":[],\"invoice_amount\":1907.59,\"invoice_carrier_usdot\":\"8800880\",\"invoice_id\":\"INV-8800880-963308992\",\"invoice_number\":\"963308992\",\"issued_at\":\"2026-10-17T04:35:00+00:00\",\"lane\":\"Stockton, CA -> Reno, NV\",\"line_items\":[{\"amount\":1850.0,\"desc\":\"Linehaul\",\"kind\":\"linehaul\"},{\"amount\":57.59,\"desc\":\"Fuel surcharge\",\"kind\":\"fuel_surcharge\",\"qty\":133,\"rate\":0.433}],\"load_id\":\"LD-1016-2BA2DB\",\"period\":\"2026-10\",\"po\":\"PO-607664\",\"pod_signed\":true,\"previous_invoices\":[],\"pro\":\"259739\",\"remit_to\":{\"name\":\"Sage Valley Carriers\"},\"required_documents\":[\"rate_confirmation\",\"pod\"],\"resubmission_refs\":[],\"settlement\":{\"approved_amount\":1907.59,\"carrier_paid_at\":null,\"disputed_amount\":0},\"shipper\":{\"cik\":\"0000000007\",\"id\":\"S-07\",\"name\":\"Bay Produce Co\"},\"shipper_id\":\"S-07\",\"shipper_invoice_amount\":2157.59,\"shipper_invoice_id\":\"SINV-LD-1016-2BA2DB\",\"synthetic\":true}",
+     "digest": "a9964575e90f9705d8da71d64403a4593d3e7580fad9c6b888c9589a230a6411",
+     "updated_at": "2026-10-17T07:29:00.000Z"
+    }
+   ],
+   "write_id": "history:49fc64e9358becc9:003:94020f4d5b06358d"
+  }
+ ]
+}

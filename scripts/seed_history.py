@@ -23,6 +23,7 @@ import argparse
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import time
 import uuid
@@ -39,8 +40,10 @@ from sim import docs, history
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 IMPORT_REDUCER = "import_history_batch"
 REMOVE_REDUCER = "remove_imported_history"
-# `spacetime call` passes the payload as one argument: Linux caps a single argument at 128 KiB.
+# `spacetime call` passes the payload as one argument, JSON-escaped a second time (about 1.2x): Linux caps a
+# single argument at 128 KiB, so cloud batches stay at or under CLOUD_MAX_BATCH_BYTES of payload.
 CLOUD_BATCH_BYTES = 50_000
+CLOUD_MAX_BATCH_BYTES = 90_000
 LOCAL_BATCH_BYTES = 200_000
 REMOVE_LIMIT = 40
 
@@ -94,7 +97,11 @@ class CloudTarget:
         self.batch_bytes = CLOUD_BATCH_BYTES
 
     def call(self, reducer: str, payload: dict) -> None:
-        self.admin.call("admin", reducer, payload)
+        from scripts.spacetime_cloud import CloudReducerRefused
+        try:
+            self.admin.call("admin", reducer, payload)
+        except CloudReducerRefused as error:
+            raise Refused(str(error)) from error
 
     def query(self, sql: str) -> list[dict]:
         self.admin.verify_target()
@@ -125,7 +132,7 @@ def call(target, reducer: str, payload: dict, *, attempts: int = 4, sleep: Calla
             return
         except Refused:
             raise
-        except (httpx.HTTPError, RuntimeError) as error:
+        except (httpx.HTTPError, RuntimeError, subprocess.TimeoutExpired) as error:
             if attempt == attempts:
                 raise
             print(f"  {reducer} attempt {attempt} failed ({error.__class__.__name__}); retrying the same payload",
@@ -194,7 +201,15 @@ def seed(target, plan: history.History, batch_bytes: int) -> int:
         raise SystemExit("A different history is already imported here (seed {seed}, end {end}, {days} days). "
                          "Remove it first with --undo, then seed again.".format(**params))
     if stored:
-        print("This history is already imported; replaying its batches is a no-op that fills any gap.")
+        print("This history is already imported (or partly); replaying its batches is a no-op that fills any gap.")
+    else:
+        # The manifest rides in the first batch, so imported cases without it predate it: only proceed when every
+        # one of them belongs to this plan, or two histories would mix.
+        planned = {c["case_id"] for c in plan.cases}
+        stray = sorted(c["case_id"] for c in imported_cases(target) if c["case_id"] not in planned)
+        if stray:
+            raise SystemExit(f"{len(stray)} imported cases here (e.g. {stray[0]}) are not part of this history and no "
+                             "manifest says what they are. Remove them first with --undo, then seed again.")
     payloads = history.batches(plan, batch_bytes)
     for index, payload in enumerate(payloads, 1):
         call(target, IMPORT_REDUCER, payload)
@@ -233,11 +248,12 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--server", default=os.getenv("SPACETIME_URL", "http://127.0.0.1:3000"))
     parser.add_argument("--database", default=os.getenv("SPACETIME_DB", "freightops"))
-    parser.add_argument("--days", type=int, default=history.DEFAULT_DAYS, help="days of history (default 90)")
+    # Left unset, these come from the history already on the server (its manifest), else the defaults shown.
+    parser.add_argument("--days", type=int, help=f"days of history (default {history.DEFAULT_DAYS})")
     parser.add_argument("--loads", type=int, help="total loads (default: 5-8 per business day)")
-    parser.add_argument("--seed", type=int, default=history.DEFAULT_SEED)
+    parser.add_argument("--seed", type=int, help=f"generator seed (default {history.DEFAULT_SEED})")
     parser.add_argument("--end", type=date.fromisoformat, help="last day of history, YYYY-MM-DD (default yesterday UTC)")
-    parser.add_argument("--source", default=history.DEFAULT_SOURCE, help="source tag recorded on every imported row")
+    parser.add_argument("--source", help=f"source tag recorded on every imported row (default {history.DEFAULT_SOURCE})")
     parser.add_argument("--world", type=pathlib.Path, help="world file (default WORLD_FILE or data/world.json)")
     parser.add_argument("--data-dir", type=pathlib.Path, default=pathlib.Path(os.getenv("SIM_DATA_DIR", "data")))
     parser.add_argument("--docs", action="store_true", help="also render each load's documents into <data-dir>/docs")
@@ -249,15 +265,22 @@ def main(argv: list[str] | None = None) -> None:
     if args.world:
         os.environ["WORLD_FILE"] = str(args.world)
     world = directory.load()
-    end = args.end or history.default_end()
-    if end >= datetime.now(UTC).date():
-        raise SystemExit("--end must be a day before today (UTC): imported history never reaches into the future")
-    plan = history.generate(world, seed=args.seed, end=end, days=args.days, loads=args.loads, source=args.source)
-    print(summary(plan))
-    if args.loads is None and len(plan.cases) > 600:
-        print("warning: more than 600 imported cases; the dashboard slows past ~2k cases", file=sys.stderr)
+    explicit = {key: getattr(args, key) for key in ("seed", "end", "days", "loads", "source")
+                if getattr(args, key) is not None}
+
+    def plan_for(params: dict) -> history.History:
+        end = params.get("end") or history.default_end()
+        if isinstance(end, str):
+            end = date.fromisoformat(end)
+        if end >= datetime.now(UTC).date():
+            raise SystemExit("--end must be a day before today (UTC): imported history never reaches into the future")
+        return history.generate(world, seed=params.get("seed", history.DEFAULT_SEED), end=end,
+                                days=params.get("days") or history.DEFAULT_DAYS, loads=params.get("loads"),
+                                source=params.get("source") or history.DEFAULT_SOURCE)
 
     if args.dry_run:
+        plan = plan_for(explicit)
+        print(summary(plan))
         payloads = history.batches(plan, args.max_batch_bytes or LOCAL_BATCH_BYTES)
         print(f"Dry run: {len(payloads)} batches, largest {max(len(json.dumps(p)) for p in payloads):,} bytes; "
               "nothing written")
@@ -268,6 +291,18 @@ def main(argv: list[str] | None = None) -> None:
     target = connect(args.server, args.database)
     started = time.monotonic()
     try:
+        # A history already here decides the parameters unless they are given: rerunning tomorrow, or --undo
+        # --docs, then means that history, not one generated for a new default end date.
+        stored = manifest(target)
+        params = explicit
+        if stored and (args.undo or not explicit):
+            params = json.loads(stored["record_json"])
+            print(f"Using the imported history's parameters: seed {params['seed']}, end {params['end']}, "
+                  f"{params['days']} days")
+        plan = plan_for(params)
+        print(summary(plan))
+        if params.get("loads") is None and len(plan.cases) > 600:
+            print("warning: more than 600 imported cases; the dashboard slows past ~2k cases", file=sys.stderr)
         if args.undo:
             print(f"Removing imported history from {target.label}")
             calls = undo(target)
@@ -280,7 +315,13 @@ def main(argv: list[str] | None = None) -> None:
             print(f"Documents: {written} written, {len(plan.documents)} on file, {size / 1e6:.1f} MB in "
                   f"{args.data_dir / 'docs'}")
         print(f"Importing into {target.label}")
-        count = seed(target, plan, args.max_batch_bytes or target.batch_bytes)
+        batch_bytes = args.max_batch_bytes or target.batch_bytes
+        if isinstance(target, CloudTarget) and batch_bytes > CLOUD_MAX_BATCH_BYTES:
+            raise SystemExit(f"--max-batch-bytes over {CLOUD_MAX_BATCH_BYTES:,} would exceed the CLI argument limit")
+        try:
+            count = seed(target, plan, batch_bytes)
+        except Refused as error:
+            raise SystemExit(f"The module refused a batch, so nothing in it was written: {error}") from None
         elapsed = time.monotonic() - started
         totals = dashboard_totals(target, datetime.now(UTC))
         print(f"Done in {elapsed:.1f}s ({count} calls). {len(imported_cases(target))} imported cases on the server.")

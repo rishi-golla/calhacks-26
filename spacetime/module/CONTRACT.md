@@ -13,7 +13,7 @@ Authentication comes only from the actual SpacetimeDB sender identity. The init 
 | `grant_role` | admin | `identity` (64 hex), `role`, `actor`, `active` (default true) |
 | `open_case` | ingest | `case_id` (not `HIST-`, reserved for imported history), `load_id` (optional until known), `title`, `priority` (P0–P3, default P2), `exposure_usd` (default 0); calling it again on an existing case refreshes title, priority and exposure only. Status and timestamps are kept, a set `load_id` is immutable, and a `human_owned` case rejects the refresh |
 | `update_case` | controller, validator, human | `case_id`, `status` (`open`, `in_progress`, `resolved`, `human_owned`), `reason` |
-| `upsert_invoice` | ingest | `id`, `case_id`, `carrier_id`, `load_id`, `amount`, `contract_amount`, `issued_at` (optional ISO); `paid_amount` is zero at ingest and cannot be overwritten |
+| `upsert_invoice` | ingest | `id`, `case_id` (not a `HIST-` case), `carrier_id`, `load_id`, `amount`, `contract_amount`, `issued_at` (optional ISO); `paid_amount` is zero at ingest and cannot be overwritten |
 | `set_period` | admin, human | `period` (YYYY-MM), `status` (`open` or `locked`) |
 | `place_hold` | controller | `id`, `case_id`, `invoice_id`, `amount`, `reason_code` |
 | `release_hold` | controller | `id` (hold ID), `amount` (optional, remaining amount), `approval_id` (required for any release once the original amounts of all holds ever placed on the hold's invoice, released ones included, total more than $5,000; `human_approval_id` alias accepted) |
@@ -43,7 +43,7 @@ Authentication comes only from the actual SpacetimeDB sender identity. The init 
 | `remove_imported_history` | admin | `limit` (default 50, max 200 cases per call); removes imported (`HIST-`) rows only; see Imported history below |
 | `upsert_forecast` | cfo | `id`, `case_id`, `period`, `category`, `amount` (signed), `confidence`, `assumptions_json` |
 | `upsert_company` | ingest | `id`, `kind`, `name`, optional `usdot`, `mc`, `phone`, `website`, `source_url` |
-| `upsert_source_record` | ingest | `id` (`case:<case_id>`, `company:<id>`, `contacts:<company_id>` or `dataset:meta`), `kind` (`case`, `company`, `contacts`, `dataset`, matching the id prefix), `record_json` (object, or array for `contacts`), `digest` (SHA-256 hex of `record_json` exactly as sent) |
+| `upsert_source_record` | ingest | `id` (`case:<case_id>`, `company:<id>`, `contacts:<company_id>` or `dataset:meta`; never `case:HIST-...` or `dataset:history`, which only `import_history_batch` writes), `kind` (`case`, `company`, `contacts`, `dataset`, matching the id prefix), `record_json` (object, or array for `contacts`), `digest` (SHA-256 hex of `record_json` exactly as sent) |
 | `upsert_contact` | ingest | `id`, `company_id`, `name`, optional `title`, `phone`, `email`, `linkedin_url`, `source` (`fmcsa`, `sec_edgar`, `own_key`, `context_dev`, `website`, `fixture`), `source_url`, `confidence`, `alternates_json` |
 | `add_review` | validator | `id`, `target_task_id`, `case_id`, `verdict` (`pass` or `issue`), `checks_json`, `friction_json`, `actions` |
 | `upsert_memory` | validator, human | `id`, `agent`, `scope` (object with carrier_id/lane/claim_type/skill only), `text`, `source_ref`, `active` |
@@ -244,7 +244,8 @@ Payload: `write_id`, `source` (a short tag, recorded in each change set's summar
 - **Marked.** Case ids and journal ids must start with `HIST-`; invoices, journals and source records must belong to
   a `HIST-` case that exists or arrives earlier in the same batch (journals may also have no case, for the opening
   balance). Source record ids are `case:HIST-...` or the import's manifest `dataset:history`. `open_case` refuses
-  `HIST-` ids, so live intake can never write into the namespace.
+  `HIST-` ids, `upsert_invoice` refuses a `HIST-` case, and `upsert_source_record` refuses `case:HIST-...` and
+  `dataset:history`, so live intake never writes into the namespace.
 - **History, not work.** Cases are always `resolved`, with `opened_at <= resolved_at`. Nothing writes task,
   dispatch, delegation, review, outbox, hold, payment or approval rows, so settlement never touches an imported case.
 - **Never the future.** Every `opened_at`, `resolved_at`, `issued_at`, `posted_at` and `updated_at` must be at or
@@ -252,18 +253,23 @@ Payload: `write_id`, `source` (a short tag, recorded in each change set's summar
   refuses imported journals (P-006). Journals go through the same line validation as every posting: 2 to 200 lines,
   each exactly one positive debit or credit, debits equal to credits in cents.
 - **Idempotent.** The batch's write id makes an exact replay a no-op, as everywhere. A row that already exists with
-  the same caller-supplied contents is skipped, so a replay under new write ids (another batch size) writes nothing;
-  different contents are refused. An existing company is left alone: the live directory wins.
+  the same caller-supplied contents is skipped, so a replay under new write ids (another batch size, another admin
+  identity, or after its period was locked) writes nothing; different contents are refused. An existing company is
+  left alone: the live directory wins. The seed sends the `dataset:history` manifest in its first batch, so even a
+  partial import names its parameters and a different history is refused until the first is removed.
 - **Audited.** Each case's rows land in one change set and audit event on that case's own chain (sheets `case`,
-  `ap_subledger`, `ledger_entry`, `gl`, `ar_subledger`, `source_record`), and the opening balance and new companies on
-  the system chain; the change set's action and audit kind are `import_history_batch`, reason `imported_history`.
-  Journals carry `requested_by = import:history` and the admin as `approved_by`, with no journal request.
+  `ap_subledger`, `ledger_entry`, `source_record`), and the opening balance and new companies on the system chain; the
+  change set's action and audit kind are `import_history_batch`, reason `imported_history`. A journal's
+  `ledger_entry` cells include all its lines; unlike a live posting it is not also projected into `gl` and the AR/AP
+  subledger sheets, which keeps a full import to about 25k cell changes. Journals carry `requested_by =
+  import:history` and the admin as `approved_by`, with no journal request.
 
 `remove_imported_history` (admin; `limit`, default 50, at most 200) is the documented way to take it back out. Each
 call removes up to `limit` imported cases with their invoices, journals and source record, in a change set on each
 case's chain that keeps every deleted value; once none is left it also removes the `HIST-` journals with no case and
-the manifest. It never touches a row without the prefix, refuses a case that has any task, dispatch, hold, payment,
-approval or flag on it, and leaves companies alone. This is the only reducer that deletes journal rows, and only
+the manifest. It never touches a row without the prefix; it refuses a case that has any task, dispatch, hold,
+payment, approval, flag, journal request, forecast, call, review or outbox row on it, and any journal in a `locked`
+period (unlock it first); and it leaves companies alone. This is the only reducer that deletes journal rows, and only
 imported ones; audit, cell-change and change-set history is never deleted.
 
 The dashboard treats imported rows as the company's past: "Start fresh" keeps them in view (Finance shows the

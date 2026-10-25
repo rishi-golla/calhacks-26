@@ -2,6 +2,8 @@
 determinism, marked rows and an idempotent, removable seed."""
 import hashlib
 import json
+import os
+import pathlib
 from datetime import UTC, date, datetime, timedelta
 
 import httpx
@@ -151,9 +153,12 @@ def test_batches_fit_split_by_load_and_replay_the_same_write_ids(plan):
     payloads = history.batches(plan, 60_000)
     assert all(len(json.dumps(p, separators=(",", ":"))) <= 60_000 for p in payloads)
     assert payloads[0]["ledger_entries"][0]["id"] == "HIST-JE-OPENING"
-    assert payloads[-1]["source_records"][-1]["id"] == history.MANIFEST_ID
+    assert payloads[0]["source_records"][0]["id"] == history.MANIFEST_ID
+    assert sum(r["id"] == history.MANIFEST_ID for p in payloads for r in p.get("source_records", [])) == 1
     assert len({p["write_id"] for p in payloads}) == len(payloads)
-    assert all(p["write_id"].startswith(f"history:{plan.manifest['digest'][:16]}:60000:") for p in payloads)
+    assert all(p["write_id"].startswith(f"history:{plan.manifest['digest'][:16]}:") for p in payloads)
+    assert all(len(p["write_id"]) <= 200 for p in payloads)
+    assert not {p["write_id"] for p in payloads} & {p["write_id"] for p in history.batches(plan, 200_000)}
     assert history.batches(plan, 60_000) == payloads
     seen_companies: set[str] = set()
     cases = [c["case_id"] for p in payloads for c in p.get("cases", [])]
@@ -168,6 +173,9 @@ def test_batches_fit_split_by_load_and_replay_the_same_write_ids(plan):
 
 class FakeTarget:
     """Holds the rows the reducers would, and fails on demand."""
+
+    label = "fake"
+    batch_bytes = seed_history.LOCAL_BATCH_BYTES
 
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
@@ -195,7 +203,12 @@ class FakeTarget:
     def query(self, sql: str) -> list[dict]:
         if '"source_record"' in sql:
             return [self.manifest] if self.manifest else []
-        return list(self.cases.values())
+        if '"case"' in sql:
+            return list(self.cases.values())
+        return []
+
+    def close(self) -> None:
+        pass
 
 
 def test_seed_is_idempotent_refuses_another_history_and_undoes(world, plan):
@@ -241,3 +254,92 @@ def test_cli_dry_run_writes_nothing_and_refuses_an_end_that_is_not_past(tmp_path
     assert "resolved cases" in out and "nothing written" in out
     with pytest.raises(SystemExit, match="before today"):
         seed_history.main(["--dry-run", "--end", datetime.now(UTC).date().isoformat()])
+
+
+def test_a_partial_run_then_another_history_is_refused(world, plan):
+    class Interrupted(FakeTarget):
+        def call(self, reducer, payload):
+            if len(self.calls) == 1:
+                raise seed_history.Refused("530: connection reset mid-run")
+            super().call(reducer, payload)
+
+    target = Interrupted()
+    with pytest.raises(seed_history.Refused):
+        seed_history.seed(target, plan, 60_000)
+    assert target.cases and target.manifest is not None, "the first batch carries the manifest"
+    with pytest.raises(SystemExit, match="different history"):
+        seed_history.seed(target, history.generate(world, seed=8, end=END), 60_000)
+    with pytest.raises(SystemExit, match="different history"):
+        seed_history.seed(target, history.generate(world, seed=7, end=END, loads=100), 60_000)
+
+
+def test_imported_cases_without_a_manifest_must_belong_to_the_plan(plan):
+    target = FakeTarget()
+    target.cases["HIST-LD-0101-ABCDEF"] = {"case_id": "HIST-LD-0101-ABCDEF"}
+    with pytest.raises(SystemExit, match="not part of this history"):
+        seed_history.seed(target, plan, 200_000)
+    mine = FakeTarget()
+    first = plan.cases[0]
+    mine.cases[first["case_id"]] = first
+    seed_history.seed(mine, plan, 200_000)
+    assert len(mine.cases) == len(plan.cases)
+
+
+def test_a_later_rerun_and_undo_use_the_stored_history(world, plan, tmp_path, monkeypatch):
+    path = tmp_path / "world.json"
+    path.write_text(json.dumps(world))
+    monkeypatch.setenv("WORLD_FILE", str(path))
+    target = FakeTarget()
+    seed_history.seed(target, plan, seed_history.LOCAL_BATCH_BYTES)
+    first = [p["write_id"] for _, p in target.calls]
+    monkeypatch.setattr(seed_history, "connect", lambda *a: target)
+    # No parameters given: the stored end date (not today's default) decides, so this is a no-op replay.
+    seed_history.main(["--server", "http://127.0.0.1:1", "--database", "x"])
+    assert [p["write_id"] for _, p in target.calls[len(first):]] == first
+    with pytest.raises(SystemExit, match="different history"):
+        seed_history.main(["--server", "http://127.0.0.1:1", "--database", "x", "--seed", "8"])
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    for ref, _, _ in plan.documents[:3]:
+        (docs / f"{ref}.pdf").write_text("pdf")
+    seed_history.main(["--server", "http://127.0.0.1:1", "--database", "x", "--undo", "--docs", "--data-dir", str(tmp_path)])
+    assert not target.cases and target.manifest is None
+    assert not list(docs.iterdir()), "undo removed the stored history's documents"
+
+
+def test_the_cloud_path_caps_batches_and_surfaces_refusals(monkeypatch):
+    from scripts import spacetime_cloud
+
+    class Admin:
+        def call(self, actor, reducer, payload):
+            raise spacetime_cloud.CloudReducerRefused("Cloud admin reducer x refused: journal is not balanced")
+
+    target = seed_history.CloudTarget.__new__(seed_history.CloudTarget)
+    target.admin = Admin()
+    with pytest.raises(seed_history.Refused, match="not balanced"):
+        seed_history.call(target, seed_history.IMPORT_REDUCER, {}, sleep=lambda _: None)
+    assert seed_history.CLOUD_BATCH_BYTES <= seed_history.CLOUD_MAX_BATCH_BYTES
+    # The doubly escaped CLI argument of the largest allowed batch stays under Linux's 128 KiB argument cap.
+    plan = history.generate(offline_world(), seed=7, end=END)
+    for payload in history.batches(plan, seed_history.CLOUD_MAX_BATCH_BYTES):
+        argument = json.dumps(json.dumps(payload, separators=(",", ":")))
+        assert len(argument.encode()) < 128 * 1024
+
+
+MODULE_FIXTURE = pathlib.Path(__file__).resolve().parents[1] / "spacetime/module/spacetimedb/test/fixtures/history-batches.json"
+
+
+def module_fixture() -> dict:
+    """Real generator output for the module's reducer test: a small history at two batch sizes."""
+    plan = history.generate(offline_world(), seed=7, end=date(2026, 10, 20), days=30, loads=10)
+    return {"generated_by": "tests/test_seed_history.py (UPDATE_HISTORY_FIXTURE=1 rewrites it)",
+            "large": history.batches(plan, 200_000), "small": history.batches(plan, 12_000)}
+
+
+def test_the_module_fixture_is_current_generator_output():
+    expected = module_fixture()
+    if os.getenv("UPDATE_HISTORY_FIXTURE"):
+        MODULE_FIXTURE.parent.mkdir(parents=True, exist_ok=True)
+        MODULE_FIXTURE.write_text(json.dumps(expected, indent=1) + "\n")
+    assert json.loads(MODULE_FIXTURE.read_text()) == expected
+    assert len(expected["small"]) > len(expected["large"]) >= 1

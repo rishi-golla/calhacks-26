@@ -144,6 +144,10 @@ def save_private(path: Path, content: str) -> None:
             os.unlink(temporary)
 
 
+class CloudReducerRefused(RuntimeError):
+    """An admin reducer threw (HTTP 530): the database refused the request, so resending it cannot help."""
+
+
 class CloudAdmin:
     """A narrowly scoped adapter compatible with the existing labeled seed."""
 
@@ -269,6 +273,11 @@ class CloudAdmin:
                 DATABASE, reducer, json.dumps(json.dumps(body, separators=(",", ":"))),
             ], capture_output=True, text=True, check=False, timeout=60)
             if result.returncode:
+                # A reducer that threw answers 530 with its own message, which names no credential; surface
+                # it so the caller can tell a refusal from a transport failure. Other CLI output stays withheld.
+                reason = re.search(r"Response text: ([^\n]{1,300})", result.stderr or "")
+                if reason and "530" in (result.stderr or ""):
+                    raise CloudReducerRefused(f"Cloud admin reducer {reducer} refused: {reason.group(1).strip()}")
                 raise RuntimeError(f"Cloud admin reducer {reducer} failed; CLI output withheld")
             return None
         token = self.identity(actor)["token"]

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { canonical, hash, type Payload } from '../src/policy';
 import type { Ctx } from '../src/schema';
 import * as op from '../src/operations';
@@ -1292,7 +1293,7 @@ test('only an admin can import history, and it lands as resolved history with pa
   for (const table of ['task', 'dispatch', 'review', 'delegation_edge', 'journal_request', 'routing_outbox']) assert.equal(h.rows(table).length, 0, table);
 });
 
-test('imported history is audited on its own case chain and projects journals into the GL', () => {
+test('imported history is audited on its own case chain, one header row per imported row', () => {
   const h = new Harness();
   importHistory(h);
   const changes = h.rows('change_set').filter(x => x.action === 'import_history_batch');
@@ -1307,8 +1308,9 @@ test('imported history is audited on its own case chain and projects journals in
   assert.match(String(audits[0].summary), /Imported from accounting history \(unit-history\)/);
   const cells = h.rows('cell_change').filter(x => x.change_set_id === caseChange.id);
   const sheets = new Set(cells.map(x => x.sheet));
-  for (const sheet of ['case', 'ap_subledger', 'ledger_entry', 'gl', 'ar_subledger', 'source_record']) assert.ok(sheets.has(sheet), sheet);
-  assert.ok(cells.some(x => x.sheet === 'gl' && x.row_key === `${HIST}-JE-BILL:0` && x.column === 'account' && x.after === '"accounts_receivable"'));
+  assert.deepEqual([...sheets].sort(), ['ap_subledger', 'case', 'ledger_entry', 'source_record']);
+  // The journal's header cell carries every line, so the audit keeps the full entry without per-line projections.
+  assert.ok(cells.some(x => x.sheet === 'ledger_entry' && x.row_key === `${HIST}-JE-BILL` && x.column === 'lines' && String(x.after).includes('accounts_receivable')));
   // One change set per chain scope; the batch itself writes only its receipt.
   assert.equal(changes.length, 2);
   assert.ok(h.rows('write_receipt').some(x => x.action === 'import_history_batch' && x.change_set_id === ''));
@@ -1415,6 +1417,61 @@ test('removal refuses an imported case someone has worked on', () => {
   const h = new Harness();
   importHistory(h);
   dispatch(h, { event_id: 'TRI', case_id: HIST, status: 'triage', reason: 'misrouted', queue_ms: 0, policy_version: 'v1' });
+  assert.throws(() => removeHistory(h), /has agent or human work/);
+  assert.ok(h.data.case.has(HIST));
+});
+
+
+// Real sim/history.py output (tests/test_seed_history.py keeps it current): one small history at two batch sizes.
+const FIXTURE = JSON.parse(readFileSync(new URL('./fixtures/history-batches.json', import.meta.url), 'utf8')) as { large: Payload[]; small: Payload[] };
+const sinceSetup = (h: Harness) => ['case', 'invoice', 'ledger_entry', 'source_record', 'company', 'change_set', 'cell_change', 'audit_event'].map(t => h.rows(t).length);
+
+test('a real generated history imports, balances and replays as a no-op at any batch size or admin', () => {
+  const h = new Harness();
+  for (const batch of FIXTURE.large) h.run('admin', 'import_history_batch', ['admin'], op.importHistoryBatch, { ...batch });
+  const cases = FIXTURE.large.flatMap(b => (b.cases ?? []) as Payload[]);
+  const journals = FIXTURE.large.flatMap(b => (b.ledger_entries ?? []) as Payload[]);
+  assert.equal(h.rows('case').length, cases.length);
+  assert.equal(h.rows('ledger_entry').length, journals.length);
+  assert.ok(h.data.source_record.has('dataset:history'));
+  for (const entry of h.rows('ledger_entry')) {
+    const lines = entry.lines as { debit: number; credit: number }[];
+    assert.equal(lines.reduce((s, l) => s + Math.round(l.debit * 100), 0), lines.reduce((s, l) => s + Math.round(l.credit * 100), 0), String(entry.id));
+  }
+  const before = sinceSetup(h);
+  // Same history, other batch boundaries: new write ids, identical rows, nothing written.
+  for (const batch of FIXTURE.small) h.run('admin', 'import_history_batch', ['admin'], op.importHistoryBatch, { ...batch });
+  assert.deepEqual(sinceSetup(h), before);
+  // A second admin identity replays the same write ids under its own receipts: still nothing written.
+  h.run('admin', 'grant_role', ['admin'], op.grantRole, { identity: identities.stranger, role: 'admin', actor: 'admin:second' });
+  const granted = sinceSetup(h);
+  for (const batch of FIXTURE.large) h.run('stranger', 'import_history_batch', ['admin'], op.importHistoryBatch, { ...batch });
+  assert.deepEqual(sinceSetup(h), granted);
+  // Lock the books: a replay is still a no-op, but removal now refuses to delete closed journals.
+  const periods = [...new Set(journals.map(j => String(j.posted_at).slice(0, 7)))];
+  for (const period of periods) h.run('admin', 'set_period', ['admin', 'human'], op.setPeriod, { period, status: 'locked' });
+  const locked = sinceSetup(h);
+  for (const batch of FIXTURE.small) h.run('admin', 'import_history_batch', ['admin'], op.importHistoryBatch, { ...batch, write_id: `${String(batch.write_id)}:after-lock` });
+  assert.deepEqual(sinceSetup(h), locked);
+  assert.throws(() => removeHistory(h, { limit: 200 }), /locked period/);
+  assert.equal(h.rows('case').length, cases.length);
+  for (const period of periods) h.run('admin', 'set_period', ['admin', 'human'], op.setPeriod, { period, status: 'open' });
+  removeHistory(h, { limit: 200 });
+  assert.equal(h.rows('case').length, 0);
+  assert.equal(h.rows('ledger_entry').length, 0);
+  assert.ok(!h.data.source_record.has('dataset:history'));
+});
+
+test('live reducers cannot write into imported history, and removal refuses a case they touched', () => {
+  const h = new Harness();
+  importHistory(h);
+  assert.throws(() => h.run('ingest', 'upsert_invoice', ['ingest'], op.upsertInvoice, { id: 'INV-LIVE', case_id: HIST, carrier_id: 'C-1', load_id: HIST.slice(5), amount: 10, contract_amount: 10 }), /only by import_history_batch/);
+  const json = canonical({ x: 1 });
+  for (const id of [`case:${HIST}`, 'dataset:history']) {
+    assert.throws(() => h.run('ingest', 'upsert_source_record', ['ingest'], op.upsertSourceRecord, { id, kind: id.split(':')[0], record_json: json, digest: hash(json) }), /only by import_history_batch/);
+  }
+  h.run('admin', 'set_period', ['admin', 'human'], op.setPeriod, { period: '2026-10', status: 'open' });
+  h.run('cfo', 'upsert_forecast', ['cfo'], op.upsertForecast, { id: 'CF-H', case_id: HIST, period: '2026-11', category: 'collections', amount: 100, confidence: 0.5, assumptions_json: {} });
   assert.throws(() => removeHistory(h), /has agent or human work/);
   assert.ok(h.data.case.has(HIST));
 });

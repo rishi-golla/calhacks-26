@@ -346,6 +346,7 @@ export const upsertInvoice: Handler = m => {
   const id = text(p, 'id');
   const previous = ctx.db.invoice.id.find(id);
   const case_id = text(p, 'case_id');
+  if (isImportedId(case_id) || (previous && isImportedId(previous.case_id))) throw new Error('imported history invoices are written only by import_history_batch');
   const c = caseFor(ctx, case_id, actor);
   const row = {
     id, case_id, carrier_id: text(p, 'carrier_id'), load_id: text(p, 'load_id', c.load_id),
@@ -419,9 +420,8 @@ export const postJournalEntry: Handler = m => {
 type LedgerRow = NonNullable<ReturnType<Ctx['db']['ledger_entry']['id']['find']>>;
 
 // A posted entry's header row plus its line projections into `gl` and the AR/AP subledgers.
-// `removed` captures the same cells going away, for the imported-history removal path.
-function captureLedger(m: Mutation, row: LedgerRow, removed = false): void {
-  const change = (sheet: string, key: string, value: object) => removed ? m.capture(sheet, key, value, {}) : m.capture(sheet, key, null, value);
+function captureLedger(m: Mutation, row: LedgerRow): void {
+  const change = (sheet: string, key: string, value: object) => m.capture(sheet, key, null, value);
   change('ledger_entry', row.id, row);
   row.lines.forEach((line, index) => {
     const cellRow = { entry_id: row.id, line: index + 1, case_id: row.case_id, period: row.period,
@@ -781,6 +781,7 @@ export const upsertSourceRecord: Handler = m => {
   const id = text(p, 'id');
   const kind = choice(p, 'kind', SOURCE_KINDS);
   if (!id.startsWith(`${kind}:`) || id.length === kind.length + 1) throw new Error('source record id must be <kind>:<key>');
+  if (id === HISTORY_MANIFEST || id.startsWith(`case:${HISTORY_PREFIX}`)) throw new Error('imported history source records are written only by import_history_batch');
   const record_json = text(p, 'record_json', undefined, 262144);
   let record: unknown;
   try { record = JSON.parse(record_json); } catch { throw new Error('record_json must be valid JSON'); }
@@ -1290,19 +1291,21 @@ export const importHistoryBatch: Handler = m => {
     const posted_at = pastIso(ctx, item, 'posted_at');
     const period = text(item, 'period', posted_at.slice(0, 7));
     if (period !== posted_at.slice(0, 7)) throw new Error(`journal ${id} period must be the month it was posted in`);
-    if (ctx.db.accounting_period.period.find(period)?.status === 'locked') throw new Error(`P-006: accounting period ${period} is locked`);
     const row = {
       id, case_id, period, lines: journalLines(item.lines), memo: text(item, 'memo', undefined, 500),
       requested_by: HISTORY_REQUESTER, approved_by: actor.actor, posted_at, request_id: '',
       requester_identity: '', approver_identity: actor.identity,
     };
+    // An identical journal is already on the books, even if its period has since been locked.
     const previous = ctx.db.ledger_entry.id.find(id);
     if (previous) {
       if (!sameRow(previous, row, JOURNAL_KEYS)) throw new Error(`journal ${id} already exists with different contents`);
       continue;
     }
+    if (ctx.db.accounting_period.period.find(period)?.status === 'locked') throw new Error(`P-006: accounting period ${period} is locked`);
     ctx.db.ledger_entry.insert(row);
-    captureLedger(scopes.scope(case_id), row);
+    // The header row carries every line; per-line GL projections are left out to keep the import's audit small.
+    scopes.scope(case_id).capture('ledger_entry', id, null, row);
   }
 
   for (const item of records) {
@@ -1332,7 +1335,15 @@ export const importHistoryBatch: Handler = m => {
 // The documented way to take imported history back out: up to `limit` imported cases per call, each with
 // its invoices, journals and source record, removed in a change set on the case's own chain that keeps
 // every deleted value. Once no imported case is left, the opening entries and the manifest go too. Rows
-// without the prefix are never touched, and a case anyone has worked on is refused rather than deleted.
+// without the prefix are never touched; a case anyone has worked on, or a journal in a locked period, is
+// refused rather than deleted.
+function removeJournal(m: Mutation, row: LedgerRow): void {
+  // Closed books stay closed: unlock the period first if imported history there must really go.
+  if (m.ctx.db.accounting_period.period.find(row.period)?.status === 'locked') throw new Error(`P-006: journal ${row.id} is in locked period ${row.period}; remove refused`);
+  m.ctx.db.ledger_entry.id.delete(row.id);
+  m.capture('ledger_entry', row.id, row, {});
+}
+
 export const removeImportedHistory: Handler = m => {
   const { ctx, p } = m;
   const limit = uint(p, 'limit', 50);
@@ -1343,15 +1354,18 @@ export const removeImportedHistory: Handler = m => {
     const id = c.case_id;
     const worked = [...ctx.db.task.case_id.filter(id)].length + [...ctx.db.dispatch.case_id.filter(id)].length
       + [...ctx.db.hold.case_id.filter(id)].length + [...ctx.db.payment_proposal.case_id.filter(id)].length
-      + [...ctx.db.approval.case_id.filter(id)].length + [...ctx.db.flag.case_id.filter(id)].length;
+      + [...ctx.db.approval.case_id.filter(id)].length + [...ctx.db.flag.case_id.filter(id)].length
+      + [...ctx.db.journal_request.case_id.filter(id)].length + [...ctx.db.cash_forecast.case_id.filter(id)].length
+      + [...ctx.db.call.case_id.filter(id)].length + [...ctx.db.review.case_id.filter(id)].length
+      + [...ctx.db.routing_outbox.case_id.filter(id)].length;
     if (worked) throw new Error(`imported case ${id} has agent or human work on it; remove refused`);
     const inner = scopes.scope(id);
     for (const row of [...ctx.db.ledger_entry.case_id.filter(id)]) {
       if (!isImportedId(row.id)) throw new Error(`journal ${row.id} on imported case ${id} was not imported; remove refused`);
-      ctx.db.ledger_entry.id.delete(row.id);
-      captureLedger(inner, row, true);
+      removeJournal(inner, row);
     }
     for (const row of [...ctx.db.invoice.case_id.filter(id)]) {
+      if (!isImportedId(row.case_id)) throw new Error(`invoice ${row.id} was not imported; remove refused`);
       ctx.db.invoice.id.delete(row.id);
       inner.capture('ap_subledger', row.id, row, {});
     }
@@ -1364,10 +1378,7 @@ export const removeImportedHistory: Handler = m => {
     inner.capture('case', id, c, {});
   }
   if (targets.length <= limit) {
-    for (const row of [...ctx.db.ledger_entry.case_id.filter('')].filter(x => isImportedId(x.id))) {
-      ctx.db.ledger_entry.id.delete(row.id);
-      captureLedger(scopes.scope(''), row, true);
-    }
+    for (const row of [...ctx.db.ledger_entry.case_id.filter('')].filter(x => isImportedId(x.id))) removeJournal(scopes.scope(''), row);
     const manifest = ctx.db.source_record.id.find(HISTORY_MANIFEST);
     if (manifest) {
       ctx.db.source_record.id.delete(manifest.id);

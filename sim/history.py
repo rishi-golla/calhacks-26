@@ -426,7 +426,9 @@ def _opening(bundles: list[Bundle], first: date, end_at: datetime) -> dict:
 
 
 def kpis(entries: list[dict], now: datetime) -> dict:
-    """The Finance tiles over these journals, computed as web/lib/ops.ts buildFinance does (no epoch)."""
+    """The Finance tiles over these journals, as web/lib/ops.ts buildFinance computes them with no epoch, except
+    that month-to-date starts at the UTC month start where the dashboard uses the viewer's local midnight, so
+    revenue MTD can differ by the postings of those few hours."""
     totals = {"cash": 0, "ar": 0, "ap": 0, "revenue": 0, "expense": 0}
     revenue_mtd = revenue_30d = expense_30d = 0
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -482,8 +484,9 @@ def manifest_digest(history: History) -> str:
 def batches(history: History, max_bytes: int = 200_000) -> list[dict]:
     """import_history_batch payloads, oldest loads first, each under `max_bytes` of JSON. A load's rows never
     split across batches; a company travels with the first load that names it; the opening entry rides in the
-    first batch and the manifest in the last. Write ids depend on the history and the batch size only, so a
-    rerun with the same parameters replays the same ids."""
+    first batch with the manifest. Write ids are derived from each batch's contents, so a rerun with the same
+    parameters replays the same ids. The manifest rides in the first batch, so even a partial
+    import says which history it belongs to and a rerun with other parameters is refused."""
     digest = manifest_digest(history)[:16]
     keys = ("companies", "cases", "invoices", "ledger_entries", "source_records")
     out: list[dict] = []
@@ -496,7 +499,7 @@ def batches(history: History, max_bytes: int = 200_000) -> list[dict]:
     def size(batch: dict) -> int:
         return len(json.dumps(batch, separators=(",", ":")))
 
-    current = merge({"ledger_entries": [history.opening]})
+    current = merge({"ledger_entries": [history.opening], "source_records": [history.manifest]})
     for bundle in history.bundles:
         part = {key: list(getattr(bundle, key)) for key in keys[1:]}
         part["companies"] = [history.companies[c] for c in dict.fromkeys(bundle.companies) if c not in seen]
@@ -508,13 +511,12 @@ def batches(history: History, max_bytes: int = 200_000) -> list[dict]:
         if size(candidate) > max_bytes:
             raise ValueError(f"load {bundle.load_id} alone exceeds {max_bytes} bytes; raise --max-batch-bytes")
         current = candidate
-    last = merge(current, {"source_records": [history.manifest]})
-    if size(last) > max_bytes:
-        out.append(current)
-        last = merge({"source_records": [history.manifest]})
-    out.append(last)
+    out.append(current)
     for index, batch in enumerate(out):
-        batch["write_id"] = f"history:{digest}:{max_bytes}:{index:03d}"
         for key in [k for k, v in batch.items() if isinstance(v, list) and not v]:
             del batch[key]
+        # Content-addressed: the same rows always replay under the same id, and rows packed differently (another
+        # batch size, a newer packing) get a new id, whose identical rows the module then skips.
+        content = hashlib.sha256(json.dumps(batch, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        batch["write_id"] = f"history:{digest}:{index:03d}:{content[:16]}"
     return out

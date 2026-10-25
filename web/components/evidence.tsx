@@ -35,8 +35,8 @@ export function EvidenceChip({ evidenceRef, label, className = "" }: { evidenceR
   if (apifyRun) return <ApifyRunLink runId={apifyRun} className={`ev-chip ${className}`} />;
   if (!parsed.previewable)
     return (
-      <span className={`ev-chip static ${className}`} title="no preview for this source">
-        {evidenceRef}
+      <span className={`ev-chip static ${className}`} title={label ? `${evidenceRef} (no preview)` : "no preview for this source"} aria-label={label ? `${label}: ${evidenceRef}` : undefined}>
+        {label ?? evidenceRef}
       </span>
     );
   const Icon = parsed.kind === "mail" ? Mail : FileText;
@@ -47,6 +47,8 @@ export function EvidenceChip({ evidenceRef, label, className = "" }: { evidenceR
         type="button"
         className={`ev-chip ${className}`}
         aria-haspopup="dialog"
+        // A short label ("RC") names the button; screen readers get the full ref too.
+        aria-label={label ? `${label}: ${evidenceRef}` : undefined}
         title={label ? evidenceRef : parsed.kind === "mail" ? "Open email" : "Open document"}
         onClick={(e) => {
           // Chips live inside clickable rows; the chip owns this click.

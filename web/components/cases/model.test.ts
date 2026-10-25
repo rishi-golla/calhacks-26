@@ -14,6 +14,8 @@ import {
   layoutTrace,
   milestoneAt,
   milestoneLabel,
+  sideEffectAmountAt,
+  sideEffectAt,
   splitDispatches,
   LAYOUT,
   MILESTONE_STEP,
@@ -331,4 +333,23 @@ test("long spans read in days, and an earlier day carries its date", () => {
   assert.ok(!dayClock(T0 - 60_000, T0).includes(","));
   assert.match(dayClock(T0 - 5 * 86_400_000, T0), /^\w+ \d+, /);
   assert.equal(dayClock(0, T0), "—");
+});
+
+test("a partly released hold reads as held in full, then as the remainder", () => {
+  const id = "CASE-LD-1";
+  const s = snap({
+    case: [{ case_id: id, load_id: "LD-1", title: "Hold", status: "open", opened_at: at(-600) }],
+    hold: [
+      { id: "HOLD-T1", case_id: id, invoice_id: "INV-1", amount: 1000, released_amount: 400, status: "active", placed_at: at(-500), released_at: at(-100) },
+      { id: "HOLD-T2", case_id: id, invoice_id: "INV-2", amount: 300, released_amount: 300, status: "released", placed_at: at(-500), released_at: at(-100) },
+    ],
+  });
+  const [partial, full] = buildCaseTrace(s, id).sideEffects;
+  assert.equal(sideEffectAmountAt(partial, ms(-200)), 1000);
+  assert.equal(sideEffectAt(partial, ms(-200)), "active");
+  assert.equal(sideEffectAmountAt(partial, ms(-50)), 600);
+  assert.equal(sideEffectAt(partial, ms(-50)), "active");
+  // A full release keeps the amount that was held, beside its "released" status.
+  assert.equal(sideEffectAmountAt(full, ms(-50)), 300);
+  assert.equal(sideEffectAt(full, ms(-50)), "released");
 });

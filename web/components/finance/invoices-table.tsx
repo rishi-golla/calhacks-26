@@ -10,7 +10,7 @@ import { ArrowUpRight } from "lucide-react";
 import { useOps } from "@/components/data-provider";
 import { Mascot } from "@/components/mascot";
 import { num, str, timestamp } from "@/lib/data";
-import { fmtAgo } from "@/lib/ops";
+import { fmtAgo, invoiceContractDelta } from "@/lib/ops";
 import { emptyNote, humanize, nick, usd, usdShort } from "./format";
 import { FreshTr, useSettled } from "./fresh";
 
@@ -64,6 +64,7 @@ export function InvoicesPanel() {
         .filter((i) => ["open", "held"].includes(str(i.status, "open")))
         .map((i) => {
           const id = str(i.id);
+          // Amount is what is still owed; the delta is the bill against its contract.
           const amount = num(i.amount) - num(i.paid_amount);
           const contract = num(i.contract_amount);
           return {
@@ -73,7 +74,8 @@ export function InvoicesPanel() {
             load: str(i.load_id),
             amount,
             contract,
-            delta: contract ? amount - contract : 0,
+            invoiced: num(i.amount),
+            delta: invoiceContractDelta(i),
             issuedAt: timestamp(i.issued_at),
             status: holds.has(id) ? "held" : str(i.status, "open"),
             held: holds.get(id) ?? 0,
@@ -177,7 +179,7 @@ export function InvoicesPanel() {
                   </td>
                   <td
                     className={`num fh-opt ${r.delta > 0 ? "fh-hot" : r.delta < 0 ? "fh-ok" : "fh-mute"}`}
-                    title={r.contract ? `Contract ${usd(r.contract)}` : "No contract on file"}
+                    title={r.contract ? `Invoiced ${usd(r.invoiced)} against contract ${usd(r.contract)}` : "No contract on file"}
                   >
                     {r.delta ? `${r.delta > 0 ? "+" : "−"}${usd(Math.abs(r.delta))}` : null}
                   </td>

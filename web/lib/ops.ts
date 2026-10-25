@@ -1105,6 +1105,16 @@ export function diffSnapshots(prev: Snapshot | null, next: Snapshot): LiveEvent[
 
 /* ------------------------------ helpers ------------------------------ */
 
+/**
+ * An invoice against its rate confirmation: billed amount minus contract, the
+ * three-way-match delta. Not the open balance: a partial payment changes what
+ * is owed, not how far the bill is over contract. 0 when no contract is on file.
+ */
+export function invoiceContractDelta(invoice: Row): number {
+  const contract = num(invoice.contract_amount);
+  return contract ? Math.round((num(invoice.amount) - contract) * 100) / 100 : 0;
+}
+
 export const fmtMoney = (value: number, compact = false) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",

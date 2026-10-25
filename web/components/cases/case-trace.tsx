@@ -20,7 +20,7 @@ import { PriorityChip, StatusChip } from "./case-explorer";
 import { CaseFile } from "./case-file";
 import { CaseLog, NodeDetails } from "./node-panel";
 import { TraceGraph } from "./trace-graph";
-import { buildCaseTrace, caseKind, clock, dayClock, KIND_LABEL, layoutTrace, nodeStatus, shortDur, sideEffectAt, timer, type CaseTrace as Trace, type NodeStatus } from "./model";
+import { buildCaseTrace, caseKind, clock, dayClock, KIND_LABEL, layoutTrace, nodeStatus, shortDur, sideEffectAmountAt, sideEffectAt, timer, type CaseTrace as Trace, type NodeStatus } from "./model";
 import "./cases.css";
 
 type Speed = 1 | 4 | 16;
@@ -378,20 +378,22 @@ function SideEffects({ trace, cursor, onSelect }: { trace: Trace; cursor: number
       <div className="ct-effects-list">
         {items.map(({ s, status }) => {
           const target = s.kind === "approval" ? `human:${String(s.row.id)}` : trace.nodeById.has(s.taskId) ? s.taskId : "";
+          const amount = sideEffectAmountAt(s, cursor);
+          const title = [s.label, clock(s.at), amount !== s.amount && `${fmtMoney(s.amount - amount)} of ${fmtMoney(s.amount)} released`].filter(Boolean).join(" · ");
           const body = (
             <>
               {s.kind === "journal" && <span className="fl-micro">journal</span>}
               <span className="ct-effect-label">{s.label}</span>
-              <span className="fl-num">{fmtMoney(s.amount)}</span>
+              <span className="fl-num">{fmtMoney(amount)}</span>
               <span className={`fl-chip outline ${EFFECT_TONE[status!] ?? ""} ct-mini-chip`}>{status!.replaceAll("_", " ")}</span>
             </>
           );
           return target ? (
-            <button key={s.id} className="ct-effect fl-reveal" onClick={() => onSelect(target)} title={`${s.label} · ${clock(s.at)}`}>
+            <button key={s.id} className="ct-effect fl-reveal" onClick={() => onSelect(target)} title={title}>
               {body}
             </button>
           ) : (
-            <span key={s.id} className="ct-effect fl-reveal" title={`${s.label} · ${clock(s.at)}`}>
+            <span key={s.id} className="ct-effect fl-reveal" title={title}>
               {body}
             </span>
           );

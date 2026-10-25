@@ -460,3 +460,14 @@ async def test_incomplete_model_turn_is_retried_before_failing(setup, monkeypatc
     agent.checkpoints.clear() if hasattr(agent.checkpoints, "clear") else None
     with pytest.raises(ProviderError):
         await tool_loop.run_tool_loop(agent, env, meta, "task-2")
+
+
+def test_compact_reasoning_keeps_only_the_latest_reasoning_item():
+    history = [{"role": "user", "content": "x"}, {"type": "reasoning", "id": "r1"}, {"type": "function_call", "id": "c1"},
+               {"type": "function_call_output", "call_id": "c1"}, {"type": "reasoning", "id": "r2"},
+               {"type": "function_call", "id": "c2"}]
+    assert tool_loop.compact_reasoning(history) == 1
+    assert [item.get("id", item.get("role")) for item in history] == ["user", "c1", None, "r2", "c2"]
+    assert tool_loop.compact_reasoning(history) == 0
+    assert tool_loop.compact_reasoning(history, keep_last=False) == 1
+    assert all(item.get("type") != "reasoning" for item in history)

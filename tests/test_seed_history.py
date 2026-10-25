@@ -386,3 +386,17 @@ def test_a_surfaced_refusal_is_one_short_printable_line():
     reason = refusal_reason(noisy)
     assert reason.isprintable() and "\x1b" not in reason and len(reason) <= 160
     assert "journal" in reason and "not balanced" in reason and "A" * 48 not in reason
+
+
+def test_undo_never_deletes_outside_the_documents_folder(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    outside = tmp_path / "RC-x.pdf"
+    outside.write_text("keep")
+    (tmp_path / "secret.pdf").write_text("keep")
+    (docs / "RC-LD-0915-3FA2C1.pdf").write_text("imported")
+    (docs / "POD-LD-0915-3FA2C1.json").symlink_to(tmp_path / "secret.pdf")
+    removed = seed_history.remove_documents(["../RC-x", "../../etc/passwd", "LD-0915-3FA2C1/../..", "LD-0915-3FA2C1"], tmp_path)
+    assert removed == 1
+    assert outside.exists() and (tmp_path / "secret.pdf").exists()
+    assert not (docs / "RC-LD-0915-3FA2C1.pdf").exists()

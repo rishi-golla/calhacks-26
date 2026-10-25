@@ -23,6 +23,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -184,15 +185,26 @@ def render_documents(plan: history.History, data_dir: pathlib.Path) -> tuple[int
     return written, sum(path.stat().st_size for path in files if path.exists())
 
 
+# Load ids the generator writes (LD-0915-3FA2C1). Ids come back from the database, so anything else is skipped
+# rather than turned into a path.
+SAFE_LOAD_ID = re.compile(r"LD-\d{4}-[0-9A-F]{6}")
+
+
 def remove_documents(load_ids: list[str], data_dir: pathlib.Path) -> int:
     """Delete the documents of these imported loads. Their refs follow from the load id alone
-    (history.document_refs), so removal needs neither the world file nor the generator."""
-    folder = data_dir / "docs"
+    (history.document_refs), so removal needs neither the world file nor the generator. Only well-formed
+    load ids are used, and only files directly inside <data_dir>/docs are ever deleted."""
+    folder = (data_dir / "docs").resolve()
     removed = 0
-    for ref in (ref for load_id in load_ids for ref in history.document_refs(load_id)):
-        for suffix in (".pdf", ".json"):
-            path = folder / f"{ref}{suffix}"
-            if path.exists():
+    for load_id in load_ids:
+        if not SAFE_LOAD_ID.fullmatch(load_id):
+            print(f"  skipped documents of unexpected load id {load_id!r}", file=sys.stderr)
+            continue
+        for ref in history.document_refs(load_id):
+            for suffix in (".pdf", ".json"):
+                path = folder / f"{ref}{suffix}"
+                if path.parent != folder or path.is_symlink() or not path.is_file():
+                    continue
                 path.unlink()
                 removed += 1
     return removed

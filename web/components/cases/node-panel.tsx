@@ -292,7 +292,7 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
 
       {tools.length > 0 && (
         <Section title="Actions" count={tools.length}>
-          <ul className="ct-list">
+          <ul className="ct-list actions">
             {tools.map(({ call, status: s }) => {
               const apify = apifyEvidence({ ...call, status: s === "running" ? "started" : call.status });
               return (

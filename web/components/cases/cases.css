@@ -1725,3 +1725,20 @@
   text-decoration: underline;
   text-decoration-color: var(--line);
 }
+
+/* actions: one tight list, no per-row rule; a row only grows when opened */
+.fl .ct-list.actions {
+  gap: 0;
+}
+.fl .ct-list.actions > li {
+  border-left: 0;
+  padding-left: 0;
+}
+.fl .ct-list.actions .ct-expand > summary.ct-line,
+.fl .ct-list.actions > li > .ct-line {
+  padding: 3px 0;
+  line-height: 1.35;
+}
+.fl .ct-list.actions .ct-expand[open] {
+  padding-bottom: 6px;
+}

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./freightline.css";
+import "./mono.css";
+import "./glass.css";
 import { fontClassNames } from "./fonts";
 export const metadata: Metadata = {
   title: "FreightLine · Autonomous back office",

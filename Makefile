@@ -7,7 +7,7 @@ SPACETIME_URL ?= http://127.0.0.1:3000
 ENV_FILE ?= .env
 export ENV_FILE
 RUN := $(PY) -m scripts.with_env --
-.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest source verify-data review-worker live-agents live-demo live-gateway
+.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest source verify-data review-worker cloud-verify live-agents live-demo live-gateway
 
 setup:            ## create venv + install
 	python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -20,7 +20,7 @@ agents:           ## all 9 A2A agents on :9101-9109
 	$(RUN) ./scripts/dev_agents.sh
 gateway:          ## webhooks + demo endpoints on :9000
 	$(RUN) $(PY) -m gateway.app
-router:           ## Redis -> first-hop A2A
+router:           ## Redis -> first hop (A2A, or the SpacetimeDB outbox with FIRST_HOP_TRANSPORT=spacetime)
 	$(RUN) $(PY) -m router.main
 ingest:           ## Consume Redis raw; publish routable events and extracted documents
 	$(RUN) $(PY) -m ingest.main
@@ -32,8 +32,10 @@ sim:              ## publish raw simulator arrivals to Redis `raw`
 	$(RUN) $(PY) -m sim.generator
 verify-data:      ## verify generated W4 documents and event traces
 	$(PY) -m sim.verify --data "$(SIM_DATA_DIR)"
-review-worker:    ## W2 review outbox -> Settlement Quality Review
+review-worker:    ## dispatch worker: outbox first hops -> agents, W2 reviews -> Settlement Quality Review
 	$(RUN) $(PY) -m common.review_worker
+cloud-verify:     ## read-only cutover checklist on Maincloud; VERIFY_ARGS="--server URL --database DB --readyz"
+	$(PY) -m scripts.cloud_verify $(VERIFY_ARGS)
 web:              ## dashboard on :3001
 	cd web && npm run dev -- -p 3001
 test:

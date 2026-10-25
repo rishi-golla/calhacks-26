@@ -9,9 +9,11 @@ import sqlite3
 import uuid
 from email.utils import parseaddr
 from pathlib import Path
+from time import monotonic
 
 import redis.asyncio as redis
 
+from common.spacetime_client import SpacetimeHTTPError
 from ingest import mirror as spacetime_mirror
 from ingest import source_export
 from ingest.documents import (
@@ -29,8 +31,10 @@ log = logging.getLogger("ingest")
 RAW_STREAM = os.getenv("RAW_STREAM", "raw")
 EVENTS_STREAM = os.getenv("EVENTS_STREAM", "events")
 DOCUMENTS_STREAM = os.getenv("DOCUMENTS_STREAM", "documents")
+DEAD_LETTER_STREAM = f"{RAW_STREAM}:dead_letter"
 GROUP = "ingest"
 CONSUMER = "ingest-1"
+TRANSIENT, DETERMINISTIC, OTHER = "transient", "deterministic", "other"
 ACCESSORIAL_TERMS = ("detention", "lumper", "layover", "stop-off", "stop off", "tonu", "driver assist")
 # Events ingest derives that open a case for the router; a demo load's one jumps to P0 and carries its outreach target.
 CASE_EVENTS = {"carrier_invoice.received", "bank_change.requested", "shipper_payment.received"}
@@ -647,24 +651,108 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
     return derived
 
 
+def failure_class(error: BaseException) -> str:
+    """Cutover plan H2. Deterministic: the module refused the write (HTTP 530 on SpacetimeDB 2.x, though the client
+    files it under `server`) or the request is unauthorized or unknown. Transient: the network, any other 5xx, rate
+    limiting, an exhausted energy budget (402) or a request timeout (408). Everything else (conflict, configuration,
+    policy, non-SpacetimeDB errors) keeps the old retry."""
+    if spacetime_mirror.refused(error) or (
+            isinstance(error, SpacetimeHTTPError) and error.kind in ("authorization", "not_found")):
+        return DETERMINISTIC
+    return TRANSIENT if spacetime_mirror.transient(error) else OTHER
+
+
+async def _dead_letter(r, entry_id, reason: str, raw) -> None:
+    """Atomically, as the router does: the entry lands in the dead-letter stream and leaves the pending list."""
+    async with r.pipeline(transaction=True) as pipe:
+        pipe.xadd(DEAD_LETTER_STREAM, {"entry_id": entry_id, "reason": reason, "json": raw or ""})
+        pipe.xack(RAW_STREAM, GROUP, entry_id)
+        await pipe.execute()
+
+
+class Retry:
+    """How a raw entry whose processing failed is retried. A deterministic SpacetimeDB failure is retried twice,
+    then dead-lettered. An outage is retried with exponential backoff (1 s to 30 s) for as long as it lasts, so no
+    event is published ahead of its source and case; the warning repeats at most once a minute. Anything else is
+    retried every second, as before."""
+
+    ATTEMPTS = 3  # the first try and two retries
+
+    def __init__(self, sleep=asyncio.sleep):
+        self.sleep = sleep
+        self.failures: dict = {}  # entry_id -> deterministic failures so far
+        self.outage = False  # the latest failure was transient
+        self.outage_since: float | None = None
+        self.backoff_s = 1.0
+        self.warn = spacetime_mirror.Throttle(60)
+
+    def succeeded(self, entry_id) -> None:
+        self.failures.pop(entry_id, None)
+        if self.outage_since is not None:
+            log.info("SpacetimeDB reachable again after %.0fs", monotonic() - self.outage_since)
+        self.outage, self.outage_since, self.backoff_s = False, None, 1.0
+        self.warn.reset()
+
+    async def failed(self, r, entry_id, raw, error: BaseException) -> bool:
+        """Record a failure; True when the entry was dead-lettered (and so acknowledged)."""
+        kind = failure_class(error)
+        name = entry_id.decode() if isinstance(entry_id, bytes) else entry_id
+        self.outage = kind == TRANSIENT
+        if kind == TRANSIENT:
+            if self.outage_since is None:
+                self.outage_since = monotonic()
+            if self.warn.due():
+                log.warning("SpacetimeDB unavailable for %.0fs (%s); raw entry %s stays pending, retrying with "
+                            "backoff up to %.0fs", monotonic() - self.outage_since,
+                            spacetime_mirror.describe(error), name, spacetime_mirror.RETRY_CAP_S)
+            return False
+        if kind != DETERMINISTIC:
+            return False
+        count = self.failures[entry_id] = self.failures.get(entry_id, 0) + 1
+        if count < self.ATTEMPTS:
+            log.warning("raw entry %s failed deterministically (%s), attempt %d of %d", name,
+                        spacetime_mirror.describe(error), count, self.ATTEMPTS)
+            return False
+        reason = f"{spacetime_mirror.describe(error)} after {count} attempts"
+        try:
+            await _dead_letter(r, entry_id, reason, raw)
+        except Exception:
+            log.exception("could not dead-letter raw entry %s; it stays pending", name)
+            return False
+        self.failures.pop(entry_id, None)
+        log.error("dead-lettered raw entry %s to %s: %s", name, DEAD_LETTER_STREAM, reason)
+        return True
+
+    async def wait(self) -> None:
+        if not self.outage:
+            await self.sleep(1)
+            return
+        await self.sleep(self.backoff_s)
+        self.backoff_s = min(self.backoff_s * 2, spacetime_mirror.RETRY_CAP_S)
+
+
 async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict,
                          exporter: source_export.Exporter | None = None,
-                         mirror: spacetime_mirror.Mirror | None = None) -> bool:
+                         mirror: spacetime_mirror.Mirror | None = None, retry: Retry | None = None) -> bool:
+    """True once the entry is acknowledged: processed, or dead-lettered under `retry`."""
+    raw = values.get(b"json") or values.get("json")
     try:
-        raw = values.get(b"json") or values.get("json")
         events = await handle(json.loads(raw), db)
         if exporter is not None:
             exporter.changed()
-        routed = mirror is not None and not mirror.disabled and spacetime_mirror.routed_case_ids(events)
+        routed = spacetime_mirror.routed_case_ids(events)
+        mirrored = bool(routed) and mirror is not None and not mirror.disabled
         exported = exporter is not None and any(
             event.get("type") != "document.extracted" and (event.get("payload") or {}).get("case_id")
             for event in events)
-        if routed:
-            # Agents read the case from the export and write against its SpacetimeDB rows as soon as the router
-            # admits it, so both land first. A failed mirror write leaves the entry unacked; its retry resends
-            # the same write IDs, which the module treats as no-ops.
+        if routed and (mirrored or exporter is not None):
+            # Agents read the case (its source record, or the export with the mirror off) and write against its
+            # SpacetimeDB rows as soon as the router admits it, so all of them land first. A failed mirror write
+            # leaves the entry unacked; its retry resends the same write IDs, which the module treats as no-ops,
+            # and skips the source records and directory writes that already landed.
             dataset = source_export.build(db)
-            await mirror.cases(dataset, events)
+            if mirrored:
+                await mirror.cases(dataset, events)
             if exporter is not None:
                 exporter.flush(db, dataset)
         elif exported:
@@ -676,11 +764,26 @@ async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict,
                          maxlen=20_000, approximate=True)
         db.commit()
         await r.xack(RAW_STREAM, GROUP, entry_id)
-        return True
-    except Exception:
+    except Exception as error:
         db.rollback()
-        log.exception("ingest failed for %s", entry_id)
-        return False
+        if retry is None or failure_class(error) == OTHER:
+            log.exception("ingest failed for %s", entry_id)
+        return await retry.failed(r, entry_id, raw, error) if retry is not None else False
+    if retry is not None:
+        retry.succeeded(entry_id)
+    return True
+
+
+async def _process_batch(r, db: sqlite3.Connection, entries: list, exporter: source_export.Exporter,
+                         mirror: spacetime_mirror.Mirror, retry: Retry) -> bool:
+    """False when an entry is left pending. An outage stops the batch, so the rest stay pending in order."""
+    done = True
+    for entry_id, values in entries:
+        if not await _process_entry(r, db, entry_id, values, exporter, mirror, retry):
+            done = False
+            if retry.outage:
+                break
+    return done
 
 
 class DirectoryWatch:
@@ -718,6 +821,7 @@ async def main() -> None:
     if mirror.disabled:
         log.info("SpacetimeDB mirror off (SPACETIME_DISABLED=1)")
     watch = DirectoryWatch(mirror)
+    retry = Retry()
     try:
         try:
             await r.xgroup_create(RAW_STREAM, GROUP, id="0", mkstream=True)
@@ -731,18 +835,17 @@ async def main() -> None:
                 entries = [entry for _stream, batch in pending or [] for entry in batch]
                 if not entries:
                     break
-                failed = False
-                for entry_id, values in entries:
-                    if not await _process_entry(r, db, entry_id, values, exporter, mirror):
-                        failed = True
-                if failed:
-                    await asyncio.sleep(1)
-            # Catch up on state that opened no case (documents, deposits, TMS) before blocking for more.
+                if not await _process_batch(r, db, entries, exporter, mirror, retry):
+                    await retry.wait()
+            # Catch up on state that opened no case (documents, deposits, TMS) before blocking for more, and mirror
+            # the source records that changed since the last flush.
             exporter.flush(db)
+            if not mirror.disabled:
+                await mirror.sync_sources(exporter.take())
             response = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: ">"}, count=10, block=2000)
-            for _stream, entries in response or []:
-                for entry_id, values in entries:
-                    await _process_entry(r, db, entry_id, values, exporter, mirror)
+            entries = [entry for _stream, batch in response or [] for entry in batch]
+            if entries and not await _process_batch(r, db, entries, exporter, mirror, retry):
+                await retry.wait()  # the entries left pending are retried by the drain above
     finally:
         watch.stop()
         db.close()

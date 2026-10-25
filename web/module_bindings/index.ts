@@ -41,6 +41,8 @@ import AgentHeartbeatReducer from "./agent_heartbeat_reducer";
 import AppendAuditReducer from "./append_audit_reducer";
 import ClaimOutboxReducer from "./claim_outbox_reducer";
 import DecideApprovalReducer from "./decide_approval_reducer";
+import EnqueueFirstHopReducer from "./enqueue_first_hop_reducer";
+import EnsureAgentDefaultsReducer from "./ensure_agent_defaults_reducer";
 import GrantRoleReducer from "./grant_role_reducer";
 import IssueApprovalCodeReducer from "./issue_approval_code_reducer";
 import LogLlmCallReducer from "./log_llm_call_reducer";
@@ -69,6 +71,7 @@ import UpsertContactReducer from "./upsert_contact_reducer";
 import UpsertForecastReducer from "./upsert_forecast_reducer";
 import UpsertInvoiceReducer from "./upsert_invoice_reducer";
 import UpsertMemoryReducer from "./upsert_memory_reducer";
+import UpsertSourceRecordReducer from "./upsert_source_record_reducer";
 import UpsertTaskReducer from "./upsert_task_reducer";
 
 // Import all procedure arg schemas
@@ -105,6 +108,7 @@ import PrecedentRow from "./precedent_table";
 import PrincipalRow from "./principal_table";
 import ReviewRow from "./review_table";
 import RoutingOutboxRow from "./routing_outbox_table";
+import SourceRecordRow from "./source_record_table";
 import TaskRow from "./task_table";
 
 /** Type-only namespace exports for generated type groups. */
@@ -573,6 +577,20 @@ const tablesSchema = __schema({
       { name: 'routing_outbox_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, RoutingOutboxRow),
+  sourceRecord: __table({
+    name: 'source_record',
+    indexes: [
+      { accessor: 'case_id', name: 'source_record_case_id_idx_btree', algorithm: 'btree', columns: [
+        'caseId',
+      ] },
+      { accessor: 'id', name: 'source_record_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'source_record_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, SourceRecordRow),
   task: __table({
     name: 'task',
     indexes: [
@@ -604,6 +622,8 @@ const reducersSchema = __reducers(
   __reducerSchema("append_audit", AppendAuditReducer),
   __reducerSchema("claim_outbox", ClaimOutboxReducer),
   __reducerSchema("decide_approval", DecideApprovalReducer),
+  __reducerSchema("enqueue_first_hop", EnqueueFirstHopReducer),
+  __reducerSchema("ensure_agent_defaults", EnsureAgentDefaultsReducer),
   __reducerSchema("grant_role", GrantRoleReducer),
   __reducerSchema("issue_approval_code", IssueApprovalCodeReducer),
   __reducerSchema("log_llm_call", LogLlmCallReducer),
@@ -632,6 +652,7 @@ const reducersSchema = __reducers(
   __reducerSchema("upsert_forecast", UpsertForecastReducer),
   __reducerSchema("upsert_invoice", UpsertInvoiceReducer),
   __reducerSchema("upsert_memory", UpsertMemoryReducer),
+  __reducerSchema("upsert_source_record", UpsertSourceRecordReducer),
   __reducerSchema("upsert_task", UpsertTaskReducer),
 );
 
@@ -675,6 +696,8 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "payment_proposal": Omit<typeof tablesSchema.schemaType.tables["paymentProposal"], "accessorName"> & { readonly accessorName: "payment_proposal" };
     /** @deprecated Use `routingOutbox` instead. This alias will be removed in the next major version. */
     readonly "routing_outbox": Omit<typeof tablesSchema.schemaType.tables["routingOutbox"], "accessorName"> & { readonly accessorName: "routing_outbox" };
+    /** @deprecated Use `sourceRecord` instead. This alias will be removed in the next major version. */
+    readonly "source_record": Omit<typeof tablesSchema.schemaType.tables["sourceRecord"], "accessorName"> & { readonly accessorName: "source_record" };
   };
 };
 
@@ -710,6 +733,7 @@ const tableAccessorAliases = {
   "memory_revision": "memoryRevision",
   "payment_proposal": "paymentProposal",
   "routing_outbox": "routingOutbox",
+  "source_record": "sourceRecord",
 } as const;
 
 function __withTableAccessorAliases<T extends object>(target: T, freeze = false): T {
@@ -764,6 +788,8 @@ export type DbView = __DbViewBase & {
   readonly "payment_proposal": __DbViewBase["paymentProposal"];
   /** @deprecated Use `routingOutbox` instead. This alias will be removed in the next major version. */
   readonly "routing_outbox": __DbViewBase["routingOutbox"];
+  /** @deprecated Use `sourceRecord` instead. This alias will be removed in the next major version. */
+  readonly "source_record": __DbViewBase["sourceRecord"];
 };
 
 type __TablesBase = __QueryBuilder<typeof tablesSchema.schemaType>;
@@ -802,6 +828,8 @@ export type Tables = __TablesBase & {
   readonly "payment_proposal": __TablesBase["paymentProposal"];
   /** @deprecated Use `routingOutbox` instead. This alias will be removed in the next major version. */
   readonly "routing_outbox": __TablesBase["routingOutbox"];
+  /** @deprecated Use `sourceRecord` instead. This alias will be removed in the next major version. */
+  readonly "source_record": __TablesBase["sourceRecord"];
 };
 
 /** The tables available in this remote SpacetimeDB module. Each table reference doubles as a query builder. */
@@ -850,3 +878,4 @@ export class DbConnection extends __DbConnectionImpl<typeof REMOTE_MODULE> {
     return new SubscriptionBuilder(this);
   };
 }
+

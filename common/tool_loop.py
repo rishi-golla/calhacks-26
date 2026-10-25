@@ -22,6 +22,15 @@ log = logging.getLogger(__name__)
 MAX_TURNS = 12
 MAX_TOOL_CALLS = 10
 INCOMPLETE_TURN_RETRIES = 2
+
+
+def compact_reasoning(history: list[dict], keep_last: bool = True) -> int:
+    """Drop reasoning items from every turn but the latest (or all of them); returns how many were removed."""
+    last = max((i for i, item in enumerate(history) if item.get("type") == "reasoning"), default=-1) if keep_last else -1
+    keep = [item for i, item in enumerate(history) if item.get("type") != "reasoning" or i == last]
+    dropped = len(history) - len(keep)
+    history[:] = keep
+    return dropped
 MAX_TOOL_RESULT_BYTES = 90_000
 _SECRET_KEY = re.compile(
     r"(?:secret|password|token|api.?key|authorization|phone|email|bank|account.?number|routing.?number|"
@@ -159,7 +168,14 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
                 except ProviderError as error:
                     if attempt >= INCOMPLETE_TURN_RETRIES or not str(error).startswith("tool response incomplete"):
                         raise
-                    log.warning("%s turn %d %s; retrying", agent.name, turn_index, error)
+                    if "max_messages" in str(error):
+                        # The same conversation is cut short again at the same turn, so the retry must shrink it:
+                        # earlier turns' reasoning items are optional context and are the only part that grows.
+                        dropped = compact_reasoning(history)
+                        log.warning("%s turn %d %s; retrying with %d reasoning items dropped", agent.name,
+                                    turn_index, error, dropped)
+                    else:
+                        log.warning("%s turn %d %s; retrying", agent.name, turn_index, error)
 
         # Replaying after a wait/crash reads this exact decision instead of asking the model again.
         try:
@@ -173,6 +189,8 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
         if artifact is not None and turn["calls"]:
             return _finish(artifact, None, records, settings, usage, model,
                            "Provider attempted a tool after completion; guarded operation result preserved.")
+        # Earlier turns' reasoning items are optional context that only grows; the new turn brings its own.
+        compact_reasoning(history, keep_last=False)
         history.extend(turn["output"])
         usage.append(turn.get("usage", {}))
         if not turn["calls"]:

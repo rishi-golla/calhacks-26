@@ -120,10 +120,7 @@ arrival metadata to Redis `raw` rather than extracted answers. The simulator als
 combines them with the structured TMS feed, and publishes exactly the routable case events to Redis `events`.
 The ASUS/W1 router consumes `events`; extracted and reviewable document results go separately to Redis
 `documents` for audit and W2 workflows, never to the router. All three stream names are configurable through
-`RAW_STREAM`, `EVENTS_STREAM`, and `DOCUMENTS_STREAM` (defaults: `raw`, `events`, and `documents`). A raw
-entry that keeps failing (SQLite or SpacetimeDB mirror errors) is retried up to `INGEST_MAX_ATTEMPTS` times (default
-3), and a malformed one is not retried; either is then copied with its error to `<RAW_STREAM>:dead_letter` (e.g.
-`raw:dead_letter`, capped at about 10k entries) and acked, so one bad entry never stalls the consumer. Its
+`RAW_STREAM`, `EVENTS_STREAM`, and `DOCUMENTS_STREAM` (defaults: `raw`, `events`, and `documents`). Its
 transactional load, invoice, remittance, and bank-offset state lives in `data/ingest.db`. Use `make world` to
 refresh the public counterparty directory and `make ingest` to run the consumer.
 

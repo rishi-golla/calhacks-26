@@ -31,11 +31,6 @@ EVENTS_STREAM = os.getenv("EVENTS_STREAM", "events")
 DOCUMENTS_STREAM = os.getenv("DOCUMENTS_STREAM", "documents")
 GROUP = "ingest"
 CONSUMER = "ingest-1"
-# Raw entries that cannot be ingested land here (original fields plus the failure) and are acked off `raw`.
-DEAD_LETTER_STREAM = f"{RAW_STREAM}:dead_letter"
-DEAD_LETTER_MAXLEN = 10_000
-DEFAULT_MAX_ATTEMPTS = 3
-RETRY_DELAY_S = 1.0
 ACCESSORIAL_TERMS = ("detention", "lumper", "layover", "stop-off", "stop off", "tonu", "driver assist")
 # Events ingest derives that open a case for the router; a demo load's one jumps to P0 and carries its outreach target.
 CASE_EVENTS = {"carrier_invoice.received", "bank_change.requested", "shipper_payment.received"}
@@ -652,112 +647,12 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
     return derived
 
 
-class MalformedEntry(ValueError):
-    """A raw entry that no retry can ingest: undecodable JSON or a field of the wrong type.
-
-    Messages are fixed descriptions, never entry content, so they are safe to log."""
-
-
-# Identifiers ingest stores as SQLite keys; anything but a string is a malformed entry, not a transient error.
-_ID_FIELDS = ("load_id", "invoice_id")
-
-
-def _decode(values: dict) -> dict:
-    """The raw entry's event, or MalformedEntry when its shape cannot be ingested."""
-    raw = values.get(b"json", values.get("json"))
-    if raw is None:
-        raise MalformedEntry("entry has no json field")
-    try:
-        event = json.loads(raw)
-    except (TypeError, ValueError) as exc:  # JSONDecodeError and UnicodeDecodeError are ValueErrors
-        raise MalformedEntry(f"json does not decode ({type(exc).__name__})") from None
-    if not isinstance(event, dict):
-        raise MalformedEntry(f"event is a JSON {type(event).__name__}, not an object")
-    if not isinstance(event.get("type"), str | None):
-        raise MalformedEntry("event type is not a string")
-    payload = event.get("payload", {})
-    if not isinstance(payload, dict):
-        raise MalformedEntry("event payload is not an object")
-    for field in _ID_FIELDS:
-        if not isinstance(payload.get(field), str | None):
-            raise MalformedEntry(f"payload {field} is not a string")
-    return event
-
-
-def _max_attempts() -> int:
-    try:
-        value = int(os.getenv("INGEST_MAX_ATTEMPTS", DEFAULT_MAX_ATTEMPTS))
-    except ValueError:
-        log.warning("INGEST_MAX_ATTEMPTS is not an integer; using %d", DEFAULT_MAX_ATTEMPTS)
-        return DEFAULT_MAX_ATTEMPTS
-    return max(value, 1)
-
-
-class Retries:
-    """Bounded attempts per raw entry before it is dead-lettered.
-
-    The count is the larger of Redis' XPENDING `times_delivered` for the entry (one for the `>` read, plus one per
-    re-read of this consumer's pending history; it survives a restart) and this process's own failure count (a
-    fallback when XPENDING is unavailable or a server does not count history re-reads)."""
-
-    def __init__(self, max_attempts: int | None = None):
-        self.max_attempts = max_attempts or _max_attempts()
-        self.failures: dict = {}
-
-    async def attempts(self, r, entry_id) -> int:
-        failures = self.failures[entry_id] = self.failures.get(entry_id, 0) + 1
-        delivered = 0
-        try:
-            rows = await r.xpending_range(RAW_STREAM, GROUP, min=entry_id, max=entry_id, count=1,
-                                          consumername=CONSUMER)
-            if rows:
-                delivered = int(rows[0].get("times_delivered") or 0)
-        except redis.RedisError as exc:
-            log.warning("XPENDING unavailable for %s (%s); counting attempts in memory", entry_id,
-                        type(exc).__name__)
-        return max(failures, delivered)
-
-    def settle(self, entry_id) -> None:
-        self.failures.pop(entry_id, None)
-
-
-def _text(value) -> str:
-    return value.decode("utf-8", "replace") if isinstance(value, bytes) else str(value)
-
-
-async def _dead_letter(r, entry_id, values: dict, exc: Exception, attempts: int, reason: str) -> bool:
-    """Copy the entry and its failure to the dead-letter stream, then ack it off `raw`. False leaves it pending."""
-    record = {"entry_id": _text(entry_id), "source_stream": RAW_STREAM, "group": GROUP,
-              "error_type": type(exc).__name__, "error": str(exc)[:500], "reason": reason,
-              "attempts": str(attempts), "dead_lettered_at": iso_z()}
-    record.update({f"raw.{_text(key)}": value for key, value in values.items()})
-    try:
-        await r.xadd(DEAD_LETTER_STREAM, record, maxlen=DEAD_LETTER_MAXLEN, approximate=True)
-        await r.xack(RAW_STREAM, GROUP, entry_id)
-    except redis.RedisError as error:
-        log.warning("dead-letter of raw entry %s failed (%s); it stays pending", entry_id, type(error).__name__)
-        return False
-    # Entry id and reason only: raw fields can carry email bodies and bank account or routing numbers.
-    log.warning("dead-lettered raw entry %s after %d attempt(s): %s", entry_id, attempts, reason)
-    return True
-
-
 async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict,
                          exporter: source_export.Exporter | None = None,
-                         mirror: spacetime_mirror.Mirror | None = None,
-                         retries: Retries | None = None) -> bool:
-    """Ingest one raw entry. True once it is acked: published, or dead-lettered. False leaves it pending.
-
-    A malformed entry is dead-lettered at once. Any other failure (SQLite, a SpacetimeDB mirror write, Redis) is
-    transient: the entry stays unacked so the pending re-read retries it, and with `retries` it is dead-lettered
-    once its attempts reach `retries.max_attempts`."""
+                         mirror: spacetime_mirror.Mirror | None = None) -> bool:
     try:
-        try:
-            event = _decode(values)
-            events = await handle(event, db)
-        except (TypeError, AttributeError) as exc:
-            # A nested field of the wrong type; handling the same entry again fails the same way.
-            raise MalformedEntry(f"event field has the wrong type ({type(exc).__name__})") from exc
+        raw = values.get(b"json") or values.get("json")
+        events = await handle(json.loads(raw), db)
         if exporter is not None:
             exporter.changed()
         routed = mirror is not None and not mirror.disabled and spacetime_mirror.routed_case_ids(events)
@@ -779,25 +674,11 @@ async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict,
                          maxlen=20_000, approximate=True)
         db.commit()
         await r.xack(RAW_STREAM, GROUP, entry_id)
-    except MalformedEntry as exc:
+        return True
+    except Exception:
         db.rollback()
-        attempts = 1 if retries is None else await retries.attempts(r, entry_id)
-        settled = await _dead_letter(r, entry_id, values, exc, attempts, f"malformed: {exc}")
-    except Exception as exc:  # any other failure is transient: retried, then dead-lettered
-        db.rollback()
-        # The exception type only; a message or traceback can quote entry content (debug level keeps the trace).
-        log.warning("ingest failed for %s (%s)", entry_id, type(exc).__name__)
-        log.debug("ingest failure for %s", entry_id, exc_info=True)
-        if retries is None:
-            return False
-        attempts = await retries.attempts(r, entry_id)
-        settled = attempts >= retries.max_attempts and await _dead_letter(
-            r, entry_id, values, exc, attempts, f"{type(exc).__name__} after {attempts} attempts")
-    else:
-        settled = True
-    if settled and retries is not None:
-        retries.settle(entry_id)
-    return settled
+        log.exception("ingest failed for %s", entry_id)
+        return False
 
 
 class DirectoryWatch:
@@ -835,7 +716,6 @@ async def main() -> None:
     if mirror.disabled:
         log.info("SpacetimeDB mirror off (SPACETIME_DISABLED=1)")
     watch = DirectoryWatch(mirror)
-    retries = Retries()
     try:
         try:
             await r.xgroup_create(RAW_STREAM, GROUP, id="0", mkstream=True)
@@ -849,20 +729,18 @@ async def main() -> None:
                 entries = [entry for _stream, batch in pending or [] for entry in batch]
                 if not entries:
                     break
-                # Every entry gets its turn, so one failure never blocks the rest of the batch; failures stay pending
-                # until they succeed or reach the attempt limit and are dead-lettered.
                 failed = False
                 for entry_id, values in entries:
-                    if not await _process_entry(r, db, entry_id, values, exporter, mirror, retries):
+                    if not await _process_entry(r, db, entry_id, values, exporter, mirror):
                         failed = True
                 if failed:
-                    await asyncio.sleep(RETRY_DELAY_S)
+                    await asyncio.sleep(1)
             # Catch up on state that opened no case (documents, deposits, TMS) before blocking for more.
             exporter.flush(db)
             response = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: ">"}, count=10, block=2000)
             for _stream, entries in response or []:
                 for entry_id, values in entries:
-                    await _process_entry(r, db, entry_id, values, exporter, mirror, retries)
+                    await _process_entry(r, db, entry_id, values, exporter, mirror)
     finally:
         watch.stop()
         db.close()

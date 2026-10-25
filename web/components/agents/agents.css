@@ -157,6 +157,11 @@
   position: relative;
   z-index: 2;
 }
+/* On the map motion means work: an idle mascot stands still. */
+.au .mascot.mood-idle .mascot-body,
+.au .mascot.mood-idle .mascot-shadow {
+  animation: none;
+}
 .au-glow {
   position: absolute;
   inset: -34%;

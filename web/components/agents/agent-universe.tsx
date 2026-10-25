@@ -17,7 +17,7 @@ import { useLiveEvents, useOps } from "@/components/data-provider";
 import { moodForStatus, type Mood } from "@/components/mascot";
 import { AGENT_IDS, AGENT_META, isAgentId, type AgentId, type NodeId } from "@/lib/agents";
 import { timestamp } from "@/lib/data";
-import type { LiveEvent } from "@/lib/ops";
+import { intakeArriving, type LiveEvent } from "@/lib/ops";
 import { AgentNode, type NodeTone, type NodeView } from "./agent-node";
 import { AgentPanel } from "./agent-panel";
 import { CaseRail, type RailMetrics } from "./case-rail";
@@ -275,10 +275,11 @@ export default function AgentUniverse() {
   const views: NodeView[] = [];
   {
     const awaiting = caseList.filter((c) => c.status === "open");
+    const arriving = intakeArriving(caseList, now);
     views.push({
       id: "intake",
-      mood: transient.intake ?? (awaiting.length ? "working" : "idle"),
-      tone: awaiting.length || ops.casesActive ? "working" : "idle",
+      mood: transient.intake ?? (arriving ? "working" : "idle"),
+      tone: arriving ? "working" : "idle",
       counts: `${awaiting.length}|new`,
       ...chipsFor(awaiting.map((c) => c.caseId)),
     });
@@ -294,7 +295,7 @@ export default function AgentUniverse() {
       mood,
       bubble: mood === "talking" ? (liveCalls === 1 ? "On a call" : `${liveCalls} calls live`) : undefined,
       tone: toneFor(w.status, t),
-      counts: `${w.active}|active|${w.done.toLocaleString()}|done${w.queued > 0 ? `|${w.queued}|queued` : ""}`,
+      counts: `${w.active}|active|${w.done.toLocaleString()}|done${w.queued > 0 ? `|${w.queued}|queued` : ""}${w.stalled > 0 ? `|${w.stalled}|stalled` : ""}`,
       ...chipsFor([...new Set(caseIds)]),
     });
   }

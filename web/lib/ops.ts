@@ -406,6 +406,8 @@ export type AgentWorkload = {
   status: "working" | "idle" | "offline" | "stale" | "error";
   active: number;
   queued: number;
+  /** `working` task rows nothing is advancing: orphaned by a crash or a lost projection. */
+  stalled: number;
   done: number;
   errors: number;
   p50Ms: number;
@@ -417,6 +419,18 @@ export type AgentWorkload = {
   enabled: boolean;
 };
 
+/** Heartbeats land every 15 s; past this the agent's row is stale. */
+const HEARTBEAT_STALE_MS = 60_000;
+/** A `working` row this quiet while the heartbeat says idle has been abandoned. */
+export const TASK_STALL_MS = 120_000;
+/** Past this a `working` row is abandoned whatever the heartbeat says. */
+export const TASK_ABANDON_MS = 15 * 60_000;
+
+/**
+ * Status comes from the agent's own heartbeat, not from task rows: a row can
+ * be left `working` forever when a worker dies, while the heartbeat reports
+ * whether the service holds a live task lease right now.
+ */
 export function buildWorkloads(snapshot: Snapshot, now: number): Record<AgentId, AgentWorkload> {
   const byAgent = new Map<string, TaskView[]>();
   for (const row of snapshot.task) {
@@ -430,24 +444,32 @@ export function buildWorkloads(snapshot: Snapshot, now: number): Record<AgentId,
   for (const id of AGENT_IDS) {
     const record = snapshot.agent.find((r) => r.name === id);
     const config = snapshot.agent_config.find((r) => r.agent === id);
-    const activeTasks = (byAgent.get(id) ?? []).filter((t) => t.state === "working");
+    const workingTasks = (byAgent.get(id) ?? []).filter((t) => t.state === "working");
     const queuedTasks = (byAgent.get(id) ?? []).filter((t) => t.state !== "working");
     const lastSeen = record ? timestamp(record.last_seen) : 0;
-    const stale = !record || now - lastSeen > 60_000;
+    const stale = !record || now - lastSeen > HEARTBEAT_STALE_MS;
+    const busy = !stale && record.status === "busy";
+    const activeTasks = workingTasks.filter((t) => {
+      const quiet = now - (t.updatedAt || t.startedAt);
+      return quiet <= TASK_STALL_MS || (busy && quiet <= TASK_ABANDON_MS);
+    });
     const status: AgentWorkload["status"] = !record
       ? "offline"
       : stale
         ? "stale"
         : record.status === "error"
           ? "error"
-          : activeTasks.length > 0
+          : busy || activeTasks.length > 0
             ? "working"
             : "idle";
     out[id] = {
       id,
       status,
-      active: activeTasks.length || (record ? num(record.active) : 0),
+      // The heartbeat's own `active` column counts orphaned rows too, so count
+      // live rows here; a busy heartbeat means at least one leased task.
+      active: Math.max(activeTasks.length, busy ? 1 : 0),
       queued: queuedTasks.length || (record ? num(record.queued) : 0),
+      stalled: workingTasks.length - activeTasks.length,
       done: record ? num(record.done) : snapshot.task.filter((r) => r.agent === id && r.a2a_state === "completed").length,
       errors: record ? num(record.errors) : 0,
       p50Ms: record ? num(record.p50_ms) : 0,
@@ -459,6 +481,15 @@ export function buildWorkloads(snapshot: Snapshot, now: number): Record<AgentId,
     };
   }
   return out;
+}
+
+/** Intake animates for this long after a case arrives. */
+export const INTAKE_ARRIVAL_MS = 30_000;
+
+/** Intake is working while cases arrive; a backlog of open cases is not activity. */
+export function intakeArriving(cases: Iterable<CaseView>, now: number): boolean {
+  for (const c of cases) if (c.openedAt > 0 && now - c.openedAt <= INTAKE_ARRIVAL_MS) return true;
+  return false;
 }
 
 /* --------------------------- operations metrics --------------------------- */

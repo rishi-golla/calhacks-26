@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">FreightLine evolved speed bars</title>
+  <path fill="#ecedf4" d="M8 11h42v9H16v5H8V11Z"/>
+  <path fill="#22c09b" d="M8 28h31v9H16v5H8V28Z"/>
+  <path fill="#ff631d" d="M8 45h20v9H16v4H8V45Z"/>
+</svg>

@@ -1,0 +1,65 @@
+Use case: infographic-diagram
+Create one comprehensive, beautiful, highly legible architecture-and-workflow infographic for the actual FreightOps application. Educational engineering poster, large landscape canvas, ideally 3840x2560. White/very pale background, navy typography, blue data flow, purple agent coordination, teal persisted state, amber human/policy gates. Crisp flat vector-like boxes and simple icons, excellent whitespace, orthogonal arrow routing, no decorative complexity. This is ONE complete image. Prioritize readable text and correct arrows. Title "FreightOps" subtitle "Autonomous back office for freight brokerages". Small caption "Code-grounded architecture • October 24, 2026". Two main panels: upper 60% architecture; lower 40% workflow. All labels below should be legible. Do not invent providers, payment rails or direct bank transfers.
+
+UPPER PANEL "1 / HOW THE SYSTEM FITS TOGETHER"
+Left column ingestion chain:
+"Synthetic brokerage simulator" with smaller "Invoices • proof of delivery • email • bank records • TMS"
+down arrow "Redis: raw"
+down arrow "Ingest / normalize / resolve case"
+Three outputs from ingestion:
+(a) "Redis: events" -> "ASUS / W1 intake router" -> central agents area. Router subtitle "First hop only • route to skill owner"; small line "Acknowledges after durable task admission".
+(b) "SQLite ingest.db → source.json" -> central agents area labeled "case source records". Annotation "Source exported before case event".
+(c) "Redis: documents" with "Document audit stream" (separate side branch, never connected to router).
+
+Central large container "9 independent A2A agent services" subtitle "Only needed specialists join each case"
+3x3 compact cards, exactly these nine, with short purpose:
+"Carrier Settlement" / "Invoice match • payment proposal"
+"Shipper Billing & Collections" / "Receivables • payment reconciliation"
+"Load Profitability" / "Margins • cash forecast"
+"Accessorial Audit" / "Extra-charge & bank-change checks"
+"Carrier Trust & Verification" / "Trusted-channel verification"
+"POD & Document Chase" / "Collect missing delivery evidence"
+"Settlement Approvals" / "Holds • approvals • ledger entries"
+"Dispatcher Outreach" / "Guarded voice calls"
+"Settlement Quality Review" / "Review results • learn from flags"
+Do not draw every inter-agent arrow. Put a footer inside agent container:
+"FreightAgent runtime • A2A 1.0 / JSON-RPC"
+"Guarded delegation: depth ≤ 3 • fanout ≤ 3 • no cycles"
+Connected small supporting box "Durable runtime store" / "Admission • checkpoints • waits • retry recovery".
+Connected box "Per-agent model + scoped tools" / "Live inference when configured • fixture mode is simulated".
+
+Right column external services:
+"Apify" / "Public carrier & website observations" connected bidirectionally to scoped tools, with note "Evidence only; contacts remain unverified".
+"Cartesia voice" connected to Dispatcher Outreach through "Outreach guard" labeled "Verified contact + team allowlist in demo".
+Under voice: "Gateway :9000" / "Poll completion → resume waiting A2A task".
+Small adjoining box "Read-only in-call tools :9001" / "Case-scoped lookup capability".
+Do not imply all agents directly call Cartesia.
+
+Below agents spanning middle-right:
+"Deterministic policy checks → SpacetimeDB reducers" with shield icon.
+"SpacetimeDB — shared operational state" / "Cases • tasks • holds • approvals • ledger • audit • memory".
+Agents publish task/evidence telemetry to SpacetimeDB; financial mutations route via policy/reducers.
+"Next.js dashboard :3001" bidirectional connection to SpacetimeDB, arrows labeled "Live subscriptions" and "Authorized human actions".
+Dashboard subtitle "Agent inbox • cases • ledger • audit • human approvals".
+Small review loop from database via "Review outbox / worker" to Settlement Quality Review, then back "Reviews + versioned memory / instructions"; note "Cannot change financial policy".
+Use clean readable connector labels and avoid crossing lines.
+
+LOWER PANEL "2 / FOLLOW ONE CARRIER INVOICE"
+A numbered horizontal workflow with clearly branched outcomes:
+1 "Invoice arrives" / "Ingest creates case + source evidence"
+2 "Router sends A2A task" / "Carrier Settlement owns the case"
+3 "Match invoice to load" / "Check totals, duplicates and delivery documents"
+Branch below 3 labeled "Missing documents": "Document Chase → optional Dispatcher Outreach → wait / resume".
+Branch continuing to 4 labeled "Charge or bank discrepancy":
+4 "Investigate" / "Accessorial Audit → Verification → optional voice call"
+5 "Decide under policy" / "Settlement Approvals reviews evidence; holds block payment"
+6 "Record result" / "Payment proposal, hold, rejection or unresolved case"
+7 "Observe & review" / "Dashboard updates; quality review records lessons"
+Show short alternate green connector from 3 to 6 labeled "Clean match → policy check → payment proposal".
+Below 5 show amber human approval box "Above $5,000: human approval required" with return arrow to policy decision.
+Small bottom safety rail of three equally weighted plain statements:
+"Invoice tolerance: 2% • requester ≠ approver • journal must balance"
+"Payment proposal ≠ bank transfer; banking integrations are deferred"
+"Synthetic brokerage records and live external evidence stay separately labeled"
+Footer tiny glossary "POD = proof of delivery • A2A = agent-to-agent • TMS = transportation management system".
+Make coherent layout and meaningful arrow direction paramount; no fabricated successful payment, no guaranteed automatic resolution. Use concise exact labels, not paragraphs.

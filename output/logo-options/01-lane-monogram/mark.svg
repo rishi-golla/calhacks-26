@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">FreightLine lane monogram</title>
+  <path fill="#ecedf4" d="M10 10h38v8H18v36h-8V10Zm8 16h22v8H18v-8Z"/>
+  <path fill="#22c09b" d="M42 22h8v24h10v8H42V22Z"/>
+  <path fill="#ff631d" d="M32 39h7v7h-7z"/>
+</svg>

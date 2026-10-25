@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">FreightLine dot matrix F</title>
+  <path fill="#ecedf4" d="M8 4h6v6H8V4Zm10 0h6v6h-6V4Zm10 0h6v6h-6V4Zm10 0h6v6h-6V4ZM8 12h6v6H8v-6ZM8 20h6v6H8v-6ZM8 28h6v6H8v-6Zm10 0h6v6h-6v-6Zm10 0h6v6h-6v-6ZM8 36h6v6H8v-6ZM8 44h6v6H8v-6ZM8 52h6v6H8v-6Z"/>
+  <path fill="#22c09b" d="M38 28h6v6h-6v-6Z"/>
+  <path fill="#ff631d" d="M48 4h6v6h-6V4Z"/>
+</svg>

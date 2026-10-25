@@ -1,0 +1,44 @@
+Use case: infographic-diagram.
+Create one exceptionally clear, highly detailed technical architecture poster for the actual FreightLine repository. Landscape 3:2 or 16:10 at highest available resolution, large enough to zoom and read. Professional systems engineering diagram, white/very pale slate background, navy typography, teal SpacetimeDB central boundary, blue service boundaries, amber human controls, purple recall/learning, fine orthogonal arrows, restrained shadows, no decorative illustrations. Prioritize precise readable text and topology. No invented components. Title: "FreightLine × SpacetimeDB". Subtitle: "Shared operational truth, transactional controls, durable work delivery and live visibility". Small subtitle: "Repository architecture • documented Maincloud topology • SpacetimeDB 2.10.2". This describes code and documented deployment, not verified current process health.
+
+LAYOUT: large central SpacetimeDB module occupying roughly 45% of width; left ASUS intake lane 23%, right Mac execution lane 27%; bottom full-width dashboard, recall and transaction detail panels. Make a dense but readable full architecture with numbered flows and concise labels. All following technical details should appear, grouped into legible cards. Route arrows cleanly, use labeled ports/buses to avoid spaghetti.
+
+LEFT BOUNDARY: "ASUS • intake + inference".
+Vertical flow: "Simulation / inbox / source events" -> "Redis raw" -> "W4 ingest • normalize + enrich" -> "Redis events" -> "W1 router • validate → redact → classify → route".
+Ingest has arrow to central reducers labeled "1 Mirror source truth BEFORE routing": open_case, upsert_invoice, upsert_company, upsert_contact, upsert_source_record. Source record includes SHA-256 digest validation.
+Router has sidecar "ingest.sqlite • pinned retry payloads / stable write IDs"; sidebar "PII vault • local redaction mappings".
+Router arrow to central labeled "2 enqueue_first_hop" and return note "Redis ACK only after durable outcome; errors stay pending". Branch "triage / events:dead_letter". Tiny exception "gps.ping: ACK without dispatch audit".
+Separate service card "Inference harness / vLLM" with central arrows "read agent_config" and "log_llm_call"; "Evaluator → set_metric".
+Footnote in lane "FIRST_HOP_TRANSPORT=spacetime".
+
+CENTRAL BOUNDARY title: "SpacetimeDB • operational system of record". Endpoint "Maincloud / at350-freightops". "TypeScript module • transactional reducers".
+At top ingress strip "HTTP reducers + read-only SQL" and protocol detail "POST /v1/database/{db}/call/{reducer} • Bearer service identity • one JSON-string payload".
+Central guardrail strip: "Actual sender identity → active principal / role → policy + ownership checks → atomic commit". "Python SpacetimeClient also runs common.policy.check() before writes".
+Group schema in six cards:
+A "Source & cases": case, invoice, company, contact, source_record.
+B "Execution & routing": task, agent, delegation_edge, dispatch, routing_outbox, agent_config.
+C "Financial state": hold, payment_proposal, approval, journal_request, ledger_entry, accounting_period, cash_forecast.
+D "Evidence & telemetry": audit_event, change_set, cell_change, doc_read, call, llm_call, metric.
+E "Review & learning": review, flag, agent_memory, memory_revision, instruction_version, precedent.
+F "Controls & private bookkeeping": public: principal, demo_target, view_epoch; private: approval_secret, write_receipt, chain_head.
+Outbox inset prominent: "enqueue_first_hop atomically writes: routing_outbox[first_hop:<event_id>] + dispatch[queued] + audit". Kinds "first_hop • review_output • review_flag • review_followup".
+Central lower policy card "Cents-exact amounts • balanced journals • open periods • requester / approver separation • duplicate-payment protection". "Invoice > $5,000 or cumulative original holds > $5,000: exact-action human approval". "Human takeover blocks new autonomous business mutations". "Delegation: allowlist • no cycles • depth ≤ 3 • fanout ≤ 3".
+Small status note "Case settlement derived transactionally from tasks, outbox, approvals, flags and reviews".
+Small history note "Admin HIST- imports: past books, audited, no agent work".
+
+RIGHT BOUNDARY: "Mac • execution + integrations".
+Top "3 Dispatch worker • common.review_worker". Connect SQL read from outbox labeled "poll 1 s → claim_outbox (60 s lease)". Worker to agents arrow "4 A2A handoff • event:<event_id>". Worker back to central arrow "5 record_dispatch(accepted) → ack_outbox". Note "Delivery ACK ≠ execution complete; lease recovery + backoff".
+Large agent grid: "Python FreightAgent services • A2A SDK 1.2.3 / spec 1.0", nine small cells "Carrier AP", "Shipper AR", "CFO", "Risk", "Controller", "Verification", "Voice Desk", "Validator", "Documents". Subtitle "handle() → ResultArtifact • delegate() → guarded A2A".
+Agent sidecar "PostgreSQL RuntimeStore • execution checkpoints / replay / recovery".
+Agents -> central "6 upsert_task / record_delegation / agent_heartbeat / business reducers / evidence". Central -> agents "SQL: source_record, financial truth, config, instructions, memory".
+Below "Gateway + external tools" includes "Voice / document / provider I/O" and "Outreach through route_target()". Note "LLM calls, A2A execution and external side effects run outside SpacetimeDB". No suggestion database executes calls or moves money.
+Validator feedback loop labeled "7 completed financial outputs / human flags → review outbox → Validator → add_review / lessons / bounded corrective followup". Put compact around edge if needed.
+
+BOTTOM PANELS:
+Panel 1 "Live dashboard • Next.js + generated TypeScript SDK". Draw teal arrow from DB "WebSocket subscriptions → local row cache → views". Views "Finance • Cases / traces • Agents • Ops / audit • human inbox". Tiny detail "full operational tables + 15-minute history window + per-case history; read-only HTTP fallback". Human back-arrow to reducers labeled "Human identity: approve / reject with code • takeover • flag • model choice • instruction rollback". Approval note "Private expiring one-time code; target / invoice / case / amount bound; read resulting approval state". Note "view_epoch: shared view boundary; preserves books and learning". Public data footnote "Operational reads are public in this hackathon module; writes are role-gated; secrets remain private".
+Panel 2 "Recall & controlled learning". "SpacetimeDB agent_memory + precedent → sync every 60 s → Elasticsearch read mirror". "Agents search → ranked IDs → re-read authoritative SpacetimeDB rows". Note "Inactive / reverted lessons excluded; DB unavailable = no recall". "Instruction versions: compare-and-swap publication; human rollback creates a compensating version; policy code stays outside learning".
+Panel 3 "Transaction & recovery contract". Flow "authenticate → validate → mutate rows → change_set + cell_change + audit_event → commit". Detail "SHA-256 chains per case + system scope; exact before/after cells". "Same identity + write_id + identical payload = no-op; changed payload rejected". "Reducer failure rolls back; timeout may have committed". Small exception "Invalid approval-code attempt commits attempt count". "Immutable terminal task output; revisions use new task IDs".
+
+LEGEND small: solid blue = commands / HTTP; teal = live WebSocket updates; purple dashed = derived read mirror; gray = local persistence. Make arrows match labels semantically. Do not draw direct ASUS-to-Mac first-hop network connection: cloud outbox bridges them. No claims of production read isolation or exactly-once agent execution. All names spelled precisely, well spaced, avoid overlapping text and arrows. Overall polished and complete, with strong hierarchy and meaningful whitespace despite detail.
+
+ADDITIONAL RENDERING DIRECTION: Generate a fresh, exceptionally readable large landscape architecture poster, maximum available resolution. Use clear aligned panels and generous typography. This is a full detailed architecture requested explicitly by the user, so retain the table groups and end-to-end labeled flows. Spell all identifiers accurately. Distinguish code/documented topology from runtime health. Prefer 3:2 landscape with ample room for the three bottom detail panels.

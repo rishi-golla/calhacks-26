@@ -1,0 +1,75 @@
+digraph FreightLine {
+ graph [rankdir=LR, bgcolor="#f7f9fc", pad="0.5", nodesep="0.30", ranksep="0.85", compound=true, fontname="Helvetica", fontsize=24, label="FreightLine × SpacetimeDB\nOperational architecture • repository snapshot • 25 October 2026", labelloc=t, splines=polyline];
+ node [shape=box, style="rounded,filled", fillcolor="white", color="#c1cbd8", fontname="Helvetica", fontsize=12, margin="0.18,0.13"];
+ edge [color="#63758b", fontname="Helvetica", fontsize=10, arrowsize=0.7];
+ subgraph cluster_intake { label="ASUS · intake and routing (documented team deployment)"; color="#b9c8db"; style=rounded;
+ raw [label="Simulator / source events\nRedis raw stream"];
+ ingest [label="ingest.main + ingest.mirror\nNormalize • deduplicate • export\nMirror required records BEFORE publishing\nDigest-based writes; retry unacknowledged events"];
+ local [label="SQLite: data/ingest.db\nSource export: data/source.json\nIngest/source storage", shape=cylinder];
+ redis [label="Redis normalized streams\nEvents / documents\nDurable intake delivery", shape=cylinder];
+ router [label="router.main\nSelect first agent + skill\nFIRST_HOP_TRANSPORT=spacetime\nDirect A2A remains a configurable alternative"];
+ harness [label="Harness / inference telemetry\nlog_llm_call • agent_config reads"];
+ raw -> ingest; ingest -> local; ingest -> redis [label="after mirror succeeds"]; redis -> router;
+ }
+ subgraph cluster_runtime { label="Mac · agent execution and integrations (documented team deployment)"; color="#b9c8db"; style=rounded;
+ worker [label="common.review_worker · router identity\nPoll 1 s default • 60 s claims\nfirst_hop / review_output / review_flag / review_followup\nStable IDs • backoff • ACK after accepted handoff"];
+ agents [label="Nine FreightAgent services · A2A 1.0 · :9101–9109\ncarrier_ap • shipper_ar • cfo • risk • controller\nverification • voice_desk • validator • documents\nhandle() → ResultArtifact\ndelegate(): allowlist, no cycles, depth ≤ 3"];
+ pg [label="PostgreSQL · execution persistence\nSDK task snapshots + freight_execution\nsteps • dependencies • callback inbox\nconsumed inputs • freight_projections", shape=cylinder];
+ proj [label="Durable activity projection drainer\nupsert_task + append_audit\nRetries off the task critical path\nTarget database recorded per projection"];
+ client [label="common.spacetime_client.SpacetimeClient\ncommon.policy.check() preflight\nActor-specific bearer identity • stable write_id\nStrict financial writes + HTTP SQL reads"];
+ source [label="SourceRepository\nSOURCE_DATA_BACKEND=spacetime\ncase / company / contacts / dataset records"];
+ external [label="External model and outreach services\nGateway :9000 • completion callbacks\nOutreach via route_target()\nCalls recorded with upsert_call"];
+ recall [label="common.agent_recall\nSync active memory + precedents\nRevalidate recalled rows against SpacetimeDB"];
+ elastic [label="Elastic Cloud · agent-memory\nDerived similarity-search index\nRemoved/inactive memory is removed", shape=cylinder];
+ worker -> agents [label="authenticated A2A handoff"];
+ agents -> pg [label="admission / checkpoints / waiting"];
+ pg -> proj [label="durable projection queue"];
+ proj -> client [label="deliver activity"];
+ agents -> client [label="business writes / delegation / reads"];
+ agents -> source [label="read source truth"];
+ agents -> external [label="tools / inference"];
+ recall -> elastic [label="sync mirror"];
+ agents -> elastic [label="similar-case recall", style=dashed];
+ }
+ subgraph cluster_stdb { label="SPACETIMEDB 2.10.2 · TypeScript module · Maincloud / at350-freightops"; color="#497bc0"; penwidth=2; style="rounded,filled"; fillcolor="#edf3ff";
+ api [label="Database interfaces\nHTTP POST /v1/database/{db}/call/{reducer}\nBody: one JSON-encoded payload string\nHTTP POST /v1/database/{db}/sql\nGenerated TypeScript SDK over WebSocket", fillcolor="#dceaff"];
+ gate [label="Atomic reducer transaction\nParse + validate → authenticate principal/role\nAgent enabled / task owner / human takeover checks\nIdentity + write_id + payload hash → replay or conflict\nBusiness invariants → mutations → audit + receipt\nThrown error rolls back transaction", fillcolor="#dceaff"];
+ ops [label="Operational state\ncase • task • delegation_edge\nagent • agent_config • dispatch\nTask ownership and terminal-state rules"];
+ fin [label="Financial controls and truth\ninvoice • hold • payment_proposal • approval\njournal_request • ledger_entry • accounting_period\ncash_forecast\nInteger-cent checks • balanced journals • open period\nInvoice/hold bounds • duplicate-payment protection\nRequester/approver separation • exact-target approvals"];
+ sources [label="Mirrored source and counterparties\nsource_record • company • contact\nContent digests; per-case record reads\ncall • demo_target"];
+ learning [label="Review and learning\nreview • flag • precedent\nagent_memory • memory_revision\ninstruction_version\nVersion-checked instruction publication\nHuman rollback; terminal-task corrections use new IDs"];
+ outbox [label="routing_outbox\nFirst hop atomically enqueues with queued dispatch\nFinancial completions / flags / review followups\nPending → claim lease → handoff → ACK\nAttempts • lease expiry • last_error", shape=cylinder];
+ audit [label="Audit / observability\nchange_set • cell_change • audit_event • doc_read\nPer-case or system SHA-256 chains\nServer timestamp / actor / policy / evidence\nllm_call • metric • view_epoch"];
+ private [label="Private internal tables\napproval_secret: code hash / expiry / attempts / consumed\nwrite_receipt: identity-scoped replay protection\nchain_head: change + audit chain positions", fillcolor="#f0eaff"];
+ principal [label="principal · identity → role / actor / active\nPublic operational tables (hackathon decision)\nWrites authorized by reducer, not by UI\nset_view_epoch explicitly allows connected visitors"];
+ api -> gate [label="mutation"];
+ principal -> gate [label="authorization"];
+ gate -> ops; gate -> fin; gate -> sources; gate -> learning; gate -> outbox; gate -> audit; gate -> private;
+ }
+ subgraph cluster_consumers { label="Live dashboard, humans and evaluation"; color="#b9c8db"; style=rounded;
+ ui [label="Next.js dashboard · :3001\nGenerated web/module_bindings\nDbConnection → local SDK cache\nDirty-table snapshots → React views\nCases • agent graph • approvals • finance • audit"];
+ subscriptions [label="Subscription planner · app / ops profiles\nFull operational rows; default 15-minute history\nRetain policy denials and unfinished outbox work\nPer-case full trace + on-demand source_record\nNew window subscribed before old window removed"];
+ fallback [label="GET /api/snapshot → HTTP SQL\nRead-only fallback while live connection unavailable\nInitial delay 4 s; retry every 5 s\nNo server service token; mutations require reconnect"];
+ human [label="Human browser identity\nAdmin grants human role\nApprove with private one-time code\nFlags / takeover / model settings / memory / rollback"];
+ admin [label="Admin / provisioning tools\nPublish module → generate bindings → grant roles\nIssue approval codes; agent defaults; history tools\nService tokens stay outside browser bundles"];
+ evaluator [label="Evaluator\nRead cases + task outcomes + operational decisions\nJoin simulator answer key + Redis clock\nset_metric → live scoreboard"];
+ ui -> subscriptions [label="register SQL subscriptions"];
+ human -> ui [label="authorized actions"];
+ ui -> fallback [label="connection fallback", style=dashed];
+ }
+ ingest -> api [label="open_case / upsert_invoice\nupsert_company / upsert_contact / upsert_source_record"];
+ router -> api [label="enqueue_first_hop / record_dispatch"];
+ router -> agents [label="alternative direct A2A", style=dashed];
+ harness -> api [label="LLM telemetry / config"];
+ client -> api [label="authenticated HTTP reducers + SQL"];
+ sources -> source [label="HTTP SQL source reads", style=dashed];
+ outbox -> worker [label="SQL poll → claim_outbox → A2A → ack_outbox"];
+ worker -> api [label="claim / ACK / accepted dispatch"];
+ learning -> recall [label="HTTP SQL sync + validation", style=dashed];
+ api -> subscriptions [label="WebSocket initial rows + live deltas", color="#1b7f76"];
+ subscriptions -> ui [label="reactive cache updates", color="#1b7f76"];
+ ui -> api [label="typed human reducers", color="#1b7f76"];
+ fallback -> api [label="public read-only SQL", style=dashed];
+ admin -> api [label="admin reducers / provision"];
+ evaluator -> api [label="SQL reads / set_metric"];
+}

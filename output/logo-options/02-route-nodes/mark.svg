@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">FreightLine converging route lanes</title>
+  <path d="M7 14h20v6h8v6h8v6M7 32h36M7 50h20v-6h8v-6h8v-6" fill="none" stroke="#ecedf4" stroke-linecap="square" stroke-linejoin="miter" stroke-width="6"/>
+  <path fill="#ff631d" d="M43 28h9v9h-9z"/>
+</svg>

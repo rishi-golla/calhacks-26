@@ -1,0 +1,52 @@
+Use case: infographic-diagram.
+Create a full, highly detailed, beautifully designed software architecture diagram explaining how FreightLine uses SpacetimeDB. This is an engineering architecture poster, NOT a loose conceptual illustration. Large landscape canvas, highest available resolution, extremely crisp readable typography, generous organized spacing, precise labeled orthogonal connectors. Clean light background, dark navy text, restrained blue/teal accents, violet for private security state. SpacetimeDB is the dominant central system. No decorative scenery. Use elegant consistent line icons, structured nested containers and high information density with clear hierarchy. Title "FreightLine × SpacetimeDB". Subtitle "Operational truth, durable coordination, financial controls, and live visibility". Footer "Repository architecture • 25 October 2026". All details below reflect actual code; do not invent infrastructure or capabilities.
+
+LAYOUT: left intake column, broad center SpacetimeDB module, right agent execution and dashboard areas, bottom connected detail strips for transaction and approval lifecycle. Optimize legibility over decorative whitespace. Keep connectors off text and use numbered ports if necessary.
+
+LEFT CONTAINER "ASUS · Intake & routing":
+"Simulator / source events" → "Redis raw stream" → "Ingest: normalize + deduplicate".
+Ingest has "SQLite ingest store + source.json export".
+Ingest arrow to SpacetimeDB labeled "Mirror BEFORE publishing: open_case • upsert_invoice • upsert_company • upsert_contact • upsert_source_record". Annotation "SHA-256 source digests + stable write IDs; failed mirror leaves raw event pending".
+Then "Redis normalized events" → "Router: choose agent + skill" → SpacetimeDB routing_outbox labeled "enqueue_first_hop". Label "Team configuration: FIRST_HOP_TRANSPORT=spacetime". Small dashed alternative arrow toward agents labeled "Optional direct A2A".
+Small "Harness" box: "log_llm_call / agent_config".
+
+CENTER LARGE CONTAINER "SpacetimeDB 2.10.2 · TypeScript module" with endpoint subtitle "Maincloud · at350-freightops".
+Interface band: "HTTP reducers + SQL" and "Generated TypeScript SDK / WebSocket".
+Group all 37 actual table names into readable sections:
+1 "Cases & coordination": case, task, delegation_edge, agent, agent_config, dispatch.
+2 "Finance & approval": invoice, hold, payment_proposal, approval, journal_request, ledger_entry, accounting_period, cash_forecast.
+3 "Source & outreach": source_record, company, contact, call, demo_target.
+4 "Review & learning": review, flag, precedent, agent_memory, memory_revision, instruction_version.
+5 "Audit & observability": change_set, cell_change, audit_event, doc_read, llm_call, metric, view_epoch.
+6 "Durable delivery": routing_outbox. Highlight "first_hop • review_output • review_flag • review_followup". "Lease / attempts / expiry / last_error". "First hop + queued dispatch commit together".
+7 "Identity": principal. "Identity → role / actor / active".
+8 Violet distinct "Private tables": approval_secret, write_receipt, chain_head.
+Clearly label operational tables "Public reads in hackathon schema; identity-authorized mutations". Exception small label "set_view_epoch permits connected visitors". Private tables are not public.
+Controls band: "Balanced journals • open periods • exact-cent arithmetic • stored invoice bounds • duplicate-payment protection • requester / approver separation • human takeover".
+Do not depict public SQL performing direct writes; all mutations pass through reducers.
+
+RIGHT UPPER "Mac · Agent execution":
+"Dispatch worker · router identity" connected from routing_outbox with "SQL poll 1 s → claim 60 s lease → A2A handoff → ACK". Small note "Retries + stable IDs; ACK means accepted, not completed".
+"Nine FreightAgent services · A2A 1.0 · :9101–9109": carrier_ap, shipper_ar, cfo, risk, controller, verification, voice_desk, validator, documents.
+"delegate(): allowlist • no cycles • depth ≤ 3".
+Agents → "PostgreSQL · durable execution" labeled "SDK task state / execution leases / steps / dependencies / callback inbox". PostgreSQL → "freight_projections" → SpacetimeDB task/audit with label "Async projection drainer: upsert_task + append_audit".
+Agents → "SpacetimeClient" → SpacetimeDB interfaces labeled "policy.check() → authenticated reducer + stable write_id".
+SpacetimeDB source_record → agents labeled "SourceRepository / SOURCE_DATA_BACKEND=spacetime".
+Agents ↔ small "External model + outreach tools / Gateway :9000" label "Outreach through route_target()".
+"Elastic Cloud · agent-memory" as separate derived store with arrow from SpacetimeDB review/learning labeled "Active memory + precedent sync"; agents read "Similarity recall; revalidate source rows". Ensure SpacetimeDB is truth, Elastic a mirror.
+
+RIGHT LOWER "Live dashboard & humans":
+"Next.js dashboard · :3001" with "Generated bindings → SDK cache → dirty-table snapshots → React".
+SpacetimeDB → dashboard arrow "WebSocket initial rows + live deltas".
+Views: "Cases • agent network • approvals • finance • audit".
+Subscription detail: "Full operational rows / 15-minute history window / per-case full trace / on-demand source records". "Retain policy denials + unfinished outbox work".
+Dashboard → SpacetimeDB label "Human identity / typed reducers".
+"Read-only fallback: /api/snapshot → HTTP SQL"; "Reconnect required for mutations".
+"Evaluator: answer key + outcomes → set_metric".
+"Admin: publish / generate bindings / provision roles / issue code".
+
+BOTTOM TWO DETAIL LANES, precise arrows:
+"Atomic write path": "Parse payload" → "Principal + role checks" → "write_id / payload hash" → "Business invariants" → "Business rows + cell deltas" → "SHA-256 change & audit chains" → "Receipt + commit" → "Live deltas". Side annotations "Identical replay = no-op", "Conflicting replay = reject", "Thrown error = rollback", "Per-case / system chain scope".
+"Human approval path": "Controller requests bound approval" → "Admin issues private expiring code" → "Assigned human submits code" → "Reducer checks identity + target + exact amount" → "Financial action consumes approval atomically". Small note "Originally > $5,000 invoices / holds require approval even for smaller partial actions". Another note "Payment proposal ≠ bank transfer".
+
+Visually distinguish authoritative operational state from durable execution and derived search. Do not imply the LLM runs inside SpacetimeDB, that SpacetimeDB is PostgreSQL, that secrets are in public rows, or that bank payments are executed. All text cleanly rendered, no overlapping connectors, no unreadably miniature footnotes. Create a polished, thorough architecture poster, not code or a screenshot of a graph editor.

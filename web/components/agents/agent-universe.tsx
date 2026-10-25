@@ -9,9 +9,10 @@
  * hundreds of concurrent cases. Packets and tickers are imperative
  * (`PacketEngine`); React renders the nodes, edges and rail.
  *
- * Learning is drawn too: gold lines from Settlement Quality Review to each
- * agent it has taught, a light-bulb packet for every new lesson, and a glow
- * on an agent's lesson badge whenever a task recalls one (lib/lessons).
+ * Learning is drawn quietly: a muted light-bulb count on each agent that has
+ * lessons, a light-bulb packet for every new lesson, a brief glow on the count
+ * whenever a task recalls one, and gold lines from Settlement Quality Review
+ * to its learners only while one of them is focused (lib/lessons).
  */
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
@@ -241,7 +242,8 @@ export default function AgentUniverse() {
           if (isAgentId(e.agent)) {
             const first = lessonText.current.get(e.lessonIds[0]);
             engine.glowLesson(e.agent);
-            engine.ticker(e.agent, `💡 recalled ${e.lessonIds.length > 1 ? `${e.lessonIds.length} lessons` : first ? `“${first.slice(0, 48)}${first.length > 48 ? "…" : ""}”` : "a lesson"}`, "lesson");
+            // Recalls are routine (most tasks load a lesson), so they get a plain ticker line, not the gold one.
+            engine.ticker(e.agent, `💡 recalled ${e.lessonIds.length > 1 ? `${e.lessonIds.length} lessons` : first ? `“${first.slice(0, 48)}${first.length > 48 ? "…" : ""}”` : "a lesson"}`);
           }
           break;
         case "dispatch":

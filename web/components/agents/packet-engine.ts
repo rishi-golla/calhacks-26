@@ -167,11 +167,12 @@ export class PacketEngine {
     if (!el || this.reduced) return;
     el.animate(
       [
-        { transform: "scale(1)", boxShadow: "0 0 0 0 rgba(242,193,78,.9)" },
-        { transform: "scale(1.35)", boxShadow: "0 0 18px 6px rgba(242,193,78,.55)", offset: 0.3 },
-        { transform: "scale(1)", boxShadow: "0 0 0 0 rgba(242,193,78,0)" },
+        { transform: "scale(1)" },
+        { transform: "scale(1.2)", color: "#f2c14e", offset: 0.25 },
+        { transform: "scale(1)", color: "#f2c14e", offset: 0.6 },
+        { transform: "scale(1)" },
       ],
-      { duration: 1100, easing: "cubic-bezier(.23,1,.32,1)" },
+      { duration: 1400, easing: "cubic-bezier(.23,1,.32,1)" },
     );
   }
 

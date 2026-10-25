@@ -113,7 +113,7 @@
 }
 
 /* ------------------------------ lessons ------------------------------ */
-/* Validator → learner: a gold dotted line whose dots drift toward the learner. */
+/* Validator → learner, drawn only while one of them is focused: a gold dotted line whose dots drift toward the learner. */
 .au-lesson-edge,
 .au-lesson-flow {
   fill: none;
@@ -125,16 +125,13 @@
   opacity: 0.35;
 }
 .au-lesson-flow {
-  stroke-width: 3.2;
+  stroke-width: 2.4;
   stroke-dasharray: 0.1 12;
-  opacity: 0.85;
+  opacity: 0.8;
   animation: au-lesson-flow 2.4s linear infinite;
 }
-.au-lesson.focus .au-lesson-edge {
-  opacity: 0.7;
-}
-.au-lesson.focus .au-lesson-flow {
-  opacity: 1;
+.au-lesson {
+  animation: au-edge-in 300ms var(--ease-out) both;
 }
 .au-edges.dimmed .au-lesson {
   opacity: 0.15;
@@ -158,10 +155,7 @@
   dominant-baseline: middle;
   opacity: 0.95;
 }
-.au-lesson.focus .au-lesson-count {
-  opacity: 1;
-}
-/* The light-bulb badge on a node that has learned (or taught) lessons. */
+/* The light-bulb count on a node that has learned (or taught) lessons: quiet until a lesson lands. */
 .au-lessons {
   position: absolute;
   right: -18%;
@@ -170,20 +164,22 @@
   display: inline-flex;
   align-items: center;
   gap: 1px;
-  padding: 0 4px 0 2px;
-  height: calc(17px * var(--ts));
+  padding: 0 3px 0 1px;
+  height: calc(15px * var(--ts));
   font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: calc(10.5px * var(--ts));
-  color: #000;
-  background: var(--lesson);
+  font-weight: 600;
+  font-size: calc(9.5px * var(--ts));
+  color: var(--text-mute);
   animation: au-node-in 400ms var(--ease-out) both;
 }
+.au-node.focus .au-lessons {
+  color: var(--lesson);
+}
 .au-lessons svg {
-  width: calc(13px * var(--ts));
-  height: calc(13px * var(--ts));
+  width: calc(11px * var(--ts));
+  height: calc(11px * var(--ts));
   fill: none;
-  stroke: #000;
+  stroke: currentColor;
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -196,9 +192,7 @@
   padding: 1px;
   background: var(--lesson);
   border-left: 0;
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.35),
-    0 0 18px color-mix(in srgb, var(--lesson) 80%, transparent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 .au-pk-card.k-lesson + .au-pk-tag {
   background: var(--lesson);

@@ -1475,3 +1475,20 @@ test('live reducers cannot write into imported history, and removal refuses a ca
   assert.throws(() => removeHistory(h), /has agent or human work/);
   assert.ok(h.data.case.has(HIST));
 });
+
+
+test('seed, undo, reseed: the same batches restore everything', () => {
+  const h = new Harness();
+  const run = (actor = 'admin') => { for (const batch of FIXTURE.large) h.run(actor, 'import_history_batch', ['admin'], op.importHistoryBatch, { ...batch }); };
+  run();
+  const imported = ['case', 'invoice', 'ledger_entry', 'source_record'].map(t => h.rows(t).length);
+  removeHistory(h, { limit: 200 });
+  assert.equal(h.rows('case').length, 0);
+  assert.ok(!h.rows('write_receipt').some(x => x.action === 'import_history_batch'));
+  run();
+  assert.deepEqual(['case', 'invoice', 'ledger_entry', 'source_record'].map(t => h.rows(t).length), imported);
+  // A partial removal also forgets the receipts, so a reseed fills exactly what was taken out.
+  removeHistory(h, { limit: 1 });
+  run();
+  assert.deepEqual(['case', 'invoice', 'ledger_entry', 'source_record'].map(t => h.rows(t).length), imported);
+});

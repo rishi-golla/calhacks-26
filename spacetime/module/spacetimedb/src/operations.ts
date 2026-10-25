@@ -1336,7 +1336,7 @@ export const importHistoryBatch: Handler = m => {
 // its invoices, journals and source record, removed in a change set on the case's own chain that keeps
 // every deleted value. Once no imported case is left, the opening entries and the manifest go too. Rows
 // without the prefix are never touched; a case anyone has worked on, or a journal in a locked period, is
-// refused rather than deleted.
+// refused rather than deleted. The import batches' write receipts are forgotten, so the same plan can be seeded again.
 function removeJournal(m: Mutation, row: LedgerRow): void {
   // Closed books stay closed: unlock the period first if imported history there must really go.
   if (m.ctx.db.accounting_period.period.find(row.period)?.status === 'locked') throw new Error(`P-006: journal ${row.id} is in locked period ${row.period}; remove refused`);
@@ -1377,6 +1377,9 @@ export const removeImportedHistory: Handler = m => {
     ctx.db.case.case_id.delete(id);
     inner.capture('case', id, c, {});
   }
+  // An import batch's receipt would turn a later reseed of the same plan into a no-op that restores nothing.
+  // The rows, not the receipts, are what make an import idempotent, so removal forgets the receipts.
+  for (const receipt of [...ctx.db.write_receipt.iter()].filter(x => x.action === 'import_history_batch')) ctx.db.write_receipt.id.delete(receipt.id);
   if (targets.length <= limit) {
     for (const row of [...ctx.db.ledger_entry.case_id.filter('')].filter(x => isImportedId(x.id))) removeJournal(scopes.scope(''), row);
     const manifest = ctx.db.source_record.id.find(HISTORY_MANIFEST);

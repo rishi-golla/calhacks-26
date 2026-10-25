@@ -343,3 +343,46 @@ def test_the_module_fixture_is_current_generator_output():
         MODULE_FIXTURE.write_text(json.dumps(expected, indent=1) + "\n")
     assert json.loads(MODULE_FIXTURE.read_text()) == expected
     assert len(expected["small"]) > len(expected["large"]) >= 1
+
+
+def test_every_generated_document_follows_the_load_id_naming(plan):
+    by_load = {c["load_id"] for c in plan.cases}
+    refs = {ref for ref, _, _ in plan.documents}
+    assert refs <= {ref for load_id in by_load for ref in history.document_refs(load_id)}
+
+
+def test_undo_needs_no_world_and_removes_the_imported_documents(plan, tmp_path, monkeypatch):
+    target = FakeTarget()
+    seed_history.seed(target, plan, seed_history.LOCAL_BATCH_BYTES)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    for ref, _, _ in plan.documents[:4]:
+        (docs / f"{ref}.pdf").write_text("pdf")
+        (docs / f"{ref}.json").write_text("{}")
+    (docs / "RC-LD-LIVE-1.pdf").write_text("live")
+    monkeypatch.setenv("WORLD_FILE", str(tmp_path / "missing-world.json"))
+    monkeypatch.setattr(seed_history, "connect", lambda *a: target)
+    monkeypatch.setattr(history, "generate", lambda *a, **k: pytest.fail("undo must not regenerate the history"))
+    seed_history.main(["--server", "http://127.0.0.1:1", "--database", "x", "--undo", "--docs", "--data-dir", str(tmp_path)])
+    assert not target.cases and target.manifest is None
+    assert [path.name for path in docs.iterdir()] == ["RC-LD-LIVE-1.pdf"], "only the imported loads' files go"
+
+
+def test_an_interrupted_render_is_redone(world, tmp_path, monkeypatch):
+    monkeypatch.setenv("SIM_DATA_DIR", str(tmp_path))  # render_documents sets it; restore it afterwards
+    small = history.generate(world, seed=7, end=END, days=20, loads=3)
+    written, size = seed_history.render_documents(small, tmp_path)
+    assert written == len(small.documents) and size > 0
+    ref = small.documents[0][0]
+    (tmp_path / "docs" / f"{ref}.json").unlink()
+    again, _ = seed_history.render_documents(small, tmp_path)
+    assert again == 1
+    assert (tmp_path / "docs" / f"{ref}.json").exists()
+
+
+def test_a_surfaced_refusal_is_one_short_printable_line():
+    from scripts.spacetime_cloud import refusal_reason
+    noisy = "journal\x1b[31m HIST-JE-1\n is not balanced\x00 " + "A" * 80 + " tail " + "x" * 400
+    reason = refusal_reason(noisy)
+    assert reason.isprintable() and "\x1b" not in reason and len(reason) <= 160
+    assert "journal" in reason and "not balanced" in reason and "A" * 48 not in reason

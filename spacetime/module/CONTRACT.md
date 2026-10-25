@@ -269,7 +269,7 @@ call removes up to `limit` imported cases with their invoices, journals and sour
 case's chain that keeps every deleted value; once none is left it also removes the `HIST-` journals with no case and
 the manifest. It never touches a row without the prefix; it refuses a case that has any task, dispatch, hold,
 payment, approval, flag, journal request, forecast, call, review or outbox row on it, and any journal in a `locked`
-period (unlock it first); and it leaves companies alone. This is the only reducer that deletes journal rows, and only
+period (unlock it first); and it leaves companies alone. Each call also forgets the private write receipts of `import_history_batch`, so seeding the same plan again after a removal restores it rather than replaying as a no-op; the rows themselves keep the import idempotent. This is the only reducer that deletes journal rows, and only
 imported ones; audit, cell-change and change-set history is never deleted.
 
 The dashboard treats imported rows as the company's past: "Start fresh" keeps them in view (Finance shows the

@@ -73,7 +73,8 @@ class LocalTarget:
         except RuntimeError as error:
             # 530 is a reducer that threw; anything else (502, 503) may be transient and is retried.
             if "(530)" in str(error):
-                raise Refused(str(error)) from error
+                from scripts.spacetime_cloud import refusal_reason
+                raise Refused(refusal_reason(str(error))) from error
             raise
 
     def query(self, sql: str) -> list[dict]:
@@ -170,22 +171,25 @@ def dashboard_totals(target, now: datetime) -> dict:
 
 
 def render_documents(plan: history.History, data_dir: pathlib.Path) -> tuple[int, int]:
-    """Write each load's PDFs and JSON into <data_dir>/docs, skipping files already there."""
+    """Write each load's PDFs and JSON into <data_dir>/docs. A document is skipped only when both its files are
+    there, so a render interrupted between the PDF and its JSON is redone on the next run."""
     os.environ["SIM_DATA_DIR"] = str(data_dir)
     folder = docs.docs_dir()
     written = 0
     for ref, kind, data in plan.documents:
-        if not (folder / f"{ref}.pdf").exists():
+        if not all((folder / f"{ref}{suffix}").exists() for suffix in (".pdf", ".json")):
             docs.write(ref, kind, data)
             written += 1
-    size = sum((folder / f"{ref}{suffix}").stat().st_size for ref, _, _ in plan.documents for suffix in (".pdf", ".json"))
-    return written, size
+    files = [folder / f"{ref}{suffix}" for ref, _, _ in plan.documents for suffix in (".pdf", ".json")]
+    return written, sum(path.stat().st_size for path in files if path.exists())
 
 
-def remove_documents(plan: history.History, data_dir: pathlib.Path) -> int:
+def remove_documents(load_ids: list[str], data_dir: pathlib.Path) -> int:
+    """Delete the documents of these imported loads. Their refs follow from the load id alone
+    (history.document_refs), so removal needs neither the world file nor the generator."""
     folder = data_dir / "docs"
     removed = 0
-    for ref, _, _ in plan.documents:
+    for ref in (ref for load_id in load_ids for ref in history.document_refs(load_id)):
         for suffix in (".pdf", ".json"):
             path = folder / f"{ref}{suffix}"
             if path.exists():
@@ -291,11 +295,22 @@ def main(argv: list[str] | None = None) -> None:
     target = connect(args.server, args.database)
     started = time.monotonic()
     try:
-        # A history already here decides the parameters unless they are given: rerunning tomorrow, or --undo
-        # --docs, then means that history, not one generated for a new default end date.
+        if args.undo:
+            # Removal works from what is in the database: the reducer removes HIST- rows, and the documents to
+            # delete follow from the imported loads' ids. Nothing is regenerated, so a changed or missing world
+            # file cannot block it or point it at the wrong files.
+            load_ids = sorted({str(c["load_id"]) for c in imported_cases(target) if c.get("load_id")})
+            print(f"Removing imported history ({len(load_ids)} loads) from {target.label}")
+            calls = undo(target)
+            if args.docs:
+                print(f"Removed {remove_documents(load_ids, args.data_dir)} document files")
+            print(f"Done in {time.monotonic() - started:.1f}s ({calls} calls)")
+            return
+        # A history already here decides the parameters unless they are given: rerunning tomorrow then means
+        # that history, not one generated for a new default end date.
         stored = manifest(target)
         params = explicit
-        if stored and (args.undo or not explicit):
+        if stored and not explicit:
             params = json.loads(stored["record_json"])
             print(f"Using the imported history's parameters: seed {params['seed']}, end {params['end']}, "
                   f"{params['days']} days")
@@ -303,13 +318,6 @@ def main(argv: list[str] | None = None) -> None:
         print(summary(plan))
         if params.get("loads") is None and len(plan.cases) > 600:
             print("warning: more than 600 imported cases; the dashboard slows past ~2k cases", file=sys.stderr)
-        if args.undo:
-            print(f"Removing imported history from {target.label}")
-            calls = undo(target)
-            if args.docs:
-                print(f"Removed {remove_documents(plan, args.data_dir)} document files")
-            print(f"Done in {time.monotonic() - started:.1f}s ({calls} calls)")
-            return
         if args.docs:
             written, size = render_documents(plan, args.data_dir)
             print(f"Documents: {written} written, {len(plan.documents)} on file, {size / 1e6:.1f} MB in "

@@ -144,6 +144,15 @@ def save_private(path: Path, content: str) -> None:
             os.unlink(temporary)
 
 
+def refusal_reason(text: str, limit: int = 160) -> str:
+    """A reducer's refusal as one short printable line: control and non-ASCII characters become spaces, long
+    unbroken runs (anything token-like) are elided, and the result is capped. The payload itself is never echoed."""
+    line = re.sub(r"[^\x20-\x7e]+", " ", text)
+    line = re.sub(r"[A-Za-z0-9+/=_.-]{48,}", "[...]", line)
+    line = " ".join(line.split())
+    return line if len(line) <= limit else line[: limit - 3] + "..."
+
+
 class CloudReducerRefused(RuntimeError):
     """An admin reducer threw (HTTP 530): the database refused the request, so resending it cannot help."""
 
@@ -277,7 +286,7 @@ class CloudAdmin:
                 # it so the caller can tell a refusal from a transport failure. Other CLI output stays withheld.
                 reason = re.search(r"Response text: ([^\n]{1,300})", result.stderr or "")
                 if reason and "530" in (result.stderr or ""):
-                    raise CloudReducerRefused(f"Cloud admin reducer {reducer} refused: {reason.group(1).strip()}")
+                    raise CloudReducerRefused(f"Cloud admin reducer {reducer} refused: {refusal_reason(reason.group(1))}")
                 raise RuntimeError(f"Cloud admin reducer {reducer} failed; CLI output withheld")
             return None
         token = self.identity(actor)["token"]

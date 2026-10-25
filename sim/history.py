@@ -138,6 +138,14 @@ class History:
         return [d for b in self.bundles for d in b.documents]
 
 
+DOCUMENT_PREFIXES = ("RC", "BOL", "POD", "DET", "SINV")
+
+
+def document_refs(load_id: str) -> list[str]:
+    """Every document ref an imported load can have (the detention log only on detention loads)."""
+    return [*(f"{prefix}-{load_id}" for prefix in DOCUMENT_PREFIXES), f"INV-{load_id}-1"]
+
+
 def default_end(today: date | None = None) -> date:
     return (today or datetime.now(UTC).date()) - timedelta(days=1)
 

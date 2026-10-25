@@ -40,6 +40,7 @@ from common.runtime import (
     FreightAgent,
     _meta_dict,
     extract_artifact_data,
+    final_refusal,
 )
 from common.runtime_store import (
     IdempotencyConflict,
@@ -78,6 +79,7 @@ class DurableRequestHandler(DefaultRequestHandler):
         self.name = executor.name
         self.snapshots = snapshots
         self._admission_lock = asyncio.Lock()
+        executor.admission_lock = self._admission_lock
         self._recovery_wakeup = asyncio.Event()
         executor.wake_recovery = self._recovery_wakeup.set
         # The first orphan sweep waits one interval: a fresh process first drains its own outbox.
@@ -329,15 +331,18 @@ class DurableRequestHandler(DefaultRequestHandler):
                         TaskEnvelope.model_validate_json(dependency["envelope"]),
                         DelegationMeta.model_validate_json(dependency["delegation"]))
                 except PEER_REFUSALS as error:
+                    if not final_refusal(error):
+                        raise
                     failure = await self.executor.refuse_dependency(dependency, error)
-                    await wake(dependency["child_id"], failure.state)
-                    return True
+                    if failure is not None:
+                        await wake(dependency["child_id"], failure.state)
+                    return True  # closed now; or admitted elsewhere, which the next pass follows
             else:
                 child = await get_task(dependency["target"], dependency["child_id"], sender=self.name)
             if child.id != dependency["child_id"] or child.context_id != row["envelope"]["case_id"]:
                 raise ValueError("child identity mismatch")
-            if dependency["state"] == "pending":
-                await self.store.finish_dependency(dependency["id"], "accepted", [])
+            if dependency["state"] == "pending" and not await self.store.accept_dependency(dependency["id"]):
+                return True  # closed meanwhile: the next pass wakes the parent from the closed reservation
             if child.status.state in TERMINAL_STATES:
                 state = TaskState.Name(child.status.state).removeprefix("TASK_STATE_").lower()
                 await self.store.finish_dependency(dependency["id"], state, extract_artifact_data(child))

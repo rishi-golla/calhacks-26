@@ -20,6 +20,7 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import Task, TaskState
 from a2a.utils.errors import (
+    A2AError,
     ContentTypeNotSupportedError,
     InvalidParamsError,
     InvalidRequestError,
@@ -45,7 +46,16 @@ TERMINAL_NAMES = frozenset({"completed", "failed", "canceled", "rejected"})
 # Transport failures and InternalError (e.g. "task admitted; retry") stay retryable.
 PEER_REFUSALS = (InvalidParamsError, InvalidRequestError, MethodNotFoundError, UnsupportedOperationError,
                  ContentTypeNotSupportedError, VersionNotSupportedError)
+# Refusals that a repaired credential, a restart or a moment's wait can clear: never final. "task admitted" is
+# what a child running an older build answers while its snapshot is still being written.
+RETRYABLE_REFUSALS = ("task admitted", "caller identity does not match", "service authentication",
+                      "service configuration is not ready")
 CLOSED_DEPENDENCY_STATES = frozenset({"failed", "canceled", "rejected"})
+
+
+def final_refusal(error: Exception) -> bool:
+    """Whether a peer's answer refuses this exact delegation for good, so resending it is pointless."""
+    return isinstance(error, PEER_REFUSALS) and not str(error).lower().startswith(RETRYABLE_REFUSALS)
 # A reserved child that its service never admitted is closed this long after its delegation deadline.
 RESERVATION_GRACE_S = 60.0
 _PRIVATE = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|\+?\d[\d ()-]{6,}\d|\b(?:sk|pk)-[A-Za-z0-9_-]{8,}\b")
@@ -154,6 +164,9 @@ class FreightAgent(AgentExecutor):
         self._projection_wakeup = asyncio.Event()
         self.inline_projections = os.getenv("A2A_PROJECTION_DELIVERY", "background") == "inline"
         self._held_warned_at = float("-inf")
+        # The server shares its admission lock (build_app), so closing a never-admitted reservation and admitting
+        # that same child can never interleave.
+        self.admission_lock = asyncio.Lock()
 
     async def confirm_state(self, task_id: str, state: int) -> None:
         """Bound to the SDK store by build_app; direct handler tests have no SDK queue."""
@@ -533,31 +546,33 @@ class FreightAgent(AgentExecutor):
         pending), so a late resend is refused instead of running a child whose row already ended. Returns rows queued."""
         task_id = row["task_id"]
         dependency = await self.store.dependency_for_child(task_id)
-        if dependency is not None and dependency["target"] != self.name:
-            return 0
-        state = dependency["state"] if dependency else "pending"
-        if state not in CLOSED_DEPENDENCY_STATES | {"pending"}:
+        if dependency is None or dependency["target"] != self.name:
+            return 0  # no reservation here to judge it by: never end a row on missing evidence
+        if dependency["state"] not in CLOSED_DEPENDENCY_STATES | {"pending"}:
             return 0  # accepted or completed: the child was admitted, so its own execution owns the row
-        if state == "pending":
-            deadline = 600  # the longest deadline a service admits, when the reservation itself is not readable here
-            if dependency is not None:
+        # Under the admission lock: an admission of this child either finished before (it has an execution, so the
+        # row is left to it) or will see the closed reservation and be refused.
+        async with self.admission_lock:
+            if await self.store.get(task_id) is not None:
+                return 0
+            state = dependency["state"]
+            if state == "pending":
                 deadline = TaskEnvelope.model_validate_json(dependency["envelope"]).deadline_s
-            try:
-                reserved = datetime.fromisoformat(str(row.get("started_at") or row.get("updated_at", ""))).timestamp()
-            except ValueError:
-                return 0
-            if now - reserved < deadline + RESERVATION_GRACE_S:
-                return 0
-            state, error = "canceled", "delegation_expired"
-            reason = f"{self.name} never admitted this delegation within its {deadline}s deadline"
-            if dependency is not None and not await self.store.close_dependency(
-                    dependency["id"], state, [{"error": error, "detail": reason}]):
-                return 0  # it changed meanwhile; the next sweep reads it again
-        else:
-            error = "delegation_refused" if state == "rejected" else f"delegation_{state}"
-            reason = failure_reason(json.loads(dependency["result"])) or f"the delegation was {state}"
-        if await self.store.get(task_id) is not None:
-            return 0  # admitted after all: its execution records the outcome
+                try:
+                    reserved = datetime.fromisoformat(
+                        str(row.get("started_at") or row.get("updated_at", ""))).timestamp()
+                except ValueError:
+                    return 0
+                if now - reserved < deadline + RESERVATION_GRACE_S:
+                    return 0
+                state, error = "canceled", "delegation_expired"
+                reason = f"{self.name} never admitted this delegation within its {deadline}s deadline"
+                if not await self.store.close_dependency(dependency["id"], state,
+                                                         [{"error": error, "detail": reason}]):
+                    return 0  # it changed meanwhile; the next sweep reads it again
+            else:
+                error = "delegation_refused" if state == "rejected" else f"delegation_{state}"
+                reason = failure_reason(json.loads(dependency["result"])) or f"the delegation was {state}"
         final = "canceled" if state == "canceled" else "failed"
         payload = {"task_id": task_id, "case_id": row.get("case_id", ""), "agent": self.name,
                    "skill": row.get("skill", ""), "parent_task_id": row.get("parent_task_id", ""),
@@ -651,11 +666,16 @@ class FreightAgent(AgentExecutor):
         except (httpx.HTTPError, A2AClientError):
             await self.park(parent_task_id, "awaiting_other_agent", "child", child_id,
                             {"target": target, "skill": skill, "reason": "peer_unavailable"})
-        except PEER_REFUSALS as error:
-            raise await self.refuse_dependency(dependency, error) from None
+        except A2AError as error:
+            failure = await self.refuse_dependency(dependency, error) if final_refusal(error) else None
+            if failure is not None:
+                raise failure from None
+            # Transient (InternalError, an identity hiccup) or settled elsewhere: the recovery loop resends or polls.
+            await self.park(parent_task_id, "awaiting_other_agent", "child", child_id,
+                            {"target": target, "skill": skill, "reason": "peer_unavailable"})
         if child.id != child_id or child.context_id != env.case_id:
             raise RuntimeError("child acceptance does not match the reserved task")
-        await self.store.finish_dependency(dependency["id"], "accepted", [])
+        await self.accept_dependency(dependency)
         wait_started = time.monotonic()
         while True:
             if child.status.state in TERMINAL_STATES:
@@ -672,19 +692,33 @@ class FreightAgent(AgentExecutor):
             await self._assert_execution(parent_task_id)
             try:
                 child = await get_task(target, child_id, sender=self.name)
-            except (httpx.HTTPError, A2AClientError):
+            except (httpx.HTTPError, A2AError):
                 await self.park(parent_task_id, "awaiting_other_agent", "child", child_id,
                                 {"target": target, "skill": skill, "reason": "peer_unavailable"})
 
-    async def refuse_dependency(self, dependency: dict, error: Exception) -> ChildFailed:
+    async def accept_dependency(self, dependency: dict) -> None:
+        """Record the child's admission, unless its reservation was closed meanwhile (then report that instead)."""
+        if await self.store.accept_dependency(dependency["id"]):
+            return
+        current = await self.store.dependency_for_child(dependency["child_id"]) or dependency
+        raise ChildFailed(current["state"], failure_reason(json.loads(current["result"])))
+
+    async def refuse_dependency(self, dependency: dict, error: Exception) -> ChildFailed | None:
         """The child's service refused this delegation, so it will never run: close the reservation (the child's
-        service then records its reserved row as failed) and report the refusal to the parent's workflow."""
+        service then records its reserved row as failed) and report the refusal to the parent's workflow.
+
+        Returns None when the reservation is no longer pending (accepted or completed elsewhere): the refusal was of
+        a duplicate, and the parent keeps following the admitted child."""
         reason = f"{dependency['target']} refused the delegation: {refusal_text(error)}"
-        await self.store.close_dependency(dependency["id"], "rejected",
-                                          [{"error": "delegation_refused", "detail": reason}])
         log.warning("%s delegation %s was refused by %s: %s", self.name, dependency["child_id"],
                     dependency["target"], refusal_text(error))
-        return ChildFailed("rejected", reason)
+        if await self.store.close_dependency(dependency["id"], "rejected",
+                                             [{"error": "delegation_refused", "detail": reason}]):
+            return ChildFailed("rejected", reason)
+        current = await self.store.dependency_for_child(dependency["child_id"])
+        if current is not None and current["state"] in CLOSED_DEPENDENCY_STATES:
+            return ChildFailed(current["state"], failure_reason(json.loads(current["result"])) or reason)
+        return None
 
     async def fanout(self, envelopes: list[TaskEnvelope], meta: DelegationMeta,
                      parent_task_id: str) -> list[list[dict]]:

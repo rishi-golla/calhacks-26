@@ -399,7 +399,12 @@ class RuntimeStore:
                 dependencies.c.parent_id == parent_id))).mappings().all()
             found = next((dict(row) for row in rows if row["id"] == did), None)
             if found:
-                if found["payload_hash"] != fingerprint:
+                # A reservation made before envelopes were reserved in wire form holds the same work with integers.
+                same = found["payload_hash"] == fingerprint or (
+                    found["target"] == target
+                    and digest(wire_form(json.loads(found["envelope"]))) == digest(wire_form(envelope))
+                    and digest(wire_form(json.loads(found["delegation"]))) == digest(wire_form(delegation)))
+                if not same:
                     raise IdempotencyConflict("delegation invocation was reused for different work")
                 return found
             if len(rows) >= max_fanout:
@@ -420,6 +425,14 @@ class RuntimeStore:
         async with self.engine.begin() as conn:
             await conn.execute(update(dependencies).where(dependencies.c.id == dependency_id).values(
                 state=state, result=canonical(result)))
+
+    async def accept_dependency(self, dependency_id: str) -> bool:
+        """Record a child's admission unless its reservation was closed meanwhile. Returns whether it is accepted."""
+        async with self.engine.begin() as conn:
+            changed = await conn.execute(update(dependencies).where(
+                dependencies.c.id == dependency_id, dependencies.c.state.in_(("pending", "accepted"))).values(
+                state="accepted", result=canonical([])))
+        return changed.rowcount == 1
 
     async def close_dependency(self, dependency_id: str, state: str, result: list[dict]) -> bool:
         """End a reservation the child never accepted. Only a still-pending reservation changes, so a child that was

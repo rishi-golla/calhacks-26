@@ -76,3 +76,29 @@ def test_committed_snapshot_is_real_confirmed_and_unique():
         assert c["website"].startswith("https://") and c["authority_status"] == "ACTIVE"
         assert c["verified_by"]["run_id"] == snapshot["run"]["run_id"]
         assert not seed.PASSENGER_WORDS.search(f"{c['legal_name']} {c['name']}")
+
+
+def test_short_fetch_keeps_the_committed_snapshot(monkeypatch, tmp_path):
+    snapshot = tmp_path / "fmcsa_carriers.json"
+    snapshot.write_text("committed")
+    monkeypatch.setattr(seed, "SNAPSHOT", snapshot)
+    monkeypatch.setattr(seed, "census_candidates", lambda state: [candidate(address="1 Main St, Reno, NV")])
+    monkeypatch.setattr(seed, "apify_confirm", lambda dots: ([item()], RUN))
+    monkeypatch.setattr(seed.geo, "geocode", lambda *_: {"lat": 39.5, "lon": -119.8, "geo_source": "test"})
+
+    async def live(candidates):
+        return candidates
+
+    monkeypatch.setattr(seed, "live_websites", live)
+    world = {"carriers": [{"id": f"C-OFF-{i}", "state": "NV", "source": "offline_fixture"} for i in range(2)],
+             "lanes": []}
+    with pytest.raises(SystemExit):
+        seed.fetch(world)
+    assert snapshot.read_text() == "committed"
+
+
+def test_seeding_needs_an_existing_world(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORLD_FILE", str(tmp_path / "missing.json"))
+    monkeypatch.setattr("sys.argv", ["seed_real_carriers"])
+    with pytest.raises(SystemExit, match="build a world first"):
+        seed.main()

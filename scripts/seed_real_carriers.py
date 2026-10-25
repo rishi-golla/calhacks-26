@@ -28,6 +28,7 @@ from pathlib import Path
 
 import httpx
 
+from common import policy
 from integrations import apify, directory, fmcsa
 from integrations.normalize import e164, email
 from sim import geo
@@ -81,13 +82,17 @@ async def live_websites(candidates: list[dict]) -> list[dict]:
     """Keep candidates whose public website answers and belongs to them; trucking names first, one per site."""
     async def check(c: dict, client: httpx.AsyncClient) -> bool:
         try:
-            await apify.public_website(c["website"])
             response = await client.get(c["website"])
             return response.status_code < 400 and owns_site(c, response.text[:300_000])
         except (ValueError, httpx.HTTPError):
             return False
 
-    async with httpx.AsyncClient(timeout=8, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"}) as client:
+    async def public_hop(request: httpx.Request) -> None:
+        # Redirects are followed, so every hop (not just the first URL) must resolve to a public host.
+        await apify.public_website(f"https://{request.url.host}/")
+
+    async with httpx.AsyncClient(timeout=8, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"},
+                                 event_hooks={"request": [public_hop]}) as client:
         ok = await asyncio.gather(*(check(c, client) for c in candidates))
     seen, live = set(), []
     for c in sorted((c for c, good in zip(candidates, ok, strict=True) if good),
@@ -103,6 +108,11 @@ def apify_confirm(dots: list[str]) -> tuple[list[dict], dict]:
     config = apify.apify_configuration_status("carrier")
     if not config["available"]:
         raise SystemExit(f"Apify carrier actor not configured: {config}")
+    decision = policy.check("start_external_lookup", "operator:seed_real_carriers", {
+        "provider": "apify", "kind": "carrier", "actor_id": config["actor_id"], "max_charge_usd": MAX_CHARGE_USD,
+        "carriers": len(dots)})
+    if decision.result != "allow":
+        raise SystemExit(f"policy {decision.result} for the Apify carrier run: {decision.policy_ids}")
     headers = {"Authorization": f"Bearer {os.environ['APIFY_TOKEN']}"}
     body = {"dotNumbers": dots, "docketNumbers": [], "liveCheck": True, "onlyChanges": False, "maxResults": len(dots)}
     with httpx.Client(base_url=apify.API, headers=headers, timeout=90) as client:
@@ -154,6 +164,7 @@ def fetch(world: dict) -> dict:
             c.update(geo.geocode(c["address"], c["state"], client))
     print(f"Apify run {run['run_id']}: {len(items)} records, {len(carriers)}/{len(picks)} confirmed")
     snapshot = {"built_at": datetime.now(UTC).isoformat(), "census": fmcsa.URL, "run": run, "carriers": carriers}
+    apply(world, snapshot)  # raises before the committed snapshot is replaced by one too small to seed this world
     SNAPSHOT.write_text(json.dumps(snapshot, indent=1) + "\n")
     return snapshot
 
@@ -188,6 +199,8 @@ def main() -> None:
     ap.add_argument("--fetch", action="store_true", help="re-select and re-confirm carriers (spends Apify credit)")
     ap.add_argument("--dry-run", action="store_true", help="print the remap without writing data/world.json")
     a = ap.parse_args()
+    if not directory.path().exists():
+        raise SystemExit(f"{directory.path()} does not exist; build a world first (make world)")
     world = directory.load()
     snapshot = fetch(world) if a.fetch else json.loads(SNAPSHOT.read_text())
     seeded, remap = apply(world, snapshot)

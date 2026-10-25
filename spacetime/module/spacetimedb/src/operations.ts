@@ -271,7 +271,10 @@ function duplicateRoute(ctx: Ctx, caseId: string): { delivered: boolean; reason:
   // dispatch.task_id has no index; this scan runs only for a duplicate whose task is not mirrored.
   const elsewhere = (taskId: string) => {
     const task = ctx.db.task.task_id.find(taskId);
-    return task ? task.case_id !== caseId : [...ctx.db.dispatch.iter()].some(x => x.task_id === taskId && x.case_id !== caseId);
+    // Only another case's accepted row proves ownership: a re-observed original turns its own row into a
+    // duplicate that still carries the task, and must not make the original look like someone else's copy.
+    return task ? task.case_id !== caseId
+      : [...ctx.db.dispatch.iter()].some(x => x.task_id === taskId && x.case_id !== caseId && x.status === 'accepted');
   };
   const delivered = rows.some(x => x.status === 'queued' || x.status === 'accepted'
     || (x.status === 'duplicate' && !!x.task_id && !elsewhere(x.task_id)));
@@ -633,6 +636,19 @@ export const upsertTask: Handler = m => {
   // A task that did not exist before is new work and may reopen a resolved case; progress on a task
   // that was already running (including the one that explicitly resolved the case) may not.
   settleCase(m, case_id, !previous);
+  // A P-007 duplicate recorded before this task was mirrored could not tell whose task it carries.
+  // Now that the task names its own case, re-settle those duplicate cases, each in its own change set.
+  if (!previous) {
+    for (const d of [...ctx.db.dispatch.iter()]) {
+      if (d.task_id !== task_id || d.status !== 'duplicate' || !d.case_id || d.case_id === case_id) continue;
+      const inner = new Mutation(ctx, {
+        write_id: `settle_duplicate:${hash(canonical([task_id, d.case_id])).slice(0, 40)}`, case_id: d.case_id,
+      }, actor, 'settle_cases');
+      if (!settleCase(inner, d.case_id)) continue;
+      if (inner.p.summary === undefined) inner.p.summary = 'Settle a duplicate case once the task it carries names its case';
+      inner.finish();
+    }
+  }
 };
 
 export const recordDelegation: Handler = m => {
@@ -871,10 +887,12 @@ export const recordDispatch: Handler = m => {
     status: choice(p, 'status', ['queued', 'accepted', 'triage', 'not_routed', 'duplicate']),
     reason: text(p, 'reason'), queue_ms: uint(p, 'queue_ms'), policy_version: text(p, 'policy_version'), ts: now(ctx),
   };
+  const previous = ctx.db.dispatch.event_id.find(row.event_id);
   writeDispatch(m, row);
   // A recorded duplicate may be the only thing ever routed to its case, which then settles here.
-  // An observation is not new work, so a resolved case stays resolved.
-  settleCase(m, row.case_id);
+  // A re-observation is not new work, so a resolved case stays resolved; a newly delivered event is
+  // new work (with A2A first hops this row is the router's only record of it) and reopens the case.
+  settleCase(m, row.case_id, !previous && (row.status === 'queued' || row.status === 'accepted'));
 };
 
 // The router commits a routed event here instead of pushing it over A2A: the outbox row and its

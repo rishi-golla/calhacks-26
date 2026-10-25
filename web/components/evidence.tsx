@@ -5,7 +5,9 @@
  * <EvidenceChip evidenceRef="doc:RC-LD-1" /> renders a cited source. `doc:` and
  * `mail:` refs open <EvidenceViewer>, a right-side modal drawer that shows the
  * PDF (browser-native viewer), the ground-truth fields, or the raw email, all
- * read through the read-only /api/evidence route. Other sources render as a
+ * read through the read-only /api/evidence route. Extracted fields sit in a
+ * <DecryptBlock>: cipher text that decrypts under the cursor where Chrome's
+ * html-in-canvas is on, plain fields elsewhere. Other sources render as a
  * plain chip. A missing file is an inline note, never a crash.
  *
  * The drawer is a native <dialog> opened with showModal(): it sits in the top
@@ -16,6 +18,7 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ExternalLink, FileText, Mail, X } from "lucide-react";
+import { DecryptBlock } from "@/components/decrypt-block";
 import { compactValue, documentKindLabel, evidenceUrl, extractedFields, parseEvidenceRef } from "@/lib/evidence";
 
 /** Nearest themed ancestor; the trace drawer first so the agent accent carries into the viewer. */
@@ -213,14 +216,16 @@ function DocBody({
             Extracted fields <span className="ev-count">{fields.length}</span>
           </summary>
           {fields.length ? (
-            <dl className="ev-kv">
-              {fields.map(([k, v]) => (
-                <div key={k}>
-                  <dt>{k}</dt>
-                  <dd>{compactValue(v)}</dd>
-                </div>
-              ))}
-            </dl>
+            <DecryptBlock bgFrom=".ev-fields">
+              <dl className="ev-kv">
+                {fields.map(([k, v]) => (
+                  <div key={k}>
+                    <dt>{k}</dt>
+                    <dd>{compactValue(v)}</dd>
+                  </div>
+                ))}
+              </dl>
+            </DecryptBlock>
           ) : (
             <p className="ev-empty">No fields recorded.</p>
           )}

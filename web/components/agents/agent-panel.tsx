@@ -1,17 +1,19 @@
 "use client";
 /**
- * Activity panel for one node: status, model, workload, its current tool
- * calls, the cases it is working and its last ten events.
+ * Activity panel for one node: a particle portrait of its mascot, status,
+ * model, workload, its current tool calls, the cases it is working and its
+ * last ten events.
  * Slides over the case explorer; hover previews, click pins.
  */
 import Link from "next/link";
-import { useMemo, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { Pin, X } from "lucide-react";
 import { Mascot, type Mood } from "@/components/mascot";
 import { AGENT_META, NODE_META, agentLabel, isAgentId, skillLabel, type NodeId } from "@/lib/agents";
 import { num, str, timestamp, type Row, type Snapshot } from "@/lib/data";
 import { buildTimeline, buildToolCalls, fmtAgo, fmtMoney, type AgentWorkload, type CaseView, type TimelineEvent } from "@/lib/ops";
 import { PRIORITY_COLOR, shortCase } from "./agent-node";
+import { MascotPortrait, useWebGl2 } from "./mascot-portrait";
 
 type Props = {
   id: NodeId;
@@ -55,6 +57,9 @@ const STATUS_CHIP: Record<string, string> = { working: "ok", idle: "info", offli
 
 export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, now, onClose, onPin, onCase, onEnter, onLeave }: Props) {
   const meta = isAgentId(id) ? AGENT_META[id] : NODE_META[id as "intake" | "human"];
+  // The human controller has no generated character, so it keeps the flat blob.
+  const [portraitFailed, setPortraitFailed] = useState(false);
+  const portrait = useWebGl2() && id !== "human" && !portraitFailed;
 
   const { events, tools } = useMemo(() => {
     if (id === "human") return { events: [] as TimelineEvent[], tools: [] };
@@ -93,8 +98,9 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, now, o
 
   return (
     <aside className="au-panel" aria-label={`${meta.name} activity`} onPointerEnter={onEnter} onPointerLeave={onLeave}>
-      <header className="au-panel-head" style={{ "--c": meta.color } as CSSProperties}>
-        <Mascot id={id} mood={mood} size={58} />
+      {portrait && <MascotPortrait id={id} onError={() => setPortraitFailed(true)} />}
+      <header className={`au-panel-head${portrait ? " no-mascot" : ""}`} style={{ "--c": meta.color } as CSSProperties}>
+        {!portrait && <Mascot id={id} mood={mood} size={58} />}
         <div style={{ minWidth: 0 }}>
           <div className="fl-micro" style={{ color: meta.color }}>
             {meta.nick}

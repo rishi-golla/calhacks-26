@@ -13,6 +13,8 @@ import {
   type Row,
 } from "@/lib/data";
 import { useLive } from "./live-provider";
+import { BasisChip, CheckRow } from "./workings";
+import { formatValue, parseChecks, type Check as ReviewCheck } from "@/lib/workings";
 import {
   Badge,
   DataTable,
@@ -28,6 +30,17 @@ import {
   type FlagHandler,
 } from "./ui";
 import type { Notify } from "./operations";
+/** Expected/actual in the check's own unit when it carries a working. */
+function checkValue(value: unknown, row: Row) {
+  if (value === undefined) return "—";
+  const unit = (row as unknown as ReviewCheck).work?.unit ?? "text";
+  const numeric = typeof value === "number";
+  return (
+    <span className="numeric">
+      {formatValue(value, numeric && unit !== "bool" ? unit : typeof value === "boolean" ? "bool" : "text")}
+    </span>
+  );
+}
 function approvalError(value: unknown): string {
   if (value === "invalid_code")
     return "The one-time code is incorrect. Try again or request a fresh code from your administrator.";
@@ -315,6 +328,7 @@ export function LearningView({
   const { data, mutate, state } = useLive();
   const [agent, setAgent] = useState("");
   const [review, setReview] = useState<Row | null>(null);
+  const reviewChecks = review ? parseChecks(review.checks_json) : [];
   const [revert, setRevert] = useState<Row | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -449,7 +463,7 @@ export function LearningView({
         >
           <div className="padded stack">
             <DataTable
-              rows={json<Row[]>(review.checks_json, [])}
+              rows={reviewChecks as unknown as Row[]}
               columns={[
                 { key: "name", title: "Check" },
                 {
@@ -457,10 +471,39 @@ export function LearningView({
                   title: "Result",
                   format: (value) => <Badge value={value ? "pass" : "issue"} />,
                 },
-                { key: "expected" },
-                { key: "actual" },
+                {
+                  key: "severity",
+                  title: "Severity",
+                  format: (value) => <Badge value={value} />,
+                },
+                {
+                  key: "basis",
+                  title: "Basis",
+                  format: (value) => <BasisChip basis={str(value, "")} />,
+                },
+                {
+                  key: "expected",
+                  format: (value, row) => checkValue(value, row),
+                },
+                {
+                  key: "actual",
+                  format: (value, row) => checkValue(value, row),
+                },
               ]}
+              emptyTitle="No checks recorded"
             />
+            {reviewChecks.some((check) => check.work) && (
+              <>
+                <h3>Shown work</h3>
+                <div className="wk-checks review-work">
+                  {reviewChecks
+                    .filter((check) => check.work)
+                    .map((check, index) => (
+                      <CheckRow key={`${check.name}:${index}`} check={check} />
+                    ))}
+                </div>
+              </>
+            )}
             <h3>Friction & lessons</h3>
             <DataTable
               rows={json<Row[]>(review.friction_json, [])}

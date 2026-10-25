@@ -1,11 +1,12 @@
 from agents.carrier_ap.card import DESCRIPTIONS
-from agents.carrier_ap.tools import duplicate_invoices, three_way_match
-from agents.risk.tools import audit_charges
+from agents.carrier_ap.tools import duplicate_invoices, match_workings, three_way_match
+from agents.risk.tools import audit_charges, charge_workings
 from common.agent_support import child_envelope, evidence, finish, identifier, money, mutate, number, rows
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
 from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
+from common.workings import refs_for, working
 
 
 class CarrierAPAgent(FreightAgent):
@@ -34,14 +35,16 @@ class CarrierAPAgent(FreightAgent):
             return await finish(self, env, task_id, outcome="unverified", findings={
                 "awaiting_invoice": True, "load_id": source.get("load_id")}, evidence_refs=refs)
         match = three_way_match(source)
+        workings = match_workings(source, match)
         duplicates = duplicate_invoices(source)
         if duplicates:
-            return await finish(self, env, task_id, outcome="reject", findings={"match": match,
+            return await finish(self, env, task_id, outcome="reject", findings={"match": match, "workings": workings,
                                 "duplicate_invoice_ids": duplicates}, policy_ids=["P-007"], evidence_refs=refs)
         if source.get("carrier_identity_mismatch"):
             # The invoice names a different carrier than the one tendered: possible double brokering.
             return await finish(self, env, task_id, outcome="hold", findings={
-                "match": match, "carrier_identity": source.get("carrier_identity"), "payment_blocked": True},
+                "match": match, "workings": workings, "carrier_identity": source.get("carrier_identity"),
+                "payment_blocked": True},
                 policy_ids=["P-002"], evidence_refs=refs)
         if match["missing_documents"]:
             documents = await self.delegate("collect_documents", child_envelope(
@@ -49,11 +52,12 @@ class CarrierAPAgent(FreightAgent):
                 invocation_key="settlement_packet")
             if not documents or documents[-1].get("outcome") != "verified":
                 return await finish(self, env, task_id, outcome="unverified", findings={
-                    "match": match, "documents": documents}, evidence_refs=refs)
+                    "match": match, "workings": workings, "documents": documents}, evidence_refs=refs)
         if not match["totals_match"]:
-            return await finish(self, env, task_id, outcome="reject", findings={"match": match},
+            return await finish(self, env, task_id, outcome="reject", findings={"match": match, "workings": workings},
                                 policy_ids=["P-010"], evidence_refs=refs)
         charge_checks = audit_charges(source)
+        workings.extend(charge_workings(source, charge_checks))
         if source.get("bank_change_requested") or match["above_tolerance"] or charge_checks["needs_verification"]:
             skill = "screen_bank_change" if source.get("bank_change_requested") else "investigate_charge"
             risk = await self.delegate(skill, child_envelope(env, skill),
@@ -62,7 +66,7 @@ class CarrierAPAgent(FreightAgent):
                                              meta, task_id, invocation_key="settlement_decision")
             held = controller and controller[-1].get("outcome") == "hold"
             return await finish(self, env, task_id, outcome="hold" if held else "unverified", findings={
-                "match": match, "risk": risk, "controller": controller,
+                "match": match, "workings": workings, "risk": risk, "controller": controller,
                 "undisputed_amount": match["contract_rate"], "payment_blocked": bool(held)},
                 policy_ids=["P-004", "P-002"] if source.get("bank_change_requested") else ["P-001", "P-002"],
                 evidence_refs=refs)
@@ -72,11 +76,15 @@ class CarrierAPAgent(FreightAgent):
         holds = source.get("holds", []) if fixture_mode() else await rows(
             self.name, "hold", "invoice_id", invoice_id)
         if any(hold.get("status") == "active" for hold in holds):
-            return await finish(self, env, task_id, outcome="hold", findings={"match": match,
+            return await finish(self, env, task_id, outcome="hold", findings={"match": match, "workings": workings,
                                 "payment_blocked": True}, policy_ids=["P-002"], evidence_refs=refs)
         amount = money(source["invoice_amount"]) - money(source.get("paid_amount", 0))
+        workings.append(working("Open balance to pay", "invoice_amount - paid_amount",
+                                {"invoice_amount": source["invoice_amount"], "paid_amount": source.get("paid_amount", 0)},
+                                amount, evidence_refs=refs_for(source, "invoice_amount"),
+                                basis="pay once, never the disputed delta"))
         if amount <= 0:
-            return await finish(self, env, task_id, outcome="clear", findings={"already_paid": True},
+            return await finish(self, env, task_id, outcome="clear", findings={"already_paid": True, "workings": workings},
                                 evidence_refs=refs)
         proposal_id = identifier(task_id, "payment_proposal")
         payload = {"id": proposal_id, "invoice_id": invoice_id, "amount": number(amount)}
@@ -86,15 +94,15 @@ class CarrierAPAgent(FreightAgent):
                 invocation_key="payment_approval")
             findings = decision[-1].get("findings", {}) if decision else {}
             if decision and decision[-1].get("outcome") == "reject":
-                return await finish(self, env, task_id, outcome="reject", findings={"approval": decision},
+                return await finish(self, env, task_id, outcome="reject", findings={"approval": decision, "workings": workings},
                                     policy_ids=["P-003"], evidence_refs=refs)
             if not findings.get("approval_id"):
-                return await finish(self, env, task_id, outcome="unverified", findings={"approval": decision},
+                return await finish(self, env, task_id, outcome="unverified", findings={"approval": decision, "workings": workings},
                                     policy_ids=["P-003"], evidence_refs=refs)
             payload["approval_id"] = findings["approval_id"]
         proposal = await mutate(self, env, task_id, "propose_payment", payload)
         return await finish(self, env, task_id, outcome="approve" if proposal.get("decision", "allow") == "allow"
-                            else "unverified", findings={"match": match, "payment_proposal": proposal},
+                            else "unverified", findings={"match": match, "workings": workings, "payment_proposal": proposal},
                             evidence_refs=refs, policy_ids=proposal.get("policy_ids", []))
 
 

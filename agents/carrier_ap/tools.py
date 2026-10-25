@@ -4,6 +4,8 @@ from decimal import Decimal
 
 from agents.documents.tools import check_packet
 from common.agent_support import money, number
+from common.policy import CONTRACT_TOLERANCE
+from common.workings import document_ref, refs_for, working
 
 
 def duplicate_invoices(source: dict) -> list[str]:
@@ -40,3 +42,49 @@ def three_way_match(subject: dict) -> dict:
             "line_items_total": number(total), "totals_match": totals_match,
             "policy_ids": ["P-001"] if above_tolerance else [],
             "reason": "invoice exceeds the agreed rate tolerance" if above_tolerance else "source matching"}
+
+
+def line_inputs(line_items: list[dict]) -> dict[str, float]:
+    """One named input per invoice line; repeated kinds get a position suffix."""
+    inputs: dict[str, float] = {}
+    for index, item in enumerate(line_items, start=1):
+        name = str(item.get("kind") or item.get("desc") or f"line_{index}").replace(" ", "_").lower()
+        if name in inputs:
+            name = f"{name}_{index}"
+        inputs[name] = number(money(item.get("amount"), signed=True))
+    return inputs
+
+
+def match_workings(source: dict, match: dict) -> list[dict]:
+    """The arithmetic behind a three-way match, each step tied to the document it reads."""
+    invoice, contract = money(source.get("invoice_amount")), money(source.get("contract_rate"))
+    ceiling = contract * (Decimal(1) + Decimal(str(CONTRACT_TOLERANCE)))
+    both = refs_for(source, "invoice_amount", "contract_rate")
+    items = [
+        working("Invoice vs rate confirmation", "invoice_amount - contract_rate",
+                {"invoice_amount": invoice, "contract_rate": contract}, invoice - contract,
+                evidence_refs=both, basis="three-way match"),
+        working("Tolerance ceiling", "contract_rate * (1 + tolerance)",
+                {"contract_rate": contract, "tolerance": CONTRACT_TOLERANCE}, ceiling.quantize(Decimal("0.01")),
+                evidence_refs=refs_for(source, "contract_rate"), basis="P-001"),
+        working("Within tolerance", "invoice_amount <= ceiling",
+                {"invoice_amount": invoice, "ceiling": ceiling.quantize(Decimal("0.01"))},
+                not match["above_tolerance"], unit="bool", evidence_refs=both, basis="P-001"),
+    ]
+    line_items = source.get("line_items", [])
+    if line_items:
+        inputs = line_inputs(line_items)
+        invoice_ref = [ref for ref in [document_ref(source, "carrier_invoice")] if ref]
+        items.append(working("Invoice lines add up", " + ".join(inputs), inputs, match["line_items_total"],
+                             evidence_refs=invoice_ref, basis="P-010"))
+        items.append(working("Lines equal stated total", "line_items_total == invoice_amount",
+                             {"line_items_total": match["line_items_total"], "invoice_amount": invoice},
+                             match["totals_match"], unit="bool", evidence_refs=invoice_ref, basis="P-010"))
+    packet = check_packet(source)
+    items.append(working("Payment packet", "required_documents - received_documents",
+                         {"required_documents": source.get("required_documents", ["rate_confirmation", "pod"]),
+                          "received_documents": sorted({d.get("kind") for d in packet["documents"]})},
+                         packet["missing"], unit="text",
+                         evidence_refs=[d["ref"] for d in packet["documents"] if d.get("ref")],
+                         basis="pay only against a rate confirmation and a signed POD"))
+    return items

@@ -55,3 +55,45 @@ def audit_charges(source: dict) -> dict:
             "unsupported_amount": number(unsupported_amount),
             "needs_verification": suspicious or bool(unsupported),
             "insufficient_timing_evidence": bool(claimed) and (dwell is None or free is None)}
+
+
+def charge_workings(source: dict, audit: dict) -> list[dict]:
+    """How each accessorial was tested against the recorded terms and GPS, with the documents used."""
+    from common.workings import refs_for, working
+    items = []
+    dwell, free = audit.get("gps_dwell_min"), audit.get("free_time_min")
+    claimed = audit.get("detention_hours_claimed") or 0
+    timing_refs = refs_for(source, "gps_dwell_min", "free_time_min")
+    if dwell is not None and free is not None:
+        supportable = max(Decimal(dwell) - Decimal(str(free)), Decimal(0))
+        items.append(working("Time on site beyond free time", "gps_dwell_min - free_time_min",
+                             {"gps_dwell_min": dwell, "free_time_min": free}, number(Decimal(dwell) - Decimal(str(free))),
+                             unit="min", evidence_refs=timing_refs, basis="detention accrues after free time"))
+        if claimed:
+            supportable_h = (supportable / 60).quantize(Decimal("0.01"))
+            items.append(working("Detention hours the GPS supports", "max(gps_dwell_min - free_time_min, 0) / 60",
+                                 {"gps_dwell_min": dwell, "free_time_min": free}, number(supportable_h), unit="h",
+                                 evidence_refs=timing_refs, basis="detention accrues after free time"))
+            items.append(working("Claimed hours within support", "detention_hours_claimed <= supportable_hours",
+                                 {"detention_hours_claimed": claimed, "supportable_hours": number(supportable_h)},
+                                 Decimal(str(claimed)) <= supportable_h, unit="bool",
+                                 evidence_refs=refs_for(source, "detention_hours_claimed", "gps_dwell_min",
+                                                        "free_time_min"), basis="P-001"))
+    elif claimed:
+        items.append(working("Detention timing evidence", "gps_dwell_min and free_time_min recorded",
+                             {"gps_dwell_min": dwell, "free_time_min": free}, False, unit="bool",
+                             basis="a detention claim needs GPS dwell and contracted free time"))
+    unsupported = {}
+    for item in source.get("line_items", []):
+        kind = str(item.get("kind", "")).lower()
+        if f"unsupported_{kind}" in audit["unsupported_charges"]:
+            unsupported[kind] = number(money(item.get("amount")))
+            reason = ("no receipt attached" if item.get("receipt_required") and not item.get("receipt_ref")
+                      else "within free time" if kind == "detention" else "not approved")
+            items.append(working(f"Unsupported {kind.replace('_', ' ')}", f"{kind} amount ({reason})",
+                                 {kind: unsupported[kind], "receipt_ref": item.get("receipt_ref")},
+                                 unsupported[kind], evidence_refs=refs_for(source, "invoice_amount"), basis="P-001"))
+    items.append(working("Unsupported charges total", " + ".join(unsupported) if unsupported else "0",
+                         unsupported, audit["unsupported_amount"], evidence_refs=refs_for(source, "invoice_amount"),
+                         basis="P-001"))
+    return items

@@ -1276,3 +1276,91 @@
     right: 0;
   }
 }
+
+/* ------------------------------------------------------------------
+ * Evidence viewer + shown work on the FreightLine dark surface.
+ * Structure lives in app/globals.css (ev-, wk-); these are the .fl tokens
+ * and the few places the trace drawer wants its own rhythm.
+ * ---------------------------------------------------------------- */
+.fl {
+  --ev-bg: var(--bg-1);
+  --ev-sunk: var(--bg-0);
+  --ev-chip-bg: var(--bg-2);
+  --ev-fg: var(--text-dim);
+  --ev-strong: var(--text);
+  --ev-dim: var(--text-dim);
+  --ev-mute: var(--text-mute);
+  --ev-line: var(--line);
+  --ev-line-strong: var(--line-strong);
+  --ev-ok: var(--ok);
+  --ev-warn: var(--warn);
+  --ev-bad: var(--bad);
+  --ev-info: var(--info);
+  --ev-accent: var(--teal);
+  --ev-mono: var(--font-mono);
+  --ev-radius: 0;
+  --ev-pdf-bg: #2a2f37;
+}
+.fl .ev-viewer {
+  border-left-color: var(--line);
+  box-shadow: -30px 0 80px rgba(0, 0, 0, 0.55);
+}
+.fl .ev-viewer::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(1px);
+}
+.fl .ev-head {
+  background: var(--bg-1);
+}
+.fl .ev-kicker::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: var(--agent, var(--teal));
+}
+.fl .ev-kicker svg {
+  display: none;
+}
+.fl .ev-ref {
+  font-family: var(--font-display);
+  font-variation-settings: "wdth" 88;
+  font-size: 19px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+.fl .ev-link {
+  text-decoration: underline;
+}
+.fl .ev-link:hover {
+  color: var(--text);
+}
+.fl button.ev-chip svg {
+  color: var(--agent, var(--teal));
+}
+.fl button.ev-chip:hover {
+  border-color: var(--agent, var(--teal));
+}
+.fl .ct-evidence {
+  gap: 4px;
+}
+.fl .ct-doc-ref.ev-chip {
+  font-size: 11px;
+}
+.fl .ct-sec .wk-block {
+  margin: 10px 0 2px;
+}
+.fl .wk-title {
+  font-family: var(--font-label);
+  font-weight: 700;
+  color: var(--text);
+}
+.fl .wk-row {
+  background: rgba(255, 255, 255, 0.02);
+}
+.fl .wk-result {
+  background: color-mix(in srgb, var(--agent, var(--teal)) 20%, transparent);
+}
+.fl .ct-record .wk-checks {
+  margin-top: 2px;
+}

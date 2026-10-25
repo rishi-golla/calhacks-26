@@ -6,6 +6,7 @@ import {
   type Row,
   type Snapshot,
 } from "./data";
+import { parseWorkings, type Working } from "./workings";
 
 export type ToolCallStatus = "started" | "completed" | "failed" | "waiting" | "blocked";
 export type ToolCall = {
@@ -415,6 +416,19 @@ function findingDetails(findings: Row): Row {
   return result;
 }
 
+/** Shown work, bounded and sanitized like tool data: sensitive keys and contact values never reach the inspector. */
+function safeWorkings(value: unknown): Working[] {
+  return parseWorkings(value).map((w) => ({
+    ...w,
+    label: safeToolText(w.label),
+    formula: safeToolText(w.formula),
+    inputs: safeToolData(w.inputs) as Row,
+    result: safeToolData(w.result),
+    evidence_refs: w.evidence_refs.map(safeToolText),
+    basis: safeToolText(w.basis),
+  }));
+}
+
 /** A chronological projection of published records, never a generated conversation. */
 export function buildAgentMessages(snapshot: Snapshot): AgentMessage[] {
   const messages = new Map<string, AgentMessage>();
@@ -503,6 +517,7 @@ export function buildAgentMessages(snapshot: Snapshot): AgentMessage[] {
       reviewSummary(review) ||
       text(callFindings.summary) ||
       text(object(callFindings.assessment).summary);
+    const workings = safeWorkings(findings.workings);
     const fallbackSummary = outcome
       ? `Recorded outcome: ${readable(outcome)}.`
       : "An artifact was published for this task.";
@@ -535,6 +550,7 @@ export function buildAgentMessages(snapshot: Snapshot): AgentMessage[] {
         ...(assessmentError ? { assessmentError } : {}),
         facts: findingDetails(findings),
         review: Object.keys(review).length ? review : undefined,
+        ...(workings.length ? { workings } : {}),
       },
     });
   }

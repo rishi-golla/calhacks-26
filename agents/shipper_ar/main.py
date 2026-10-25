@@ -6,6 +6,7 @@ from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
 from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
+from common.workings import refs_for, working
 
 
 class ShipperArAgent(FreightAgent):
@@ -47,10 +48,19 @@ class ShipperArAgent(FreightAgent):
             seen.add(deposit_id)
             total += money(deposit.get("amount"))
         balance = owed - total
+        applied = {str(deposit["id"]): number(money(deposit["amount"])) for deposit in matched}
+        invoice_refs = refs_for(source, "shipper_invoice_amount")
         findings = {"shipper_invoice_id": invoice_id, "invoice_amount": number(owed),
                     "matched_amount": number(total), "balance": number(balance),
                     "matched_deposit_ids": sorted(seen),
-                    "unmatched_deposit_ids": [item.get("id") for item in deposits if item not in matched]}
+                    "unmatched_deposit_ids": [item.get("id") for item in deposits if item not in matched],
+                    "workings": [
+                        working("Cash applied to this invoice", " + ".join(applied) if applied else "0", applied, total,
+                                evidence_refs=invoice_refs, basis="each deposit applies once, to its own invoice"),
+                        working("Open balance", "shipper_invoice_amount - matched_amount",
+                                {"shipper_invoice_amount": owed, "matched_amount": total}, balance,
+                                evidence_refs=invoice_refs, basis="short pay is partial, overpayment is suspicious"),
+                    ]}
         if env.task_type == "reconcile_customer_payment" and total > 0:
             if not source.get("period"):
                 raise SourceUnavailable("journal period is required")

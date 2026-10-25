@@ -748,3 +748,25 @@ test("recorded A2A status is a status message and unread fingerprint stores no m
   assert.ok(!fingerprint.includes("7381249"));
   assert.match(fingerprint, /^audit:sdk:[0-9a-f]{8}$/);
 });
+
+test("task details carry shown work, bounded and sanitized", () => {
+  const snapshot = emptySnapshot();
+  const working = {
+    label: "Delta vs contract",
+    formula: "invoice_amount - contract_rate",
+    inputs: { invoice_amount: 2150, contract_rate: 2000, dispatcher_phone: "+1 775 555 0112" },
+    result: 150,
+    unit: "usd",
+    evidence_refs: ["doc:INV-LD-1", "doc:RC-LD-1"],
+    basis: "P-001",
+  };
+  snapshot.task = [{ ...task, artifact_json: JSON.stringify({ outcome: "hold", findings: { workings: [working, { junk: true }] } }) }];
+  const details = buildAgentMessages(snapshot)[0].details as Row;
+  const workings = details.workings as Row[];
+  assert.equal(workings.length, 1);
+  assert.equal(workings[0].label, "Delta vs contract");
+  assert.deepEqual(workings[0].evidence_refs, ["doc:INV-LD-1", "doc:RC-LD-1"]);
+  assert.deepEqual(workings[0].inputs, { invoice_amount: 2150, contract_rate: 2000, dispatcher_phone: "[redacted]" });
+  snapshot.task = [{ ...task }];
+  assert.equal((buildAgentMessages(snapshot)[0].details as Row).workings, undefined);
+});

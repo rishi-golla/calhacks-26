@@ -429,6 +429,8 @@
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
+  /* Always the page's last, flexible row, even when the ledger strip above it is absent. */
+  grid-row: 3;
 }
 .fl .ct-stage {
   position: relative;

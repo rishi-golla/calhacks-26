@@ -16,6 +16,7 @@ import { StartFresh } from "./view-epoch";
 const NAV = [
   { href: "/", label: "Finance", icon: Home, exact: true },
   { href: "/invoices", label: "Invoices", icon: Receipt },
+  { href: "/ledger", label: "Ledger", icon: Database },
   { href: "/operations", label: "Operations", icon: Activity },
   { href: "/agents", label: "Agents", icon: Network },
   { href: "/cases", label: "Cases", icon: ListTree },

@@ -21,3 +21,33 @@ def test_unbalanced_entry_denied():
 
 def test_validator_cannot_change_policy():
     assert check("change_policy", "validator", {}).result == "deny"
+
+
+def test_release_hold_threshold_counts_every_hold_on_the_invoice():
+    from decimal import Decimal
+
+    from common.policy import invoice_hold_exposure, release_hold_needs_approval
+    # Released holds still count, so placing and releasing in turn cannot reset the total.
+    holds = [{"amount": 4700, "status": "released"}, {"amount": 4700, "status": "active"}]
+    assert invoice_hold_exposure(holds) == Decimal(9400)
+    split = {"amount": 4700, "hold_amount": 4700, "invoice_hold_total": 9400}
+    assert check("release_hold", "controller", split).result == "needs_approval"
+    # A large hold partially released to $4,900 remaining still needs a human.
+    shrunk = {"amount": 4900, "hold_amount": 9400, "invoice_hold_total": 9400}
+    assert check("release_hold", "controller", shrunk).result == "needs_approval"
+    small = {"amount": 300, "hold_amount": 300, "invoice_hold_total": 5000}
+    assert check("release_hold", "controller", small).result == "allow"
+    assert check("release_hold", "controller", {**split, "human_approval_id": "APP-1"}).result == "allow"
+    assert release_hold_needs_approval({"invoice_hold_total": "5000.01"}) is True
+    assert release_hold_needs_approval({}) is False
+
+
+def test_release_hold_threshold_rejects_invalid_amounts():
+    import pytest
+
+    from common.policy import invoice_hold_exposure
+    for value in (None, True, "abc", "NaN"):
+        with pytest.raises(ValueError):
+            check("release_hold", "controller", {"amount": 1, "invoice_hold_total": value})
+    with pytest.raises(ValueError):
+        invoice_hold_exposure([{"amount": "Infinity"}])

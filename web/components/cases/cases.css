@@ -1670,9 +1670,8 @@
   align-self: flex-start;
 }
 
-/* Validator lessons a task loaded, or a review wrote (lib/lessons). Gold matches the agent map. */
+/* Validator lessons a task loaded, or a review wrote (lib/lessons). Styled like the other trace records. */
 .fl .ct-lessons {
-  --lesson: #f2c14e;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -1682,15 +1681,15 @@
 }
 .fl .ct-lessons li {
   padding: 6px 10px;
-  border-left: 2px solid var(--lesson);
-  background: color-mix(in srgb, var(--lesson) 6%, transparent);
+  border-left: 2px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.025);
 }
 .fl .ct-lessons .who {
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--lesson);
+  color: var(--text-mute);
 }
 .fl .ct-lessons p {
   margin: 4px 0 0;
@@ -1725,7 +1724,4 @@
   color: var(--text);
   text-decoration: underline;
   text-decoration-color: var(--line);
-}
-.fl .ct-card .ct-lesson-count {
-  color: #f2c14e;
 }

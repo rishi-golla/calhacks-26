@@ -134,7 +134,6 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, lessons, case
         {workload && (
           <WorkloadSection workload={workload} />
         )}
-        {isAgentId(id) && <Lessons id={id} index={lessons} now={now} />}
         {id === "intake" && (
           <KVSection
             items={[
@@ -210,6 +209,8 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, lessons, case
             </ul>
           </section>
         )}
+        {/* Learning is reference detail: last, under the live activity. */}
+        {isAgentId(id) && <Lessons id={id} index={lessons} now={now} />}
       </div>
     </aside>
   );
@@ -264,7 +265,7 @@ function Lessons({ id, index, now }: { id: AgentId; index: LessonIndex; now: num
   const shown = all ? list : list.slice(0, LESSONS_SHOWN);
   return (
     <section className="au-panel-sec au-learn">
-      <div className="fl-section" style={{ "--accent": "var(--lesson)" } as CSSProperties}>
+      <div className="fl-section">
         {teacher ? "Lessons sent" : "Lessons learned"}
       </div>
       <div className="au-kv">

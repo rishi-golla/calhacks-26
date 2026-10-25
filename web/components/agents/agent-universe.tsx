@@ -9,9 +9,10 @@
  * hundreds of concurrent cases. Packets and tickers are imperative
  * (`PacketEngine`); React renders the nodes, edges and rail.
  *
- * Learning is drawn too: gold lines from Settlement Quality Review to each
- * agent it has taught, a light-bulb packet for every new lesson, and a glow
- * on an agent's lesson badge whenever a task recalls one (lib/lessons).
+ * Learning stays in the background: a lesson count in each learner's stats
+ * line, an ordinary packet (light-bulb card) for each new lesson, a plain
+ * ticker line when a task recalls one, and lines from Settlement Quality
+ * Review to its learners only while one of them is focused (lib/lessons).
  */
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
@@ -185,11 +186,6 @@ export default function AgentUniverse() {
     () => [...lessons.byAgent.entries()].filter(([agent]) => agent !== "validator").map(([agent, list]) => ({ agent, count: list.length })),
     [lessons],
   );
-  // Read by the live-event handler, which only needs the latest texts.
-  const lessonText = useRef(new Map<string, string>());
-  useEffect(() => {
-    lessonText.current = new Map(lessons.all.map((l) => [l.id, l.text]));
-  }, [lessons]);
 
   const pendingApprovals = useMemo(() => snapshot.approval.filter((a) => !a.decision || a.decision === "pending"), [snapshot.approval]);
 
@@ -235,13 +231,11 @@ export default function AgentUniverse() {
           engine.ticker("intake", `+ ${e.caseId}`);
           break;
         case "lesson":
-          if (isAgentId(e.agent)) engine.ticker("validator", `💡 lesson → ${AGENT_META[e.agent].nick}`, "lesson");
+          if (isAgentId(e.agent)) engine.ticker("validator", `→ lesson for ${AGENT_META[e.agent].nick}`);
           break;
         case "lesson_recalled":
           if (isAgentId(e.agent)) {
-            const first = lessonText.current.get(e.lessonIds[0]);
-            engine.glowLesson(e.agent);
-            engine.ticker(e.agent, `💡 recalled ${e.lessonIds.length > 1 ? `${e.lessonIds.length} lessons` : first ? `“${first.slice(0, 48)}${first.length > 48 ? "…" : ""}”` : "a lesson"}`, "lesson");
+            engine.ticker(e.agent, e.lessonIds.length > 1 ? `↺ used ${e.lessonIds.length} lessons` : "↺ used a lesson");
           }
           break;
         case "dispatch":
@@ -314,6 +308,7 @@ export default function AgentUniverse() {
       ...chipsFor(awaiting.map((c) => c.caseId)),
     });
   }
+  const lessonCount = (id: AgentId) => (id === "validator" ? lessons.all.filter((l) => l.agent !== "validator").length : (lessons.byAgent.get(id)?.length ?? 0));
   for (const id of AGENT_IDS) {
     const w = workloads[id];
     const t = transient[id];
@@ -322,11 +317,10 @@ export default function AgentUniverse() {
     const caseIds = [...w.activeTasks].sort((a, b) => b.startedAt - a.startedAt).map((x) => x.caseId);
     views.push({
       id,
-      lessons: id === "validator" ? lessons.all.filter((l) => l.agent !== "validator").length : (lessons.byAgent.get(id)?.length ?? 0),
       mood,
       bubble: mood === "talking" ? (liveCalls === 1 ? "On a call" : `${liveCalls} calls live`) : undefined,
       tone: toneFor(w.status, t),
-      counts: `${w.active}|active|${w.done.toLocaleString()}|done${w.queued > 0 ? `|${w.queued}|queued` : ""}${w.stalled > 0 ? `|${w.stalled}|stalled` : ""}`,
+      counts: `${w.active}|active|${w.done.toLocaleString()}|done${w.queued > 0 ? `|${w.queued}|queued` : ""}${w.stalled > 0 ? `|${w.stalled}|stalled` : ""}${lessonCount(id) > 0 ? `|${lessonCount(id)}|${id === "validator" ? "taught" : lessonCount(id) === 1 ? "lesson" : "lessons"}` : ""}`,
       ...chipsFor([...new Set(caseIds)]),
     });
   }

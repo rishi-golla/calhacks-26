@@ -78,6 +78,14 @@ class SpacetimeTransportError(SpacetimeError):
 HTTPFailure = Literal["authorization", "not_found", "conflict", "rate_limited", "rejected", "server"]
 
 
+REDUCER_REFUSED_STATUS = 530
+"""SpacetimeDB 2.x answers a reducer that threw (a refused write) with HTTP 530.
+
+That is a deterministic rejection whose transaction rolled back, not a server
+fault: it is classified ``rejected`` and never ``may_have_committed``.
+"""
+
+
 class SpacetimeHTTPError(SpacetimeError):
     """Non-success HTTP status, without potentially sensitive server error text."""
 
@@ -85,9 +93,10 @@ class SpacetimeHTTPError(SpacetimeError):
         self.status_code = status_code
         self.kind: HTTPFailure = {
             401: "authorization", 403: "authorization", 404: "not_found",
-            409: "conflict", 429: "rate_limited",
+            409: "conflict", 429: "rate_limited", REDUCER_REFUSED_STATUS: "rejected",
         }.get(status_code, "server" if status_code >= 500 else "rejected")
-        self.may_have_committed = mutation and (status_code >= 500 or status_code == 408)
+        self.may_have_committed = mutation and (
+            status_code == 408 or (status_code >= 500 and status_code != REDUCER_REFUSED_STATUS))
         super().__init__(f"SpacetimeDB HTTP {status_code} ({self.kind})")
 
 
@@ -468,9 +477,25 @@ class SpacetimeClient:
                                limit: int = 10) -> list[dict[str, Any]]:
         """Read active, relevant memory, preferring specific scopes and new versions.
 
-        Every nonempty scope dimension must match the supplied task scope. A
-        task without scope sees only global memory. The stored JSON ``scope``
-        is decoded in returned rows; no task or shared envelope is modified.
+        Matching is deliberately strict, one direction only: every non-null
+        dimension stored on a memory must equal the same key in the requested
+        scope. Consequences:
+
+        * A memory may be *less* specific than the task. A lesson scoped
+          ``{carrier_id, skill}`` applies to a task whose scope also has
+          ``lane`` or ``claim_type``; global (``{}``) memory applies to all.
+        * A memory may never be *more* specific than the task. If the task's
+          scope lacks a dimension the memory has (e.g. no ``lane``, or the
+          source record was unavailable so only ``skill`` is known), the
+          memory does not match: it cannot be shown to apply.
+        * A memory never applies across a different value, so one carrier's
+          lesson is never shown for another carrier.
+
+        Matches rank by number of scope dimensions, then version, then id.
+        Callers should build ``scope`` with ``common.learning.memory_scope``,
+        the same derivation the Validator writes lessons with. The stored
+        JSON ``scope`` is decoded in returned rows; no task or shared
+        envelope is modified.
         """
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise SpacetimeConfigurationError("memory limit must be a positive integer")

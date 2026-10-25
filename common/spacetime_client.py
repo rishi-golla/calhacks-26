@@ -78,6 +78,14 @@ class SpacetimeTransportError(SpacetimeError):
 HTTPFailure = Literal["authorization", "not_found", "conflict", "rate_limited", "rejected", "server"]
 
 
+REDUCER_REFUSED_STATUS = 530
+"""SpacetimeDB 2.x answers a reducer that threw (a refused write) with HTTP 530.
+
+That is a deterministic rejection whose transaction rolled back, not a server
+fault: it is classified ``rejected`` and never ``may_have_committed``.
+"""
+
+
 class SpacetimeHTTPError(SpacetimeError):
     """Non-success HTTP status, without potentially sensitive server error text."""
 
@@ -85,9 +93,10 @@ class SpacetimeHTTPError(SpacetimeError):
         self.status_code = status_code
         self.kind: HTTPFailure = {
             401: "authorization", 403: "authorization", 404: "not_found",
-            409: "conflict", 429: "rate_limited",
+            409: "conflict", 429: "rate_limited", REDUCER_REFUSED_STATUS: "rejected",
         }.get(status_code, "server" if status_code >= 500 else "rejected")
-        self.may_have_committed = mutation and (status_code >= 500 or status_code == 408)
+        self.may_have_committed = mutation and (
+            status_code == 408 or (status_code >= 500 and status_code != REDUCER_REFUSED_STATUS))
         super().__init__(f"SpacetimeDB HTTP {status_code} ({self.kind})")
 
 
@@ -160,6 +169,18 @@ def _read_query(sql: str) -> str:
 def canonical_sql_column(name: str) -> str:
     """Normalize the module SDK's numeric acronym spelling to the Python contract."""
     return "a2a_state" if name == "a_2_a_state" else name
+
+
+def journal_lines(value: Any) -> list:
+    """Journal lines as the policy and reducers take them: ``{account, debit, credit}`` objects.
+
+    SQL reads return the module's product type as ``[account, debit, credit]`` triples; anything else is
+    passed through unchanged so a malformed payload still fails validation instead of being guessed at.
+    """
+    if not isinstance(value, list):
+        return value
+    return [dict(zip(("account", "debit", "credit"), line, strict=True))
+            if isinstance(line, list) and len(line) == 3 else line for line in value]
 
 
 def _query_result(value: Any) -> QueryResult:
@@ -329,11 +350,7 @@ class SpacetimeClient:
         # defaults. These reads are preflight only; the reducer checks atomically.
         if name == "post_journal_entry" and checked.get("request_id"):
             stored = await self._stored_row("journal_request", checked["request_id"])
-            lines = stored.get("lines")
-            if isinstance(lines, list):
-                lines = [dict(zip(("account", "debit", "credit"), line, strict=True))
-                         if isinstance(line, list) and len(line) == 3 else line for line in lines]
-            checked.update(lines=lines, requested_by=stored.get("requested_by"))
+            checked.update(lines=journal_lines(stored.get("lines")), requested_by=stored.get("requested_by"))
         if name == "release_hold" and checked.get("id"):
             stored = await self._stored_row("hold", checked["id"])
             try:

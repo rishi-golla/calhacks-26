@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from agents.controller.card import DESCRIPTIONS
 from agents.risk.tools import audit_charges, charge_workings
+from common import policy
 from common.agent_support import (
     child_envelope,
     evidence,
@@ -17,7 +18,12 @@ from common.agent_support import (
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
-from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
+from common.source_repository import (
+    SourceRepository,
+    SourceUnavailable,
+    fixture_mode,
+    source_fixtures_only,
+)
 from common.workings import refs_for, working
 
 
@@ -39,7 +45,7 @@ class ControllerAgent(FreightAgent):
 
     async def approval(self, env, task_id, source, action, target_id, amount):
         approval_id = identifier(task_id, "approval:" + action + ":" + target_id)
-        stored = [] if fixture_mode() else await rows(self.name, "approval", "id", approval_id)
+        stored = [] if source_fixtures_only() else await rows(self.name, "approval", "id", approval_id)
         if stored:
             approval = stored[0]
             if approval.get("decision") == "rejected":
@@ -98,7 +104,7 @@ class ControllerAgent(FreightAgent):
             # Resolve every request before posting any, so a missing one cannot leave a partial batch.
             requests = []
             for request_id in request_ids:
-                if fixture_mode():
+                if source_fixtures_only():
                     recorded = [*source.get("journal_requests", []), *filter(None, [source.get("journal_request")])]
                     found = [item for item in recorded if item.get("id") == request_id][:1]
                 else:
@@ -151,7 +157,7 @@ class ControllerAgent(FreightAgent):
             hold_id = env.subject.get("hold_id")
             if not isinstance(hold_id, str) or not hold_id:
                 raise SourceUnavailable("release_hold requires a stored hold reference")
-            holds = source.get("holds", []) if fixture_mode() else await rows(self.name, "hold", "id", hold_id)
+            holds = source.get("holds", []) if source_fixtures_only() else await rows(self.name, "hold", "id", hold_id)
             holds = [hold for hold in holds if hold.get("id") == hold_id and hold.get("case_id") == env.case_id]
             if not holds:
                 raise SourceUnavailable("hold does not exist for this case")
@@ -164,7 +170,15 @@ class ControllerAgent(FreightAgent):
                 return await finish(self, env, task_id, outcome="unverified", findings={
                     "reason": "source evidence does not authorize releasing the hold"}, evidence_refs=refs)
             payload = {"id": hold_id, "amount": number(release)}
-            if money(hold["amount"]) > 5000:
+            # P-003 counts every hold ever placed on this invoice, so split holds still need a human.
+            if fixture_mode():
+                invoice_holds = [item for item in source.get("holds", [])
+                                 if item.get("invoice_id", hold.get("invoice_id")) == hold.get("invoice_id")]
+            else:
+                invoice_holds = await rows(self.name, "hold", "invoice_id", hold["invoice_id"])
+            if policy.release_hold_needs_approval({
+                    "amount": release, "hold_amount": hold["amount"],
+                    "invoice_hold_total": policy.invoice_hold_exposure(invoice_holds)}):
                 decision = await self.approval(env, task_id, source, "release_hold", hold_id, release)
                 if not decision["approved"]:
                     return await finish(self, env, task_id, outcome="reject", findings=decision,

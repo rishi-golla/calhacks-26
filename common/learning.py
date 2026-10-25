@@ -112,21 +112,33 @@ def reconstruct_instructions(agent: str, history: list[dict]) -> tuple[str, int]
     if agent not in AGENTS:
         raise ValueError("unknown agent")
     base = (ROOT / "agents" / agent / "instructions.md").read_text()
-    snapshots = {0: base}
-    effective, version = base, 0
+    rows: dict[int, dict] = {}
+    version = 0
     for row in sorted(history, key=lambda r: int(r["version"])):
         next_version = int(row["version"])
         if next_version != version + 1 or row.get("agent", agent) != agent:
             raise InvalidInstructionPatch("non-contiguous or cross-agent instruction history")
+        rows[next_version] = row
+        version = next_version
+    # Only the chain the latest version depends on is replayed. A revert to an earlier version restores that
+    # snapshot without touching the rows after it, so a human compensating revert recovers an agent whose later
+    # stored patch no longer applies (a corrupted row, or one written against an older checked-in baseline).
+    snapshots = {0: base}
+
+    def snapshot(at: int) -> str:
+        if at in snapshots:
+            return snapshots[at]
+        row = rows[at]
         revert = int(row.get("reverts_version") or 0)
         if not row.get("diff") and not revert:
-            effective = base  # A compensating version restoring the checked-in baseline.
+            text = base  # A compensating version restoring the checked-in baseline.
         elif revert:
-            if revert not in snapshots:
+            if revert >= at:
                 raise InvalidInstructionPatch("unknown revert version")
-            effective = snapshots[revert]
+            text = snapshot(revert)
         else:
-            effective = apply_instruction_patch(effective, row["diff"])
-        version = next_version
-        snapshots[version] = effective
-    return effective, version
+            text = apply_instruction_patch(snapshot(at - 1), row["diff"])
+        snapshots[at] = text
+        return text
+
+    return snapshot(version), version

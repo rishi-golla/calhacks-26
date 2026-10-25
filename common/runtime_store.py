@@ -414,6 +414,12 @@ class RuntimeStore:
         async with self.engine.begin() as conn:
             await conn.execute(update(projections).where(projections.c.id == projection_id).values(delivered=1))
 
+    async def reject_projection(self, projection_id: str) -> None:
+        """A reducer that threw is deterministic: retrying the same write never helps, so the row leaves the
+        pending set for good (delivered=2) instead of being replayed on every pass."""
+        async with self.engine.begin() as conn:
+            await conn.execute(update(projections).where(projections.c.id == projection_id).values(delivered=2))
+
     async def cancel(self, task_id: str) -> None:
         await self.initialize()
         async with self.engine.begin() as conn:

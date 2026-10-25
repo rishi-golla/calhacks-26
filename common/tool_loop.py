@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from dataclasses import replace
@@ -17,8 +18,10 @@ from common.runtime_store import LeaseLost
 from common.spacetime_client import SpacetimeClient
 from common.tool_model import model_turn
 
+log = logging.getLogger(__name__)
 MAX_TURNS = 12
 MAX_TOOL_CALLS = 10
+INCOMPLETE_TURN_RETRIES = 2
 MAX_TOOL_RESULT_BYTES = 90_000
 _SECRET_KEY = re.compile(
     r"(?:secret|password|token|api.?key|authorization|phone|email|bank|account.?number|routing.?number|"
@@ -147,9 +150,17 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
     seen_ids: set[str] = set()
     artifact = None
     for turn_index in range(MAX_TURNS):
-        async def infer_turn(artifact=artifact):
-            return await model_turn(config, system, history, tools if artifact is None else [],
-                                    evidence_refs=sorted(refs), require_tool=artifact is None)
+        async def infer_turn(artifact=artifact, turn_index=turn_index):
+            # An incomplete turn executed nothing, so asking again is safe; the provider cuts a turn short
+            # for its own reasons (output budget, an undocumented message cap) a few percent of the time.
+            for attempt in range(INCOMPLETE_TURN_RETRIES + 1):
+                try:
+                    return await model_turn(config, system, history, tools if artifact is None else [],
+                                            evidence_refs=sorted(refs), require_tool=artifact is None)
+                except ProviderError as error:
+                    if attempt >= INCOMPLETE_TURN_RETRIES or not str(error).startswith("tool response incomplete"):
+                        raise
+                    log.warning("%s turn %d %s; retrying", agent.name, turn_index, error)
 
         # Replaying after a wait/crash reads this exact decision instead of asking the model again.
         try:

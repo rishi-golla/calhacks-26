@@ -3,7 +3,7 @@ table can't place, and only into the allowlist. Untrusted text can never pick an
 import json
 from dataclasses import dataclass
 
-from harness.chat import complete
+from harness.chat import BadRequest, complete
 from harness.pool import Pool, Unavailable
 
 ROUTES: dict[str, str] = {
@@ -74,7 +74,7 @@ async def classify(pool: Pool, event: dict, text: str) -> Route:
                          "priority": event.get("priority", "P2"), "max_latency_ms": 15000}}
     try:
         resp = await complete(pool, body)
-    except Unavailable as e:
+    except (Unavailable, BadRequest) as e:
         return Route(None, "triage", f"classifier unavailable ({e}); waiting for triage")
     out = json.loads(resp["choices"][0]["message"]["content"])
     info = {**out, "model_used": resp["harness"]["model_used"], "latency_ms": resp["harness"]["latency_ms"]}

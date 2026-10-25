@@ -29,6 +29,9 @@ from common.workings import plain, refs_for, working
 FINANCIAL_AGENTS = {"carrier_ap", "shipper_ar", "controller", "cfo"}
 TERMINAL = {"completed", "failed", "canceled", "rejected"}
 ISSUE, ADVISORY = "issue", "advisory"
+# Checks that fail because the run or its evidence is missing, not because the agent decided wrongly.
+RUN_FAILURES = {"target_terminal", "execution_completed", "source_available", "result_artifact",
+                "financial_source_complete"}
 TOLERANCE = Decimal(1) + Decimal(str(CONTRACT_TOLERANCE))
 THRESHOLD = Decimal(APPROVAL_THRESHOLD_USD)
 # Why each settlement blocker matters, for the dashboard and the lesson text.
@@ -602,7 +605,10 @@ def deterministic_review(bundle: dict) -> ReviewOutput:
         friction.append(Friction(kind="flag", detail="A human requested review; its note is evidence, not authorization."))
     failures = c.failures(ISSUE)
     lessons = []
-    if failures and role in FINANCIAL_AGENTS:
+    # A failed run, or a review without the agent's source, says nothing about the agent's judgment:
+    # the task is still rerun, but it teaches no lesson.
+    judged = not any(item["name"] in RUN_FAILURES for item in failures)
+    if failures and role in FINANCIAL_AGENTS and judged:
         # The same scope every reader derives (common.learning.memory_scope), so the lesson is found again.
         scope = memory_scope(source, skill)
         lessons.append(Lesson(agent=role, type="memory", scope=scope, text_or_diff=lesson_text(skill, failures),

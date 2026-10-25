@@ -347,7 +347,10 @@ def _readiness(executor):
             raise ValueError("live mode requires the service actor SpacetimeDB credential")
         if not os.getenv("SPACETIME_URL") or not os.getenv("SPACETIME_DB"):
             raise ValueError("live mode requires explicit SpacetimeDB URL and database")
-        if not os.getenv("SOURCE_DATA_PATH") or not Path(os.environ["SOURCE_DATA_PATH"]).is_file():
+        from common.source_repository import source_backend
+        # SpacetimeDB is required above, so the spacetime backend needs no local file.
+        if source_backend() == "file" and (not os.getenv("SOURCE_DATA_PATH")
+                                           or not Path(os.environ["SOURCE_DATA_PATH"]).is_file()):
             raise ValueError("live mode requires an accessible source dataset")
         credentials = [os.getenv(f"A2A_TOKEN_{actor.upper()}", "") for actor in sorted(SERVICE_ACTORS)]
         if any(not value for value in credentials) or len(set(credentials)) != len(credentials):
@@ -407,15 +410,18 @@ def build_app(executor: FreightAgent, descriptions: dict[str, str]) -> Starlette
             await snapshots.initialize()
             await events.initialize()
         recovery = asyncio.create_task(handler.recovery_loop())
-        presence = asyncio.create_task(agent_presence_loop(executor)) \
-            if os.getenv("SPACETIME_DISABLED", "1") != "1" else None
+        spacetime_on = os.getenv("SPACETIME_DISABLED", "1") != "1"
+        presence = asyncio.create_task(agent_presence_loop(executor)) if spacetime_on else None
+        projections = asyncio.create_task(executor.projection_loop()) \
+            if spacetime_on and not executor.inline_projections else None
+        workers = [task for task in (presence, projections) if task]
         try:
             yield
         finally:
             recovery.cancel()
-            if presence:
-                presence.cancel()
-            await asyncio.gather(recovery, *([presence] if presence else []), return_exceptions=True)
+            for task in workers:
+                task.cancel()
+            await asyncio.gather(recovery, *workers, return_exceptions=True)
             await handler.aclose()
             await executor.store.close()
 

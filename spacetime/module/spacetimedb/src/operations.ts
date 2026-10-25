@@ -43,6 +43,9 @@ function ownedTask(ctx: Ctx, taskId: string, actor: Principal) {
 class Mutation {
   readonly cells: Cell[] = [];
   readonly payloadHash: string;
+  // Set by a handler whose request already matches stored state: no change set or audit event is
+  // written, only the receipt, so the write ID still rejects different contents later.
+  unchanged = false;
   constructor(readonly ctx: Ctx, readonly p: Payload, readonly actor: Principal, readonly action: string) {
     // Handlers enrich audit context with authoritative case IDs. Retry identity
     // must continue to hash the original caller payload, not that enrichment.
@@ -63,6 +66,11 @@ class Mutation {
   }
   finish(): void {
     const { ctx, p, actor, action } = this;
+    if (this.unchanged) {
+      if (this.cells.length) throw new Error('an unchanged mutation cannot capture changes');
+      this.receipt('', now(ctx));
+      return;
+    }
     // Dispatch references a remote first-hop task, which may not yet be mirrored
     // here. Its ID lives on the dispatch row, not as a router-owned audit task.
     const taskId = action === 'record_dispatch' ? '' : text(p, 'task_id', '');
@@ -117,9 +125,13 @@ class Mutation {
     ctx.db.audit_event.insert({ ...audit, hash: auditHash, hash_body: auditBody });
     const nextAudit = { name: auditHeadName, id: audit.id, hash: auditHash, sequence: audit.sequence };
     if (auditHead) ctx.db.chain_head.name.update(nextAudit); else ctx.db.chain_head.insert(nextAudit);
+    this.receipt(id, base.ts);
+  }
+  private receipt(change_set_id: string, ts: string): void {
+    const { ctx, p, actor, action } = this;
     ctx.db.write_receipt.insert({
-      id: `${actor.identity}:${base.write_id}`, action, actor_identity: actor.identity,
-      payload_hash: this.payloadHash, change_set_id: id, ts: base.ts,
+      id: `${actor.identity}:${text(p, 'write_id', undefined, 200)}`, action, actor_identity: actor.identity,
+      payload_hash: this.payloadHash, change_set_id, ts,
     });
   }
 }
@@ -348,9 +360,12 @@ export const releaseHold: Handler = m => {
   const remaining = cents(previous.amount) - cents(previous.released_amount);
   const value = amount(p, 'amount', remaining / 100);
   if (cents(value) <= 0 || cents(value) > remaining) throw new Error('release exceeds remaining hold');
-  // Threshold is on original hold size, so splitting a $9,400 hold into two
-  // $4,700 releases cannot bypass the required independent human decision.
-  if (cents(previous.amount) > 500000) consumeApproval(m, text(p, 'approval_id', text(p, 'human_approval_id', '')), 'release_hold', previous.id, previous.case_id, value, previous.invoice_id);
+  // P-003 is thresholded on everything ever held on the invoice: original hold
+  // amounts, released holds included. Holds are never deleted or shrunk, so the
+  // total only grows and at most $5,000 of an invoice can be released without a
+  // human, however the hold is split, partially released or placed in turn.
+  const exposure = sumCents([...ctx.db.hold.invoice_id.filter(previous.invoice_id)].map(x => x.amount));
+  if (exposure > 500000) consumeApproval(m, text(p, 'approval_id', text(p, 'human_approval_id', '')), 'release_hold', previous.id, previous.case_id, value, previous.invoice_id);
   const released_amount = (cents(previous.released_amount) + cents(value)) / 100;
   const row = { ...previous, released_amount, status: cents(released_amount) === cents(previous.amount) ? 'released' : 'active', released_by: actor.actor, released_at: now(ctx) };
   ctx.db.hold.id.update(row);
@@ -618,6 +633,33 @@ export const upsertContact: Handler = m => {
   m.capture('contact', id, previous, row);
 };
 
+const SOURCE_KINDS = ['case', 'company', 'contacts', 'dataset'];
+
+// Source truth agents read in place of source.json, one row per record. The digest is SHA-256 of
+// record_json exactly as sent; an unchanged digest is a no-op, so backfills add no audit history.
+export const upsertSourceRecord: Handler = m => {
+  const { ctx, p } = m;
+  const id = text(p, 'id');
+  const kind = choice(p, 'kind', SOURCE_KINDS);
+  if (!id.startsWith(`${kind}:`) || id.length === kind.length + 1) throw new Error('source record id must be <kind>:<key>');
+  const record_json = text(p, 'record_json', undefined, 262144);
+  let record: unknown;
+  try { record = JSON.parse(record_json); } catch { throw new Error('record_json must be valid JSON'); }
+  const array = kind === 'contacts';
+  if (!record || typeof record !== 'object' || Array.isArray(record) !== array) throw new Error(`${kind} record_json must be a JSON ${array ? 'array' : 'object'}`);
+  const digest = text(p, 'digest');
+  if (hash(record_json) !== digest) throw new Error('digest does not match record_json');
+  // Case records chain under their case; directory and dataset records under the system chain.
+  const case_id = kind === 'case' ? id.slice('case:'.length) : '';
+  if (p.case_id !== undefined && p.case_id !== case_id) throw new Error('source record case is derived from its id');
+  p.case_id = case_id;
+  const previous = ctx.db.source_record.id.find(id);
+  if (previous?.digest === digest) { m.unchanged = true; return; }
+  const row = { id, kind, case_id, record_json, digest, updated_at: now(ctx) };
+  if (previous) ctx.db.source_record.id.update(row); else ctx.db.source_record.insert(row);
+  m.capture('source_record', id, previous, row);
+};
+
 export const upsertCall: Handler = m => {
   const { ctx, p, actor } = m;
   const id = text(p, 'id');
@@ -686,32 +728,69 @@ export const addPrecedent: Handler = m => {
   p.case_id = source_case;
 };
 
-export const recordDispatch: Handler = m => {
-  const { ctx, p } = m;
-  const event_id = text(p, 'event_id');
-  const previous = ctx.db.dispatch.event_id.find(event_id);
-  const status = choice(p, 'status', ['accepted', 'triage', 'not_routed', 'duplicate']);
-  const row = {
-    event_id, case_id: text(p, 'case_id', ''), skill: text(p, 'skill', ''),
-    agent: choice(p, 'agent', ['', ...AGENTS], ''), task_id: text(p, 'task_id', ''),
-    status, reason: text(p, 'reason'), queue_ms: uint(p, 'queue_ms'),
-    policy_version: text(p, 'policy_version'), ts: now(ctx),
-  };
+type Dispatch = NonNullable<ReturnType<Ctx['db']['dispatch']['event_id']['find']>>;
+const ROUTED = ['queued', 'accepted', 'duplicate'];
+
+// One row per event. Once routed, its case, agent and skill are fixed, its task is fixed once known,
+// and later observations keep the original queue time and policy version. A queued event stays queued
+// until a task is known; a re-observed accepted event becomes a duplicate.
+function writeDispatch(m: Mutation, row: Dispatch): void {
+  const { ctx } = m;
+  const previous = ctx.db.dispatch.event_id.find(row.event_id);
+  const requested = row.status;
   if (row.agent && !SKILLS[row.agent].includes(row.skill)) throw new Error('dispatch skill does not belong to agent');
-  if (['accepted', 'duplicate'].includes(status) && (!row.case_id || !row.agent || !row.skill || !row.task_id)) {
-    throw new Error('accepted dispatch requires case, agent, skill and task');
-  }
-  if (previous && ['accepted', 'duplicate'].includes(previous.status)) {
-    if (!['accepted', 'duplicate'].includes(status) ||
-        ['case_id', 'agent', 'skill', 'task_id'].some(key => previous[key as keyof typeof previous] !== row[key as keyof typeof row])) {
-      throw new Error('accepted dispatch route is immutable');
+  if (ROUTED.includes(requested) && (!row.case_id || !row.agent || !row.skill)) throw new Error(`${requested} dispatch requires case, agent and skill`);
+  if (requested === 'accepted' && !row.task_id) throw new Error('accepted dispatch requires a task');
+  if (requested === 'queued' && row.task_id) throw new Error('queued dispatch cannot carry a task');
+  if (previous && ROUTED.includes(previous.status)) {
+    if (!ROUTED.includes(requested) ||
+        ['case_id', 'agent', 'skill'].some(key => previous[key as keyof Dispatch] !== row[key as keyof Dispatch])) {
+      throw new Error('routed dispatch route is immutable');
     }
-    row.status = 'duplicate';
+    if (previous.task_id && row.task_id && previous.task_id !== row.task_id) throw new Error('accepted dispatch task is immutable');
+    if (previous.task_id && requested === 'queued') throw new Error('accepted dispatch cannot return to queued');
+    row.task_id ||= previous.task_id;
+    if (previous.status !== 'queued') row.status = 'duplicate';
+    else if (requested === 'duplicate' && !row.task_id) row.status = 'queued';
     row.queue_ms = previous.queue_ms;
     row.policy_version = previous.policy_version;
   }
   if (previous) ctx.db.dispatch.event_id.update(row); else ctx.db.dispatch.insert(row);
-  m.capture('dispatch', event_id, previous, row);
+  m.capture('dispatch', row.event_id, previous, row);
+}
+
+export const recordDispatch: Handler = m => {
+  const { ctx, p } = m;
+  writeDispatch(m, {
+    event_id: text(p, 'event_id'), case_id: text(p, 'case_id', ''), skill: text(p, 'skill', ''),
+    agent: choice(p, 'agent', ['', ...AGENTS], ''), task_id: text(p, 'task_id', ''),
+    status: choice(p, 'status', ['queued', 'accepted', 'triage', 'not_routed', 'duplicate']),
+    reason: text(p, 'reason'), queue_ms: uint(p, 'queue_ms'), policy_version: text(p, 'policy_version'), ts: now(ctx),
+  });
+};
+
+// The router commits a routed event here instead of pushing it over A2A: the outbox row and its
+// queued dispatch land in one transaction, and the dispatch worker delivers the row to the agent.
+export const enqueueFirstHop: Handler = m => {
+  const { ctx, p, actor } = m;
+  const event_id = text(p, 'event_id');
+  const case_id = text(p, 'case_id');
+  caseFor(ctx, case_id, actor);
+  const agent = choice(p, 'agent', AGENTS);
+  const skill = text(p, 'skill');
+  if (!SKILLS[agent].includes(skill)) throw new Error('first-hop skill does not belong to agent');
+  const envelope = p.envelope;
+  if (!envelope || Array.isArray(envelope) || typeof envelope !== 'object') throw new Error('envelope must be a JSON object');
+  // The worker rebuilds the A2A task from this envelope, so it must describe the same route.
+  if (envelope.case_id !== case_id || envelope.task_type !== skill) throw new Error('envelope case and task type must match the first hop');
+  const queue_ms = uint(p, 'queue_ms');
+  const policy_version = text(p, 'policy_version');
+  const id = `first_hop:${event_id}`;
+  const body = { event_id, case_id, skill, agent, envelope, queue_ms, policy_version };
+  const existing = ctx.db.routing_outbox.id.find(id);
+  if (existing && existing.payload_json !== canonical(body)) throw new Error('first hop for this event was already enqueued with different contents');
+  writeDispatch(m, { event_id, case_id, skill, agent, task_id: '', status: 'queued', reason: text(p, 'reason'), queue_ms, policy_version, ts: now(ctx) });
+  enqueue(m, id, 'first_hop', case_id, '', body, agent);
 };
 
 export const logLlmCall: Handler = m => {
@@ -737,6 +816,19 @@ export const setAgentModel: Handler = m => {
   const row = { agent, model: text(p, 'model', 'auto'), enabled: bool(p, 'enabled') };
   if (previous) ctx.db.agent_config.agent.update(row); else ctx.db.agent_config.insert(row);
   m.capture('agent_config', agent, previous, row);
+};
+
+// init seeds agent_config once; agents added after a database was initialised get the same
+// defaults here. Existing rows, including human-disabled agents, are left alone.
+export const ensureAgentDefaults: Handler = m => {
+  const { ctx } = m;
+  for (const agent of AGENTS) {
+    if (ctx.db.agent_config.agent.find(agent)) continue;
+    const config = { agent, model: 'auto', enabled: true };
+    ctx.db.agent_config.insert(config);
+    m.capture('agent_config', agent, null, config);
+  }
+  m.unchanged = !m.cells.length;
 };
 
 export const upsertForecast: Handler = m => {

@@ -38,9 +38,6 @@ function bubbleFor(e: LiveEvent): [string, string] | null {
   }
 }
 
-/** "Carrier Settlement" → "Carrier settlement"; acronyms (POD) stay. */
-const sentence = (name: string) => name.replace(/ (\w+)/g, (m, w: string) => (/^[A-Z]{2,}$/.test(w) ? m : m.toLowerCase()));
-
 export function AgentCrew() {
   const { workloads, attention, now } = useOps();
   const [bubbles, setBubbles] = useState<Partial<Record<AgentId, { text: string; until: number }>>>({});
@@ -102,7 +99,6 @@ export function AgentCrew() {
               >
                 <Mascot id={a.id} size={64} mood={moodForStatus(status, failed)} bubble={bubbles[a.id]?.text} />
                 <span className="fh-crew-nick">{a.nick}</span>
-                <span className="fh-crew-role">{sentence(a.name)}</span>
               </Link>
             </li>
           );

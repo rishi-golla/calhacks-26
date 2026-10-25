@@ -33,6 +33,7 @@ from google.protobuf.json_format import MessageToDict
 from common.config import AGENTS, MAX_DELEGATION_DEPTH, MAX_FANOUT, SKILL_OWNER
 from common.envelope import DelegationMeta, ResultArtifact, TaskEnvelope
 from common.runtime_store import LeaseLost, RuntimeStore, projection_target, stable_id, task_id_for, wire_form
+from common.source_repository import SourceUnavailable
 
 log = logging.getLogger(__name__)
 TERMINAL_STATES = {TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_FAILED,
@@ -138,8 +139,10 @@ def failure_details(error: Exception, deadline_s: float) -> dict:
         detail = str(error.reason)
     elif isinstance(error, TimeoutError):
         detail = f"task deadline of {deadline_s}s exceeded"
-    elif isinstance(error, (ChildFailed, DelegationRefused)):
-        detail = str(error)  # code-authored: "child task failed", "max delegation depth", ...
+    elif isinstance(error, (ChildFailed, DelegationRefused, SourceUnavailable)):
+        # Code-authored: "child task failed", "max delegation depth", "case is absent from the configured source
+        # dataset", ... SourceUnavailable never interpolates source values, only fixed text and safe client errors.
+        detail = str(error)
     else:
         # Other messages may carry source data or credentials; name the failure's kind only.
         detail = f"{type(error).__name__} raised while executing the task"

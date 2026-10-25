@@ -23,7 +23,7 @@ import { AgentPanel } from "./agent-panel";
 import { CaseRail, type RailMetrics } from "./case-rail";
 import { Edges } from "./edges";
 import { STAGE_H, STAGE_W, setStretch } from "./layout";
-import { casePath, edgeTraffic, matchesTab, packetsFor, type KindTab } from "./model";
+import { casePath, edgeTraffic, matchesTab, packetsFor, shortCaseId, type KindTab } from "./model";
 import { PacketEngine } from "./packet-engine";
 import "./agents.css";
 
@@ -331,11 +331,6 @@ export default function AgentUniverse() {
     <div className={`au ${simulated ? "simulated" : ""} ${selected ? "au-has-case" : ""}`}>
       <section className="au-map" ref={map} aria-label="Agent universe map">
         <Backdrop variant="field" intensity={0.5} />
-        <div className="au-map-head">
-          <div className="au-map-title" title="Cards are handoffs (×N when batched); lines show the last 5 minutes of traffic">
-            <span className="fl-section">Agent universe</span>
-          </div>
-        </div>
 
         <div className="au-stage" style={stageStyle}>
           <Edges stats={traffic} focus={focus} path={path?.edges ?? null} hideHuman={!showHuman} stretch={fit.stretch} />
@@ -359,8 +354,8 @@ export default function AgentUniverse() {
 
         {selected && (
           <div className="au-casebar" role="status">
-            <span className="fl-mono" style={{ fontSize: 12 }}>
-              {selected.caseId}
+            <span className="fl-mono" style={{ fontSize: 12 }} title={selected.caseId}>
+              {shortCaseId(selected.caseId)}
             </span>
             <span className="route">
               {selected.agents.map((a, i) => (

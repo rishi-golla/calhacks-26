@@ -30,6 +30,22 @@ export function matchesTab(c: CaseView, tab: KindTab): boolean {
 
 export const scenarioLabel = (key: string) => (key && key !== "—" ? key.replaceAll("_", " ") : "unclassified");
 
+/** Case id without the "CASE-" prefix every id shares. */
+export const shortCaseId = (caseId: string) => caseId.replace(/^CASE-/, "");
+
+/**
+ * A case title without the trailing load id the case id already carries:
+ * "Cobalt Components Ltd payment on LD-1025-247C3792" → "Cobalt Components Ltd payment".
+ */
+export function caseTitle(c: Pick<CaseView, "title" | "loadId" | "caseId">): string {
+  const load = c.loadId;
+  if (!load || !c.caseId.includes(load)) return c.title;
+  const i = c.title.lastIndexOf(load);
+  if (i < 0) return c.title;
+  const short = (c.title.slice(0, i).replace(/\s+(on|for|·|-|—)\s*$/i, "") + c.title.slice(i + load.length)).trim();
+  return short || c.title;
+}
+
 /* ------------------------------ edge traffic ------------------------------ */
 
 const isReview = (row: Record<string, unknown>) => row.agent === "validator" && !row.parent_task_id;

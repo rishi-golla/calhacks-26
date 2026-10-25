@@ -18,12 +18,13 @@ import { apifyEvidence, APIFY_OUTCOME, isApifyCall } from "@/lib/apify";
 import { str } from "@/lib/data";
 import {
   clock,
-  dispatchReason,
   eventLabel,
   milestoneAt,
+  routingReason,
   nodeStatus,
   shortDur,
   timer,
+  toolLabel,
   toolsAt,
   type CaseTrace,
   type NodeStatus,
@@ -168,7 +169,8 @@ export const TraceGraph = memo(function TraceGraph(props: GraphProps) {
               <div className="ct-lane-name">
                 <span>{agentLabel(lane.id)}</span>
                 <span className="fl-micro">
-                  {lane.id === "intake" ? "routing" : lane.id === "human" ? `${count} approval${count === 1 ? "" : "s"}` : `${count} task${count === 1 ? "" : "s"}`} · {m.label}
+                  {count > 1 && lane.id !== "intake" ? `${count} ${lane.id === "human" ? "approvals" : "tasks"} · ` : ""}
+                  {m.label}
                 </span>
               </div>
             </div>
@@ -246,7 +248,7 @@ export const TraceGraph = memo(function TraceGraph(props: GraphProps) {
                   return (
                     <rect key={call.id} x={lane.lineX - 3.5} y={y - 3.5} width={7} height={7} className={`ct-tick tool ${s}`} style={{ fill: s === "failed" ? "#e40014" : color }}>
                       <title>
-                        {call.name} · {s}
+                        {toolLabel(call.name)} · {s}
                         {call.durationMs ? ` · ${shortDur(call.durationMs)}` : ""}
                       </title>
                     </rect>
@@ -455,23 +457,25 @@ function TaskBody({ node, trace, status, statuses, cursor, clockAt }: CardProps)
       </span>
       <span className="ct-tools">
         {hidden > 0 && <span className="ct-tool more">+{hidden} earlier</span>}
-        {shown.length ? (
+        {shown.length > 0 &&
           shown.map(({ call, status: s }) => (
-            <span key={call.id} className={`ct-tool ${s} ${isApifyCall(call) ? "apify" : ""}`} title={isApifyCall(call) ? "Called Apify" : undefined}>
-              {isApifyCall(call) && <ApifyMark size={10} />}
-              <span className="ct-tool-name">{call.name}</span>
+            <span key={call.id} className={`ct-tool ${s} ${isApifyCall(call) ? "apify" : ""}`}>
+              {isApifyCall(call) && <ApifyMark size={10} title="Called Apify" />}
+              <span className="ct-tool-name" title={call.name}>
+                {toolLabel(call.name)}
+              </span>
               <span className="ct-tool-glyph">{s === "running" ? "…" : s === "completed" ? "✓" : "✗"}</span>
               <span className="ct-tool-dur">{s === "running" ? shortDur(clockAt - call.startedAt) : call.durationMs ? shortDur(call.durationMs) : ""}</span>
             </span>
-          ))
-        ) : (
-          <span className="ct-tool more">{TERMINAL.includes(status) ? "no tool calls" : "planning…"}</span>
-        )}
+          ))}
+        {!shown.length && !TERMINAL.includes(status) && <span className="ct-tool more">planning…</span>}
       </span>
       <span className="ct-card-foot">
-        <span className="ct-docs" title={`${docs} document${docs === 1 ? "" : "s"} read`}>
-          <FileText size={11} /> {docs}
-        </span>
+        {docs > 0 && (
+          <span className="ct-docs" title={`${docs} document${docs === 1 ? "" : "s"} read`}>
+            <FileText size={11} /> {docs}
+          </span>
+        )}
         <span className="ct-outcome" style={{ color: statusTone(status) }} title={str(t.artifact?.summary, "")}>
           {outcome}
         </span>
@@ -488,12 +492,12 @@ function IntakeBody({ node, clockAt, status }: CardProps) {
   const d = node.dispatch!;
   const decision = str(d.status, "");
   const agent = str(d.agent, "");
-  const reason = dispatchReason(str(d.reason, "")) || "routed";
+  const reason = routingReason(str(d.reason, "")) || skillLabel(str(d.skill, ""));
   return (
     <>
       <span className="ct-card-top">
         <span className="ct-card-title">{INTAKE_TITLES[decision] ?? "Routed"}</span>
-        <StatusBadge node={node} status={status} clockAt={clockAt} />
+        {status !== "completed" && <StatusBadge node={node} status={status} clockAt={clockAt} />}
       </span>
       <span className="ct-card-line" style={{ color: agent ? agentColor(agent) : undefined }}>
         {agent ? `→ ${agentLabel(agent)}` : "Held for a person"}
@@ -517,7 +521,7 @@ function HumanBody({ node, status, clockAt }: CardProps) {
       </span>
       <span className="ct-card-line fl-num">{fmtMoney(Number(a.amount) || 0)} · {str(a.target_id || a.invoice_id, "")}</span>
       <span className="ct-card-line" style={{ color: statusTone(status) }}>
-        {status === "pending" ? "waiting for a human controller" : `${status} by ${str(a.approver_name, "human")}`}
+        {status === "pending" ? "awaiting approval" : `${status} by ${str(a.approver_name, "human")}`}
       </span>
     </>
   );

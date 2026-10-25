@@ -152,9 +152,28 @@ export function apifyHeadline(e: ApifyEvidence): string {
 
 const TOOL_NAME_IN_SUMMARY = new RegExp(`"tool_name":\\s*"(${Object.keys(APIFY_TOOLS).join("|")})"`);
 
-/** Cases with at least one Apify tool call, scanning raw audit rows cheaply (no JSON parse per row). */
-export function apifyCaseIds(audit: readonly Record<string, unknown>[]): Set<string> {
+const refsOf = (value: unknown): unknown[] => {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string" || !value.startsWith("[")) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Cases where an Apify run happened. Task rows are loaded in full and a task that called Apify keeps the
+ * `apify://runs/<id>` ref in its evidence, so this survives the dashboard's short audit window; recent
+ * `tool_call` audit rows add calls still in flight. Raw rows are scanned without parsing every summary.
+ */
+export function apifyCaseIds(audit: readonly Record<string, unknown>[], tasks: readonly Record<string, unknown>[] = []): Set<string> {
   const ids = new Set<string>();
+  for (const row of tasks) {
+    const caseId = text(row.case_id);
+    if (caseId && !ids.has(caseId) && refsOf(row.evidence_refs).some((r) => apifyRunId(r) !== null)) ids.add(caseId);
+  }
   for (const row of audit) {
     if (row.kind !== "tool_call") continue;
     const caseId = text(row.case_id);

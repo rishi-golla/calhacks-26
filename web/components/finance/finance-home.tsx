@@ -10,7 +10,6 @@
 import { Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useOps } from "@/components/data-provider";
-import { fmtSince } from "@/lib/view-epoch";
 import { AttentionQueue } from "./attention-queue";
 import { ForecastBars, LineChart, Sparkline } from "./charts";
 import { CountUp } from "./count-up";
@@ -67,10 +66,9 @@ function Delta({ change: c, good }: { change: { abs: number; pct: number | null 
 }
 
 function KpiTiles() {
-  const { finance, snapshot, source, now } = useOps();
-  // After "Start fresh" (with no imported history) the tiles total ledger activity since the epoch, not balances.
-  const since = finance.since !== null ? fmtSince(finance.since, now) : "";
-  const sinceDelta = since ? <span className="fh-delta flat">since {since}</span> : null;
+  const { finance, snapshot, source } = useOps();
+  // After "Start fresh" (with no imported history) the tiles total ledger activity since the epoch, named once in the top bar, so no 30d deltas.
+  const scoped = finance.since !== null;
   const hasLedger = snapshot.ledger_entry.length > 0;
   const series = useMemo(
     () => ({
@@ -92,7 +90,7 @@ function KpiTiles() {
       color: "var(--teal)",
       series: series.cash,
       good: "up",
-      delta: sinceDelta ?? <Delta change={cashChange} good="up" />,
+      delta: scoped ? null : <Delta change={cashChange} good="up" />,
     },
     {
       key: "ap",
@@ -102,10 +100,16 @@ function KpiTiles() {
       color: "var(--aqua)",
       series: series.ap,
       good: "none",
-      delta: sinceDelta ?? <Delta change={change(finance.trends.ap)} good="none" />,
+      delta: scoped ? null : <Delta change={change(finance.trends.ap)} good="none" />,
       foot: (
         <>
-          <b className="fl-num">{count(finance.outstandingInvoices.count)}</b> open<span className="fh-long"> invoices</span> · <b className="fl-num">{count(finance.heldInvoices.count)}</b> held
+          <b className="fl-num">{count(finance.outstandingInvoices.count)}</b> open
+          {finance.heldInvoices.count > 0 && (
+            <>
+              {" · "}
+              <b className="fl-num">{count(finance.heldInvoices.count)}</b> held
+            </>
+          )}
         </>
       ),
     },
@@ -117,9 +121,9 @@ function KpiTiles() {
       color: "var(--lilac)",
       series: series.ar,
       good: "none",
-      delta: sinceDelta ?? <Delta change={change(finance.trends.ar)} good="none" />,
+      delta: scoped ? null : <Delta change={change(finance.trends.ar)} good="none" />,
       // Days of sales outstanding needs a 30-day revenue base, which an epoch does not give.
-      foot: dso && !since ? (
+      foot: dso && !scoped ? (
         <>
           DSO <b className="fl-num">{Math.round(dso)}</b> days
         </>
@@ -133,11 +137,11 @@ function KpiTiles() {
       color: "var(--yellow)",
       series: series.revenue,
       good: "up",
-      delta: sinceDelta ?? <span className="fh-delta flat">30d {usdShort(finance.revenue30d)}</span>,
+      delta: scoped ? null : <span className="fh-delta flat">30d {usdShort(finance.revenue30d)}</span>,
       foot: (
-        <>
-          Margin <b className="fl-num">{pct1(finance.grossMarginPct)}</b> · {since ? `since ${since}` : "30 days"}
-        </>
+        <span title={scoped ? undefined : "30 days"}>
+          Margin <b className="fl-num">{pct1(finance.grossMarginPct)}</b>
+        </span>
       ),
     },
   ];
@@ -167,7 +171,7 @@ function KpiTiles() {
 /* ---------------------------- cash position ---------------------------- */
 
 function CashPanel() {
-  const { finance, snapshot, source, now } = useOps();
+  const { finance, snapshot, source } = useOps();
   const [range, setRange] = useState<7 | 30>(30);
   const [hover, setHover] = useState<number | null>(null);
   const points = useMemo(() => finance.trends.cash.slice(-(range + 1)), [finance.trends.cash, range]);
@@ -180,7 +184,6 @@ function CashPanel() {
     <section className="fl-panel fh-cash" aria-label="Cash position">
       <header className="fl-panel-head">
         <span className="fl-section">Cash</span>
-        {finance.since !== null && <span className="fl-micro">Net since {fmtSince(finance.since, now)}</span>}
         <span className="fh-head-meta">
           {hovered && (
             <span className="fh-cash-hover fl-num">
@@ -238,28 +241,23 @@ export function OpsStrip() {
   const dayStart = new Date(now).setHours(0, 0, 0, 0);
   const today = useMemo(() => caseList.filter((c) => c.openedAt >= dayStart).length, [caseList, dayStart]);
 
-  const stats: { label: string; value: number; format: (n: number) => string; sub?: string }[] = [
+  // The window behind each rate lives in its tooltip, not under the number.
+  const stats: { label: string; value: number; format: (n: number) => string; hint?: string }[] = [
     { label: "Cases today", value: today, format: count },
     { label: "Active cases", value: ops.casesActive, format: count },
-    { label: "Automation", value: ops.automationRate * 100, format: pct1, sub: "last 20 min" },
-    { label: "Throughput", value: ops.throughputPerHour, format: perHour, sub: "last hour" },
-    { label: "Time saved (est.)", value: ops.minutesSaved / 60, format: hours },
+    { label: "Automation", value: ops.automationRate * 100, format: pct1, hint: "Last 20 min" },
+    { label: "Throughput", value: ops.throughputPerHour, format: perHour, hint: "Last hour" },
+    { label: "Time saved", value: ops.minutesSaved / 60, format: hours, hint: "Estimated" },
   ];
   return (
     <section className="fl-panel fh-ops" aria-label="Operations">
-      <header className="fl-panel-head">
-        <span className="fl-section" style={{ "--accent": "var(--lilac)" } as CSSProperties}>
-          Operations
-        </span>
-      </header>
       <div className="fh-ops-grid">
         {stats.map((s) => (
-          <div key={s.label} className="fh-stat">
+          <div key={s.label} className="fh-stat" title={s.hint}>
             <div className="fh-stat-label">{s.label}</div>
             <div className="fh-stat-value fl-num">
               <CountUp value={s.value} format={s.format} good="none" />
             </div>
-            {s.sub && <div className="fh-stat-sub">{s.sub}</div>}
           </div>
         ))}
       </div>

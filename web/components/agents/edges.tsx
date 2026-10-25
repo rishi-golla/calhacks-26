@@ -2,7 +2,7 @@
 /**
  * Handoff edges: faint dashed hairlines that appear the first time an edge is
  * used and thicken with the log of traffic over the last five minutes. The
- * focused agent's edges brighten and show their counts; a selected case draws
+ * focused agent's edges brighten and show their non-zero counts; a selected case draws
  * its own path solid and dims the rest.
  */
 import { memo, type CSSProperties } from "react";
@@ -40,7 +40,7 @@ function EdgesImpl({ stats, focus, path, hideHuman, stretch }: Props) {
       {!path &&
         focus &&
         visible
-          .filter((s) => s.from === focus || s.to === focus)
+          .filter((s) => (s.from === focus || s.to === focus) && s.recent > 0)
           .map((s) => {
             const c = edgeCurve(s.from, s.to);
             return (

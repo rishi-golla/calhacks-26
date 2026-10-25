@@ -16,6 +16,7 @@ from common.learning import reconstruct_instructions, task_memory_scope
 from common.providers import ProviderConfigurationError, ProviderError, configuration, mode
 from common.runtime import TaskParked, task_deadline
 from common.runtime_store import LeaseLost
+from common.source_repository import SourceUnavailable
 from common.spacetime_client import SpacetimeClient
 from common.tool_model import model_turn
 
@@ -341,9 +342,13 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
                             if getattr(exc, "reason", ""):
                                 # A refused reducer's or a delegated child's bounded, service-authored reason.
                                 result["refusal"] = exc.reason
-                            elif isinstance(exc, ProviderError):  # its message names no data, key or prompt
+                            elif isinstance(exc, (ProviderError, SourceUnavailable)):
+                                # Both carry code-authored text that names no data, key or prompt. Without it a
+                                # source failure read only "SourceUnavailable" in the task, audit and logs (Oct 25).
                                 result["detail"] = str(exc)[:200]
                             status = "failed"
+                            log.warning("%s task %s tool %s failed: %s", agent.name, task_id, call["name"],
+                                        skill_failure(result))
                 return {"result": result, "artifact": canonical_artifact, "status": status,
                         "duration_ms": int((time.monotonic() - started) * 1000)}
 

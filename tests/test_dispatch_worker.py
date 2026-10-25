@@ -22,6 +22,7 @@ from common import review_worker
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.review_worker import ReviewWorker, backoff_seconds, nack_reason, poll_seconds
 from common.runtime_store import RuntimeStore, stable_id, task_id_for
+from common.source_repository import SourceUnavailable
 from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError
 
 SKILL = "process_carrier_invoice"
@@ -282,8 +283,9 @@ async def test_missing_source_record_nacks_without_sending_and_retries_next_poll
     assert await worker.run_once() == 0
     assert agent.sent == [] and module.calls("record_dispatch") == []
     assert module.outbox["first_hop:E2"]["status"] == "pending"
-    assert module.outbox["first_hop:E2"]["last_error"] == "SourceUnavailable"
-    assert module.calls("ack_outbox") == [{"id": "first_hop:E2", "success": False, "error": "SourceUnavailable",
+    reason = "SourceUnavailable (first hop case has no source record yet)"
+    assert module.outbox["first_hop:E2"]["last_error"] == reason
+    assert module.calls("ack_outbox") == [{"id": "first_hop:E2", "success": False, "error": reason,
                                            "write_id": stable_id("review-nack", "first_hop:E2", "1")}]
     assert module.dispatch["E2"]["status"] == "queued"
 
@@ -418,6 +420,46 @@ async def test_rejected_accepted_write_nacks_as_a_deterministic_rejection(module
 def test_nack_reason_names_the_type_and_marks_reducer_rejections(server_status, reason):
     assert nack_reason(SpacetimeHTTPError(server_status, mutation=True)) == reason
     assert nack_reason(KeyError("event_id")) == "KeyError"
+
+
+def test_nack_reason_names_why_the_source_is_unavailable_and_stays_deterministic():
+    """Live Oct 25: followups failed for 15 minutes as a bare "SourceUnavailable", which hid that the worker
+    had no task history for them. The code-authored reason is kept; the type is still the first word."""
+    reason = nack_reason(SourceUnavailable("terminal source task history is unavailable"))
+    assert reason == "SourceUnavailable (terminal source task history is unavailable)"
+    assert review_worker.exhausted({"kind": "review_followup", "attempts": 10, "last_error": reason}, 10)
+    assert nack_reason(SourceUnavailable()) == "SourceUnavailable"
+
+
+async def test_two_workers_sharing_the_router_identity_never_both_deliver_a_row(module, stores, agent):
+    """Both workers authenticate as the router, and the module keys receipts by identity and write_id. With a
+    claim write_id of (row, attempt) alone, the second claim replayed the first's receipt and reported success,
+    so both workers delivered the row to their own fleets (live Oct 25: one task ran on two fleets)."""
+    module.first_hop("E20")
+    module.sources.add("case:CASE-E20")
+    row = dict(module.outbox["first_hop:E20"])   # what both workers read in the same poll
+    second = ReviewWorker(db=module.client(), store=stores[0], submit=agent, worker_id="other")
+    overlap = []
+
+    async def submit_while_the_other_worker_polls(name, env, meta):
+        # The first worker holds the lease and is mid-delivery when the second worker claims the same row.
+        overlap.append(await second.claim_and_deliver(row))
+        return await agent(name, env, meta)
+
+    first = ReviewWorker(db=module.client(), store=stores[0], submit=submit_while_the_other_worker_polls,
+                         worker_id="mac")
+    assert await first.claim_and_deliver(row) is True
+    assert overlap == [False]
+    assert [entry[1] for entry in module.log if entry[0] == "send"] == ["carrier_ap"]
+    claims = module.calls("claim_outbox")
+    assert len(claims) == 2 and claims[0]["write_id"] != claims[1]["write_id"]
+    assert module.outbox["first_hop:E20"]["status"] == "done" and module.outbox["first_hop:E20"]["attempts"] == 1
+
+
+def test_each_worker_gets_its_own_claim_identity(module, stores, agent):
+    one = ReviewWorker(db=module.client(), store=stores[0], submit=agent)
+    two = ReviewWorker(db=module.client(), store=stores[0], submit=agent)
+    assert one.worker_id and two.worker_id and one.worker_id != two.worker_id
 
 
 @pytest.mark.parametrize("mismatch", ["task_id", "context_id"])

@@ -6,7 +6,7 @@
  * waiting on its delegated child, an agent-placed hold). Each row links to its
  * case. Approvals can be decided inline on the live database (one-time code
  * required, as in the ops console); elsewhere the buttons stay visible but
- * disabled, with one note on the group heading.
+ * disabled, with the reason in their tooltip.
  */
 import Link from "next/link";
 import { useMemo, useState, type CSSProperties, type FormEvent } from "react";
@@ -118,19 +118,17 @@ export function AttentionQueue({ id }: { id?: string }) {
           </div>
         ) : (
           <>
-            <div className="fh-att-section">
-              <span>Needs you</span>
-              <b className="fl-num">{mine.length}</b>
-            </div>
+            {/* The header chip already counts what needs you; a kind label only earns its place when kinds mix. */}
             {shown.map((g) => {
               const open = active !== "all" || expanded.has(g.kind);
               const items = open ? g.items : g.items.slice(0, PER_GROUP);
               return (
                 <div className="fh-att-group" key={g.kind}>
-                  <div className="fh-att-group-head">
-                    <span>{g.tag}</span>
-                    {g.kind === "approval_pending" && source !== "live" && <span className="fh-att-why">{LIVE_ONLY}</span>}
-                  </div>
+                  {groups.length > 1 && (
+                    <div className="fh-att-group-head">
+                      <span>{g.tag}</span>
+                    </div>
+                  )}
                   <ul>
                     {items.map((item) => (
                       <AttentionRow key={item.id} item={item} settled={settled} />
@@ -149,8 +147,7 @@ export function AttentionQueue({ id }: { id?: string }) {
         {handling.length > 0 && (
           <div className="fh-att-group fh-att-agents">
             <div className="fh-att-section agents">
-              <span>Agents handling</span>
-              <span className="fh-att-why">No action needed</span>
+              <span title="No action needed">Agents handling</span>
               <b className="fl-num">{handling.length}</b>
             </div>
             <ul>
@@ -185,10 +182,11 @@ function AttentionRow({ item, settled }: { item: AttentionItem; settled: boolean
       <Mascot id={item.agent || "human"} size={28} mood={mood} title={nick(item.agent)} />
       <span className="fh-att-main">
         <span className="fh-att-title">{titleFor(item)}</span>
-        <span className="fh-att-sub">
-          {item.caseId && <span className="fl-mono">{item.caseId}</span>}
-          {item.detail && <span>{item.detail}</span>}
-        </span>
+        {item.detail && (
+          <span className="fh-att-sub">
+            <span>{item.detail}</span>
+          </span>
+        )}
       </span>
       <span className="fh-att-right">
         {item.amount > 0 && <span className="fl-num fh-att-amt">{usd(item.amount)}</span>}
@@ -201,7 +199,7 @@ function AttentionRow({ item, settled }: { item: AttentionItem; settled: boolean
   return (
     <li className={`fh-att-row sev-${item.severity} ${fresh ? "fh-fresh" : ""}`}>
       {item.caseId ? (
-        <Link href={`/cases/${encodeURIComponent(item.caseId)}`} className="fh-att-link" aria-label={`${meta?.tag ?? ""}: ${titleFor(item)}, ${item.caseId}`}>
+        <Link href={`/cases/${encodeURIComponent(item.caseId)}`} className="fh-att-link" title={item.caseId} aria-label={`${meta?.tag ?? ""}: ${titleFor(item)}, ${item.caseId}`}>
           {body}
         </Link>
       ) : (
@@ -222,10 +220,11 @@ function HandlingRow({ item, settled }: { item: AttentionItem; settled: boolean 
       <Mascot id={item.agent || "human"} size={24} mood={mood} title={nick(item.agent)} />
       <span className="fh-att-main">
         <span className="fh-att-title">{item.title}</span>
-        <span className="fh-att-sub">
-          {item.caseId && <span className="fl-mono">{item.caseId}</span>}
-          {item.detail && <span>{item.detail}</span>}
-        </span>
+        {item.detail && (
+          <span className="fh-att-sub">
+            <span>{item.detail}</span>
+          </span>
+        )}
       </span>
       <span className="fh-att-right">
         {item.amount > 0 && <span className="fl-num fh-att-amt">{usd(item.amount)}</span>}
@@ -238,7 +237,7 @@ function HandlingRow({ item, settled }: { item: AttentionItem; settled: boolean 
   return (
     <li className={`fh-att-row quiet ${fresh ? "fh-fresh" : ""}`}>
       {item.caseId ? (
-        <Link href={`/cases/${encodeURIComponent(item.caseId)}`} className="fh-att-link" aria-label={`Agents handling: ${item.title}, ${item.detail}, ${item.caseId}`}>
+        <Link href={`/cases/${encodeURIComponent(item.caseId)}`} className="fh-att-link" title={item.caseId} aria-label={`Agents handling: ${item.title}, ${item.detail}, ${item.caseId}`}>
           {body}
         </Link>
       ) : (

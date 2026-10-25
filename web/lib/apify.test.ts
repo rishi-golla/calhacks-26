@@ -97,3 +97,12 @@ test("cases with Apify calls are found without parsing every audit row", () => {
   ]);
   assert.deepEqual([...ids].sort(), ["CASE-A", "CASE-B"]);
 });
+
+test("cases keep their Apify mark after the audit window drops the call", () => {
+  const tasks = [
+    { case_id: "CASE-OLD", evidence_refs: ["doc:RC-1", "apify://runs/S6tAG2sKueTPFgWk1"] },
+    { case_id: "CASE-JSON", evidence_refs: '["apify://runs/RUN12345"]' },
+    { case_id: "CASE-NONE", evidence_refs: ["doc:POD-1"] },
+  ];
+  assert.deepEqual([...apifyCaseIds([], tasks)].sort(), ["CASE-JSON", "CASE-OLD"]);
+});

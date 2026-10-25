@@ -8,6 +8,7 @@ import { memo, useEffect, useRef, type CSSProperties } from "react";
 import { Mascot, type Mood } from "@/components/mascot";
 import { AGENT_META, NODE_META, isAgentId, type NodeId } from "@/lib/agents";
 import { MASCOT_SIZE, NODE_WIDTH, nodePos } from "./layout";
+import { shortCaseId } from "./model";
 import type { PacketEngine } from "./packet-engine";
 
 export type NodeTone = "working" | "idle" | "sleeping" | "alert";
@@ -39,7 +40,7 @@ type Props = NodeView & {
 
 export const PRIORITY_COLOR: Record<string, string> = { P0: "#e40014", P1: "#ff631d", P2: "#d1d11a", P3: "#828b98" };
 
-export const shortCase = (caseId: string) => caseId.replace(/^CASE-/, "");
+export const shortCase = shortCaseId;
 
 /** Stable per-agent phase into the resting breath so the map doesn't breathe in unison. */
 const breathOffset = (id: string) => {
@@ -64,6 +65,8 @@ function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, st
   const parts = counts.split("|");
   const cells: [string, string][] = [];
   for (let i = 0; i < parts.length; i += 2) cells.push([parts[i], parts[i + 1]]);
+  // Zero counters are the resting state; only show the ones that say something.
+  const shown = cells.filter(([v]) => v !== "0");
   const chipList = chips ? chips.split("|").map((c) => c.split("~") as [string, string]) : [];
   const style = {
     left: pos.x,
@@ -79,7 +82,7 @@ function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, st
       <button
         type="button"
         className="au-hit"
-        aria-label={`${meta.name}: ${cells.map(([v, k]) => `${v} ${k}`).join(", ")}`}
+        aria-label={[meta.name, ...shown.map(([v, k]) => `${v} ${k}`)].join(", ")}
         onPointerEnter={() => onHover(id)}
         onPointerLeave={() => onHover(null)}
         onFocus={() => onHover(id)}
@@ -97,13 +100,15 @@ function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, st
           {order > 0 && <span className="au-order">{order}</span>}
         </span>
         <span className="au-name">{meta.name}</span>
-        <span className="au-meta">
-          {cells.map(([v, k]) => (
-            <span key={k}>
-              <b>{v}</b> {k}
-            </span>
-          ))}
-        </span>
+        {shown.length > 0 && (
+          <span className="au-meta">
+            {shown.map(([v, k]) => (
+              <span key={k}>
+                <b>{v}</b> {k}
+              </span>
+            ))}
+          </span>
+        )}
       </button>
       <div className="au-chips">
         {chipList.map(([caseId, priority]) => (

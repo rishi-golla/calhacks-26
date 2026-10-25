@@ -86,7 +86,6 @@ export function StartFresh() {
       >
         <Eraser size={14} /> Start fresh
       </button>
-      {!ready && reason && <span className="fl-micro">{reason}</span>}
       {open && ready && (
         <div className="fl-popover" role="dialog" aria-label="Start fresh">
           <p style={{ margin: "0 0 12px", fontSize: 13 }}>Hide everything before now? Nothing is deleted.</p>
@@ -110,8 +109,8 @@ export function StartFresh() {
 }
 
 /**
- * "Showing activity since 05:58 · Show earlier activity", or with this viewer's
- * opt-out "Showing all activity · Hide earlier". Renders nothing without an
+ * "Since 05:58 · Show earlier", or with this viewer's opt-out
+ * "All activity · Hide earlier". Renders nothing without an
  * epoch. `toggle` shows the viewer switch; `undo` adds the shared Undo.
  */
 export function EpochNote({ toggle = true, undo, busy = false, style }: { toggle?: boolean; undo?: () => void; busy?: boolean; style?: CSSProperties }) {
@@ -121,12 +120,12 @@ export function EpochNote({ toggle = true, undo, busy = false, style }: { toggle
   const at = fmtSince(epoch.since, now);
   return (
     <span className="fl-micro fl-epoch" style={style} role="status">
-      {showEarlier ? "Showing all activity" : `Showing activity since ${at}`}
+      {showEarlier ? "All activity" : `Since ${at}`}
       {toggle && (
         <>
           {" · "}
           <button type="button" className="fl-textbtn" onClick={() => setShowEarlier(!showEarlier)} title={showEarlier ? `Hide activity before ${at} for you` : "Show activity before the epoch, for you only"}>
-            {showEarlier ? "Hide earlier" : "Show earlier activity"}
+            {showEarlier ? "Hide earlier" : "Show earlier"}
           </button>
         </>
       )}

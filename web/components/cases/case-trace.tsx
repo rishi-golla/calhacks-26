@@ -369,37 +369,34 @@ function SideEffects({ trace, cursor, onSelect }: { trace: Trace; cursor: number
     .filter((s) => s.kind !== "forecast")
     .map((s) => ({ s, status: sideEffectAt(s, cursor) }))
     .filter((x) => x.status);
+  if (!items.length) return null;
   return (
     <div className="ct-effects" aria-label="Ledger">
       <span className="fl-section ct-effects-label" style={{ "--accent": "var(--yellow)" } as CSSProperties}>
         Ledger
       </span>
-      {items.length === 0 ? (
-        <span className="fl-micro">{cursor === Infinity ? "None" : "None yet"}</span>
-      ) : (
-        <div className="ct-effects-list">
-          {items.map(({ s, status }) => {
-            const target = s.kind === "approval" ? `human:${String(s.row.id)}` : trace.nodeById.has(s.taskId) ? s.taskId : "";
-            const body = (
-              <>
-                <span className="fl-micro">{s.kind}</span>
-                <span className="ct-effect-label">{s.label}</span>
-                <span className="fl-num">{fmtMoney(s.amount)}</span>
-                <span className={`fl-chip outline ${EFFECT_TONE[status!] ?? ""} ct-mini-chip`}>{status!.replaceAll("_", " ")}</span>
-              </>
-            );
-            return target ? (
-              <button key={s.id} className="ct-effect fl-reveal" onClick={() => onSelect(target)} title={`${s.label} · ${clock(s.at)}`}>
-                {body}
-              </button>
-            ) : (
-              <span key={s.id} className="ct-effect fl-reveal" title={`${s.label} · ${clock(s.at)}`}>
-                {body}
-              </span>
-            );
-          })}
-        </div>
-      )}
+      <div className="ct-effects-list">
+        {items.map(({ s, status }) => {
+          const target = s.kind === "approval" ? `human:${String(s.row.id)}` : trace.nodeById.has(s.taskId) ? s.taskId : "";
+          const body = (
+            <>
+              {s.kind === "journal" && <span className="fl-micro">journal</span>}
+              <span className="ct-effect-label">{s.label}</span>
+              <span className="fl-num">{fmtMoney(s.amount)}</span>
+              <span className={`fl-chip outline ${EFFECT_TONE[status!] ?? ""} ct-mini-chip`}>{status!.replaceAll("_", " ")}</span>
+            </>
+          );
+          return target ? (
+            <button key={s.id} className="ct-effect fl-reveal" onClick={() => onSelect(target)} title={`${s.label} · ${clock(s.at)}`}>
+              {body}
+            </button>
+          ) : (
+            <span key={s.id} className="ct-effect fl-reveal" title={`${s.label} · ${clock(s.at)}`}>
+              {body}
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -8,7 +8,6 @@
  * enabled; on the browser simulation they start a simulated case instead, so
  * the flow can be rehearsed without the gateway.
  */
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Check, ChevronDown, LoaderCircle, Phone, Play } from "lucide-react";
@@ -189,7 +188,7 @@ export default function DemoConsole() {
         </section>
       </div>
       <p className="fl-micro dm-foot">
-        Outreach only reaches the team allowlist. <Link href="/ops">Admin console</Link>
+        Outreach only reaches the team allowlist.
       </p>
     </div>
   );

@@ -692,7 +692,7 @@ export function layoutTrace(trace: CaseTrace, tail: number): TraceLayout {
 
   const anchorY = new Map<string, number>();
   const nodeY = new Map<string, number>();
-  const points: { t: number; y: number }[] = [];
+  const points: { t: number; y: number; milestone?: boolean }[] = [];
   const gaps: Gap[] = [];
   const laneFree = new Map<string, number>();
   let y = LAYOUT.top;
@@ -716,7 +716,7 @@ export function layoutTrace(trace: CaseTrace, tail: number): TraceLayout {
       nodeY.set(a.node.id, y);
     }
     anchorY.set(a.key, y);
-    points.push({ t: a.t, y });
+    points.push({ t: a.t, y, milestone: a.milestone });
   }
 
   const yOf = (t: number) => {
@@ -732,6 +732,8 @@ export function layoutTrace(trace: CaseTrace, tail: number): TraceLayout {
     // Last point at or before t (the lowest one when several share a timestamp).
     const p = points[lo];
     const next = points[lo + 1];
+    // A milestone's row is closer than its time: glide to it so the replay head reaches the row as the tick appears.
+    if (next?.milestone) return p.y + ((next.y - p.y) * (t - p.t)) / (next.t - p.t);
     const dy = stretch(t - p.t);
     return next ? Math.min(p.y + dy, next.y) : p.y + dy;
   };

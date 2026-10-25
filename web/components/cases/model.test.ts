@@ -251,6 +251,20 @@ test("layoutTrace: a long wait before a milestone adds at most MILESTONE_STEP an
   assert.equal(layout.gaps.length, 0);
 });
 
+test("layoutTrace: the replay head glides to a milestone row instead of parking on it early", () => {
+  const s = snap({
+    case: [{ case_id: "C1", opened_at: at(0) }],
+    dispatch: [notRouted("E1", "load.tendered", 0), notRouted("E2", "load.delivered", 600)],
+  });
+  const layout = layoutTrace(buildCaseTrace(s, "C1"), 0);
+  const y1 = layout.anchorY.get("milestone:E1")!;
+  const y2 = layout.anchorY.get("milestone:E2")!;
+  const mid = layout.yOf(ms(300));
+  assert.ok(mid > y1 && mid < y2, `${y1} < ${mid} < ${y2}`);
+  assert.ok(Math.abs(mid - (y1 + y2) / 2) < 0.01, `${mid}`);
+  assert.equal(layout.yOf(ms(600)), y2);
+});
+
 test("layoutTrace: consecutive milestones are at least MILESTONE_STEP apart, even at the same instant", () => {
   const s = snap({
     case: [{ case_id: "C1", opened_at: at(0) }],

@@ -62,6 +62,9 @@ class FakeCloud:
             have = {row["agent"] for row in self.tables["agent_config"]}
             self.tables["agent_config"] += [{"agent": name, "model": "auto", "enabled": True}
                                             for name in AGENTS if name not in have]
+        elif command[-2] == "settle_cases":
+            self.tables["case"] = [{**row, "status": "resolved"} if row["status"] == "open" else row
+                                   for row in self.tables["case"]]
         elif command[-2] == "set_period":
             self.tables["accounting_period"] = [row for row in self.tables["accounting_period"]
                                                 if row["period"] != payload["period"]]
@@ -536,5 +539,20 @@ def test_handoff_without_stored_identities_names_the_missing_actors(monkeypatch,
     try:
         with pytest.raises(RuntimeError, match="missing: .*ingest.*router"):
             admin.write_env_files()
+    finally:
+        admin.client.close()
+
+
+def test_settle_cases_is_a_cli_only_admin_call_with_a_fresh_write_id(monkeypatch, tmp_path):
+    assert "settle_cases" in cloud.ADMIN_REDUCERS
+    fake = FakeCloud(monkeypatch, tmp_path)
+    fake.tables["case"] = [{"case_id": "CASE-X", "status": "open"}, {"case_id": "CASE-H", "status": "human_owned"}]
+    admin = fake.adapter()
+    try:
+        assert cloud.settle_cases(admin) == ({"human_owned": 1, "open": 1}, {"human_owned": 1, "resolved": 1})
+        cloud.settle_cases(admin)
+        first, second = fake.reducer_payloads("settle_cases")
+        assert set(first) == {"write_id"} and first["write_id"] != second["write_id"]
+        assert not [request for request in fake.requests if "/call/" in request.url.path]
     finally:
         admin.client.close()

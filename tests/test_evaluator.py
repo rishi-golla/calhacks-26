@@ -425,3 +425,41 @@ async def test_cli_refuses_disabled_spacetime_and_missing_token(tmp_path, monkey
     for bad in (["--loop", "0"], ["--business-now", "yesterday"]):
         with pytest.raises(SystemExit):
             evaluator.parse_args(bad)
+
+
+def epoch(since: str) -> list[dict]:
+    return [{"id": "current", "since": since, "set_by": "human:operator", "set_at": since}]
+
+
+def test_view_epoch_scores_only_loads_opened_since_the_boundary():
+    answers, rows = fixture()
+    full = evaluator.scoreboard(evaluator.score(answers, rows, CLOCKS), rows)
+    # Every fixture case opens at 12:00; L3's two cases open later, and L1 has one case before and one after.
+    late = {**rows, "case": [{**c, "opened_at": "2026-10-24T12:10:00.000Z"} if c["case_id"].startswith("CASE-L3")
+                             else c for c in rows["case"]] + [case("CASE-L1-AR", "L1", opened="2026-10-24T12:10:00.000Z")]}
+    loads = evaluator.score(answers, {**late, "view_epoch": epoch("2026-10-24T12:05:00.000Z")}, CLOCKS)
+    assert [x.load_id for x in loads] == ["L3"]
+    # A load is kept only when its earliest case is in view, and the boundary itself is inclusive.
+    assert len(evaluator.score(answers, {**rows, "view_epoch": epoch("2026-10-24T12:00:00.000Z")}, CLOCKS)) \
+        == sum(bool(evaluator._cases_by_load(answers, rows["case"]).get(a["load_id"])) for a in answers)
+    metrics = evaluator.scoreboard(loads, {**late, "view_epoch": epoch("2026-10-24T12:05:00.000Z")})
+    assert set(metrics) == set(full) and metrics["loads_total"] == 1 and metrics["loads_unseen"] == 0
+    # No row means no boundary: the same figures as before.
+    assert evaluator.scoreboard(evaluator.score(answers, {**rows, "view_epoch": []}, CLOCKS), rows) == full
+
+
+def test_view_epoch_counts_only_calls_started_since_the_boundary():
+    rows = {"call": [{"status": "completed", "started_at": "2026-10-24T11:00:00.000Z"},
+                     {"status": "completed", "started_at": "2026-10-24T13:00:00.000Z"}]}
+    assert evaluator.scoreboard([], rows)["calls_placed"] == 2
+    assert evaluator.scoreboard([], {**rows, "view_epoch": epoch("2026-10-24T12:00:00.000Z")})["calls_placed"] == 1
+
+
+async def test_fetch_rows_treats_a_missing_view_epoch_table_as_no_boundary():
+    class Client:
+        async def query_rows(self, sql):
+            if '"view_epoch"' in sql:
+                raise RuntimeError("no such table")
+            return []
+    rows = await evaluator.fetch_rows(Client())
+    assert rows["view_epoch"] == [] and evaluator.view_since(rows) is None

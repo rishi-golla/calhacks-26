@@ -485,6 +485,14 @@ export const Task = __t.object("Task", {
 });
 export type Task = __Infer<typeof Task>;
 
+export const ViewEpoch = __t.object("ViewEpoch", {
+  id: __t.string(),
+  since: __t.string(),
+  setBy: __t.string(),
+  setAt: __t.string(),
+});
+export type ViewEpoch = __Infer<typeof ViewEpoch>;
+
 export const WriteReceipt = __t.object("WriteReceipt", {
   id: __t.string(),
   payloadHash: __t.string(),

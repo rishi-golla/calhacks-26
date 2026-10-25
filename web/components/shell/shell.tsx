@@ -6,6 +6,7 @@ import { Activity, Bell, Database, FlaskConical, Home, ListTree, Network, Refres
 import { useOps, type DataMode } from "../data-provider";
 import { fmtAgo } from "@/lib/ops";
 import { Mascot } from "../mascot";
+import BurstControl from "./burst-control";
 import Intro from "./intro";
 
 const NAV = [
@@ -68,6 +69,7 @@ export default function Shell({ children }: { children: ReactNode }) {
               <Bell size={14} />
               {ops.approvalsPending > 0 && <span className="fl-num" style={{ color: "var(--orange)" }}>{ops.approvalsPending}</span>}
             </Link>
+            <BurstControl />
             <SourcePill />
           </div>
         </header>

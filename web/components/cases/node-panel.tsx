@@ -6,7 +6,9 @@
  */
 import type { CSSProperties, ReactNode } from "react";
 import { ArrowDownRight, ArrowUpLeft, Phone, X } from "lucide-react";
+import { EvidenceChip } from "@/components/evidence";
 import { Mascot } from "@/components/mascot";
+import { CheckList, Workings } from "@/components/workings";
 import { agentColor, agentLabel, skillLabel } from "@/lib/agents";
 import { json, num, str, timestamp, type Row } from "@/lib/data";
 import { fmtMoney, type TimelineEvent } from "@/lib/ops";
@@ -182,7 +184,7 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
             {docs.map((d) => (
               <li key={d.id}>
                 <div className="ct-line">
-                  <span className="fl-mono ct-doc-ref">{d.docRef}</span>
+                  {d.docRef ? <EvidenceChip evidenceRef={d.docRef} className="ct-doc-ref" /> : <span className="fl-mono fl-mute">no reference</span>}
                   <span className="fl-micro">
                     p{d.page || 1}
                     {d.span ? ` · ${d.span}` : ""}
@@ -229,6 +231,7 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
               ]}
             />
             {str(t.artifact?.summary, "") && <p className="ct-quote">{str(t.artifact?.summary)}</p>}
+            {artifact && <Workings items={(artifact.findings as Row | undefined)?.workings} />}
             {artifact && <Json value={artifact.findings ?? artifact.checks} label="findings" />}
             {t.policyIds.length > 0 && (
               <div className="ct-chips">
@@ -242,9 +245,7 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
             {t.evidenceRefs.length > 0 && (
               <div className="ct-evidence">
                 {t.evidenceRefs.map((r) => (
-                  <span key={r} className="fl-mono">
-                    {r}
-                  </span>
+                  <EvidenceChip key={r} evidenceRef={r} />
                 ))}
               </div>
             )}
@@ -350,7 +351,6 @@ function CallRecord({ call, cursor }: { call: Row; cursor: number }) {
 }
 
 function ReviewRecord({ review, trace, onSelect, own }: { review: Row; trace: CaseTrace; onSelect: (id: string) => void; own: boolean }) {
-  const checks = json<Row[]>(review.checks_json, []);
   const friction = json<Row[]>(review.friction_json, []);
   const verdict = str(review.verdict);
   return (
@@ -371,15 +371,7 @@ function ReviewRecord({ review, trace, onSelect, own }: { review: Row; trace: Ca
           <span className="fl-mute">by Settlement Quality Review</span>
         )}
       </div>
-      {Array.isArray(checks) && checks.length > 0 && (
-        <ul className="ct-checks">
-          {checks.map((c, i) => (
-            <li key={i} className={c.ok ? "ok" : "bad"}>
-              {c.ok ? "✓" : "✗"} <span className="fl-mono">{str(c.name)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+      <CheckList checks={review.checks_json} />
       {Array.isArray(friction) && friction.length > 0 && <Json value={friction} label="friction" />}
     </div>
   );

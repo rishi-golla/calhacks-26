@@ -1073,9 +1073,9 @@ export class DemoSim {
     const base = { agent: t.agent, skill: t.skill, outcome, case_id: ctx.caseId, load_id: ctx.loadId };
     switch (t.agent) {
       case "carrier_ap":
-        return { ...base, summary: outcome === "payment_proposed" ? `Invoice ${ctx.invoiceId} matches rate con; ${money(ctx.amount)} proposed for payment` : `Invoice ${ctx.invoiceId} is ${money(ctx.amount - ctx.contract)} over contract; routed for investigation`, findings: { invoice_amount: ctx.amount, contract_amount: ctx.contract, delta: ctx.amount - ctx.contract }, policy_ids: ctx.amount > ctx.contract * 1.02 ? ["P-001"] : [] };
+        return { ...base, summary: outcome === "payment_proposed" ? `Invoice ${ctx.invoiceId} matches rate con; ${money(ctx.amount)} proposed for payment` : `Invoice ${ctx.invoiceId} is ${money(ctx.amount - ctx.contract)} over contract; routed for investigation`, findings: { invoice_amount: ctx.amount, contract_amount: ctx.contract, delta: ctx.amount - ctx.contract, workings: this.workingsFor(ctx, t) }, policy_ids: ctx.amount > ctx.contract * 1.02 ? ["P-001"] : [] };
       case "risk":
-        return { ...base, summary: ctx.scenario.key === "bank_change" ? "Bank change arrived by email the day before payment; flagged as high-risk (P-004)" : `GPS shows 47 min on site vs 2 h claimed; ${money(ctx.amount - ctx.contract)} unsupported`, findings: { claimed_minutes: 120, supported_minutes: 47, unsupported_usd: ctx.amount - ctx.contract }, policy_ids: ctx.scenario.key === "bank_change" ? ["P-004", "P-010"] : ["P-001"] };
+        return { ...base, summary: ctx.scenario.key === "bank_change" ? "Bank change arrived by email the day before payment; flagged as high-risk (P-004)" : `GPS shows 47 min on site vs 2 h claimed; ${money(ctx.amount - ctx.contract)} unsupported`, findings: { claimed_minutes: 120, supported_minutes: 47, unsupported_usd: ctx.amount - ctx.contract, workings: this.workingsFor(ctx, t) }, policy_ids: ctx.scenario.key === "bank_change" ? ["P-004", "P-010"] : ["P-001"] };
       case "documents":
         return { ...base, summary: ctx.scenario.key === "missing_pod" ? "Packet incomplete: signed POD missing; requested from carrier dispatcher" : "Packet checked: rate con and invoice present, receipt requested", findings: { packet: { ratecon: true, invoice: true, pod: ctx.scenario.key !== "missing_pod", receipt: false } } };
       case "verification":
@@ -1087,12 +1087,58 @@ export class DemoSim {
       case "voice_desk":
         return { ...base, summary: "Call completed with AI disclosure; dispatcher promised the receipt by end of day", findings: { reached: true, promised_document: "receipt" }, policy_ids: ["P-008", "P-011"] };
       case "validator":
-        return { ...base, summary: outcome === "pass" ? "All deterministic checks passed; no friction recorded" : "Issue: AP re-requested the rate con twice; memory note written for Carrier Settlement", checks: [{ name: "debits_equal_credits", ok: true }, { name: "hold_matches_delta", ok: outcome === "pass" }], friction: outcome === "pass" ? [] : [{ kind: "retry", detail: "rate con requested twice", cost_s: 42 }] };
+        return { ...base, summary: outcome === "pass" ? "All deterministic checks passed; no friction recorded" : "Issue: AP re-requested the rate con twice; memory note written for Carrier Settlement", checks: this.validatorChecks(ctx, outcome), friction: outcome === "pass" ? [] : [{ kind: "retry", detail: "rate con requested twice", cost_s: 42 }] };
       case "shipper_ar":
         return { ...base, summary: ctx.scenario.key === "shipper_short_pay" ? `Deposit short by ${money(Math.round(ctx.amount * 0.18))}; dispute opened with ${ctx.shipperName}` : ctx.scenario.key === "overdue_collections" ? `${ctx.invoiceId} is ${ctx.daysOverdue} days overdue; dunning drafted and call queued` : `Deposit matched to ${ctx.invoiceId}; journal requested`, findings: { invoice_amount: ctx.amount, matched_amount: ctx.scenario.key === "shipper_short_pay" ? Math.round(ctx.amount * 0.82) : ctx.amount, balance: ctx.scenario.key === "shipper_short_pay" ? Math.round(ctx.amount * 0.18) : 0 } };
       default:
         return { ...base, summary: `${meta.name} completed ${t.skill}` };
     }
+  }
+
+  /**
+   * Shown work for the numbers in the carrier_ap and risk artifacts (the
+   * `findings.workings` contract). Deterministic: derived from the case, no
+   * RNG draws, so seeded runs are unchanged. `doc:`/`mail:` refs name the
+   * files the real agents would cite; the simulation has none on disk, so the
+   * viewer shows "not available on this dashboard host".
+   */
+  private workingsFor(ctx: CaseCtx, t: TaskCtx): Row[] {
+    const inv = `doc:${ctx.invoiceId}`;
+    const rc = `doc:RC-${ctx.loadNo}`;
+    const gps = `gps:ELD-${ctx.loadNo}.json`;
+    const delta = round2(ctx.amount - ctx.contract);
+    if (t.agent === "carrier_ap") {
+      const limit = round2(ctx.contract * 1.02);
+      return [
+        { label: "Delta vs contract", formula: "invoice_amount - contract_amount", inputs: { invoice_amount: ctx.amount, contract_amount: ctx.contract }, result: delta, unit: "usd", evidence_refs: [inv, rc], basis: "P-001" },
+        { label: "Tolerance limit (contract + 2%)", formula: "contract_amount * 1.02", inputs: { contract_amount: ctx.contract }, result: limit, unit: "usd", evidence_refs: [rc], basis: "P-001" },
+        { label: "Within tolerance", formula: "invoice_amount <= tolerance_limit", inputs: { invoice_amount: ctx.amount, tolerance_limit: limit }, result: ctx.amount <= limit, unit: "bool", evidence_refs: [inv, rc], basis: "P-001" },
+      ];
+    }
+    if (t.agent === "risk" && ctx.scenario.key === "bank_change")
+      return [
+        { label: "Inside the bank-change review window", formula: "received_before_payment_h < minimum_review_h", inputs: { received_before_payment_h: 19, minimum_review_h: 72 }, result: true, unit: "bool", evidence_refs: [`mail:MAIL-${ctx.loadNo}-remit`], basis: "P-004" },
+        { label: "Unverified channel", formula: "received_by_email and not verified_by_phone", inputs: { received_by_email: true, verified_by_phone: false }, result: true, unit: "bool", evidence_refs: [`mail:MAIL-${ctx.loadNo}-remit`], basis: "P-004" },
+      ];
+    if (t.agent === "risk")
+      return [
+        { label: "Detention claimed vs supported", formula: "claimed_minutes - supported_minutes", inputs: { claimed_minutes: 120, supported_minutes: 47 }, result: 73, unit: "min", evidence_refs: [inv, gps], basis: "P-001" },
+        { label: "Billable detention after free time", formula: "max(0, supported_minutes - free_time_min)", inputs: { supported_minutes: 47, free_time_min: 120 }, result: 0, unit: "min", evidence_refs: [rc, gps], basis: "Detention is billable only after free time, with signed in/out times" },
+        { label: "Unsupported amount", formula: "invoice_amount - contract_amount", inputs: { invoice_amount: ctx.amount, contract_amount: ctx.contract }, result: delta, unit: "usd", evidence_refs: [inv, rc], basis: "P-001" },
+      ];
+    return [];
+  }
+
+  /** Validator checks with severity, basis and shown work (the review.checks_json contract). */
+  private validatorChecks(ctx: CaseCtx, outcome: string): Row[] {
+    const pass = outcome === "pass";
+    const delta = Math.max(0, round2(ctx.amount - ctx.contract));
+    const hold = pass ? delta : round2(delta + 25);
+    return [
+      { name: "debits_equal_credits", ok: true, expected: 0, actual: 0, severity: "issue", basis: "P-006", work: { label: "Journal balance", formula: "debits - credits", inputs: { debits: ctx.amount, credits: ctx.amount }, result: 0, unit: "usd", evidence_refs: [], basis: "P-006" } },
+      { name: "hold_matches_delta", ok: pass, expected: delta, actual: hold, severity: "issue", basis: "P-002", work: { label: "Hold vs invoice delta", formula: "hold_amount - delta", inputs: { hold_amount: hold, delta }, result: round2(hold - delta), unit: "usd", evidence_refs: [`doc:${ctx.invoiceId}`, `doc:RC-${ctx.loadNo}`], basis: "P-002" } },
+      { name: "every_number_cites_a_document", ok: pass, expected: true, actual: pass, severity: "advisory", basis: "Every reported number cites the document it came from" },
+    ];
   }
 
   private financialEffects(ctx: CaseCtx, t: TaskCtx, outcome: string, now: number) {
@@ -1131,7 +1177,7 @@ export class DemoSim {
       this.upsert("cash_forecast", { id: `CF-${t.taskId}`, case_id: ctx.caseId, period, category: ctx.scenario.kind === "receivable" ? "collections" : "carrier_payables", amount: ctx.scenario.kind === "receivable" ? ctx.amount : -ctx.amount, confidence: round2(this.between(0.6, 0.95)), assumptions_json: JSON.stringify({ basis: "task artifact", load: ctx.loadId }), updated_at: iso(now) });
     }
     if (t.agent === "validator") {
-      this.upsert("review", { id: `REV-${t.taskId}`, target_task_id: ctx.rootTaskId ?? "", case_id: ctx.caseId, verdict: outcome, checks_json: JSON.stringify([{ name: "debits_equal_credits", ok: true, expected: "balanced", actual: "balanced" }, { name: "hold_matches_delta", ok: outcome === "pass" }]), friction_json: JSON.stringify(outcome === "pass" ? [] : [{ kind: "retry", detail: "rate con requested twice", cost_s: 42 }]), ts: iso(now) });
+      this.upsert("review", { id: `REV-${t.taskId}`, target_task_id: ctx.rootTaskId ?? "", case_id: ctx.caseId, verdict: outcome, checks_json: JSON.stringify(this.validatorChecks(ctx, outcome)), friction_json: JSON.stringify(outcome === "pass" ? [] : [{ kind: "retry", detail: "rate con requested twice", cost_s: 42 }]), ts: iso(now) });
       this.audit({ case_id: ctx.caseId, task_id: t.taskId, agent: "validator", kind: "add_review", reason_code: outcome.toUpperCase(), summary: outcome === "pass" ? "Quality review passed" : "Quality review found friction; lesson written to agent memory" });
       if (outcome === "issue")
         this.upsert("agent_memory", { id: `MEM-${t.taskId}`, agent: ctx.scenario.root, scope: JSON.stringify({ carrier_id: ctx.carrierId, claim_type: ctx.scenario.key }), text: `When ${ctx.carrierName} bills accessorials, request the rate con and receipt in the first message.`, source: "validator", source_ref: t.taskId, version: 1, active: true, created_at: iso(now) });

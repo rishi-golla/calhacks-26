@@ -211,6 +211,12 @@ async def infer(agent: str, env: TaskEnvelope, evidence: dict, *, purpose: str =
             + instructions + "\n\nScoped memory (advisory):\n"
             + json.dumps([{ "text": m["text"], "id": m["id"]} for m in memories])
         )
+        if purpose == "review":
+            system += ("\nYou are reviewing another agent's finished work. The deterministic checks already ran; "
+                       "they are authoritative. Report an issue only when it names a failed check by its exact "
+                       "name or cites a supplied evidence ref that contradicts the artifact. A passed check is "
+                       "not an issue. Do not restate advisory checks as issues. Prefer an empty issues list to "
+                       "speculation.")
         if purpose == "call_findings":
             system += ("\nExtract caller statements. Set claim_confirmed and authorized_change to null unless "
                        "the caller explicitly confirms that fact. Include an exact supporting_quote from "

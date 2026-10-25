@@ -20,7 +20,7 @@ from a2a.types import Task
 
 from common import review_worker
 from common.envelope import DelegationMeta, TaskEnvelope
-from common.review_worker import ReviewWorker, nack_reason, poll_seconds
+from common.review_worker import ReviewWorker, backoff_seconds, nack_reason, poll_seconds
 from common.runtime_store import RuntimeStore, stable_id, task_id_for
 from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError
 
@@ -33,8 +33,13 @@ def canonical(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
+def iso(moment: datetime) -> str:
+    """The module's UTC timestamp format, so created_at strings sort chronologically."""
+    return moment.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
 def stamp(offset_s: float = 0) -> str:
-    return (datetime.now(UTC) + timedelta(seconds=offset_s)).isoformat().replace("+00:00", "Z")
+    return iso(datetime.now(UTC) + timedelta(seconds=offset_s))
 
 
 class Refused(Exception):
@@ -70,13 +75,22 @@ class FakeModule:
         return row
 
     def add(self, row_id: str, kind: str, target_agent: str, case_id: str, payload_json: str,
-            created_at: str | None = None, task_id: str = "") -> dict:
+            created_at: str | None = None, task_id: str = "", **fields) -> dict:
         created = created_at or stamp(-len(self.outbox) - 100)
         row = {"id": row_id, "kind": kind, "target_agent": target_agent, "case_id": case_id, "task_id": task_id,
                "payload_json": payload_json, "status": "pending", "attempts": 0, "created_at": created,
-               "updated_at": created, "claimed_by": "", "lease_expires_at": "", "last_error": ""}
+               "updated_at": created, "claimed_by": "", "lease_expires_at": "", "last_error": "", **fields}
         self.outbox[row_id] = row
         return row
+
+    def review(self, row_id: str, *, attempts: int, last_error: str, age_s: float, **fields) -> dict:
+        """A review_output row that has already failed `attempts` times, last updated `age_s` seconds ago."""
+        return self.add(row_id, "review_output", "validator", f"CASE-{row_id}", canonical({"artifact": {}}),
+                        task_id=f"task-{row_id}", attempts=attempts, last_error=last_error,
+                        updated_at=stamp(-age_s), **fields)
+
+    def claimed(self) -> list[str]:
+        return [call["id"] for call in self.calls("claim_outbox")]
 
     def calls(self, reducer: str | None = None) -> list[dict]:
         return [entry[2] for entry in self.log if entry[0] == "call" and reducer in (None, entry[1])]
@@ -86,8 +100,12 @@ class FakeModule:
         return [("sql", entry[1].split(" FROM ")[1].split()[0]) if entry[0] == "sql" else entry[:2]
                 for entry in self.log]
 
-    def expire_lease(self, row_id: str) -> None:
-        self.outbox[row_id]["lease_expires_at"] = stamp(-1)
+    def elapse(self, seconds: float) -> None:
+        """Let time pass for every stored row (backoff, leases), as the worker and module both read the clock."""
+        for row in self.outbox.values():
+            for key in ("created_at", "updated_at", "lease_expires_at"):
+                if row[key]:
+                    row[key] = iso(datetime.fromisoformat(row[key]) - timedelta(seconds=seconds))
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -138,14 +156,14 @@ class FakeModule:
         if row["status"] == "processing" and datetime.fromisoformat(row["lease_expires_at"]) > datetime.now(UTC):
             raise Refused
         row.update(status="processing", attempts=row["attempts"] + 1, claimed_by="router",
-                   lease_expires_at=stamp(p.get("lease_seconds", 60)), last_error="")
+                   lease_expires_at=stamp(p.get("lease_seconds", 60)), updated_at=stamp(), last_error="")
 
     def ack_outbox(self, p: dict) -> None:
         row = self.outbox[p["id"]]
         if row["status"] != "processing" or datetime.fromisoformat(row["lease_expires_at"]) <= datetime.now(UTC):
             raise Refused
         row.update(status="done" if p["success"] else "pending", claimed_by="", lease_expires_at="",
-                   last_error="" if p["success"] else p.get("error", "delivery failed"))
+                   updated_at=stamp(), last_error="" if p["success"] else p.get("error", "delivery failed"))
 
     def record_dispatch(self, p: dict) -> None:
         if p["status"] == "accepted" and not p["task_id"]:
@@ -192,7 +210,8 @@ class Agent:
 def fixture_mode(monkeypatch):
     monkeypatch.setenv("FREIGHTOPS_MODE", "fixture")
     for name in ("DISPATCH_POLL_SECONDS", "A2A_DATABASE_URL", "A2A_TOKEN_ROUTER", "SPACETIME_TOKEN_ROUTER",
-                 "SPACETIME_TOKEN", "AGENT_URL_CARRIER_AP", "AGENT_URL_VALIDATOR"):
+                 "SPACETIME_TOKEN", "AGENT_URL_CARRIER_AP", "AGENT_URL_VALIDATOR", "DISPATCH_MAX_REVIEW_CLAIMS",
+                 "REVIEW_MAX_ATTEMPTS"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -269,6 +288,9 @@ async def test_missing_source_record_nacks_without_sending_and_retries_next_poll
     assert module.dispatch["E2"]["status"] == "queued"
 
     module.sources.add("case:CASE-E2")
+    assert await worker.run_once() == 0                          # backing off for 2 s after one failure
+    assert len(module.calls("claim_outbox")) == 1
+    module.elapse(2)
     assert await worker.run_once() == 1
     assert module.outbox["first_hop:E2"]["status"] == "done"
     assert module.outbox["first_hop:E2"]["attempts"] == 2
@@ -293,6 +315,7 @@ async def test_send_failure_nacks_with_last_error_and_keeps_the_loop_running(mod
     assert {row["status"] for row in module.dispatch.values()} == {"queued"}
 
     agent.failure = None
+    module.elapse(2)
     assert await worker.run_once() == 2
     assert {row["status"] for row in module.dispatch.values()} == {"accepted"}
 
@@ -310,6 +333,7 @@ async def test_agent_down_with_the_real_transport_nacks_then_recovers(module, st
     assert module.outbox["first_hop:E5"]["status"] == "pending"
 
     worker.submit = agent                                        # the agent comes back
+    module.elapse(2)
     assert await worker.run_once() == 1
     assert module.dispatch["E5"]["status"] == "accepted"
     assert module.dispatch["E5"]["task_id"] == stable_task("E5", "CASE-E5")
@@ -333,7 +357,7 @@ async def test_crash_between_send_and_ack_is_recovered_by_the_agent_idempotency_
 
     restarted = ReviewWorker(db=module.client(), store=stores[0], submit=agent)
     assert await restarted.run_once() == 0                       # an unexpired lease is left alone
-    module.expire_lease("first_hop:E6")
+    module.elapse(61)                                            # the 60 s lease expires
     assert await restarted.run_once() == 1
 
     task_id = stable_task("E6", "CASE-E6")
@@ -347,7 +371,7 @@ async def test_crash_between_send_and_ack_is_recovered_by_the_agent_idempotency_
     assert module.outbox["first_hop:E6"]["attempts"] == 2
 
 
-async def test_candidates_are_claimed_by_envelope_priority_p0_first(module, worker):
+async def test_first_hops_are_claimed_by_envelope_priority_before_review_rows(module, worker):
     module.first_hop("P3-old", priority="P3", created_at=stamp(-50))
     module.add("review-1", "review_output", "validator", "CASE-R", "{}", created_at=stamp(-40), task_id="t-1")
     module.first_hop("P0-new", priority="P0", created_at=stamp(-10))
@@ -358,8 +382,8 @@ async def test_candidates_are_claimed_by_envelope_priority_p0_first(module, work
     module.add("other", "settlement_note", "cfo", "CASE-O", "{}", created_at=stamp(-60))
     await worker.run_once()
     assert [call["id"] for call in module.calls("claim_outbox")] == [
-        "first_hop:P0-old", "first_hop:P0-new", "first_hop:P1",
-        "first_hop:P2", "review-1", "first_hop:broken", "first_hop:P3-old"]
+        "first_hop:P0-old", "first_hop:P0-new", "first_hop:P1", "first_hop:P2", "first_hop:broken",
+        "first_hop:P3-old", "review-1"]
     assert module.outbox["first_hop:broken"]["last_error"] == "JSONDecodeError"
     assert module.outbox["other"]["status"] == "pending"          # unknown kinds are never claimed
 
@@ -467,6 +491,143 @@ async def test_contract_round_trip_with_the_router_enqueue(module, worker, agent
     [accepted] = module.calls("record_dispatch")
     assert accepted["queue_ms"] == 777 and accepted["policy_version"] == POLICY_VERSION
     assert accepted["task_id"] == stable_task("E-RT", "CASE-RT")
+
+
+def pass_lines(caplog) -> list[str]:
+    return [record.getMessage() for record in caplog.records if record.getMessage().startswith("outbox pass:")]
+
+
+async def test_exhausted_review_backlog_does_not_delay_a_fresh_first_hop(module, worker, agent, caplog):
+    # Maincloud's shape: review rows whose originals live elsewhere fail the same way on every pass.
+    kinds = ("review_followup", "review_output", "review_flag")
+    errors = sorted(review_worker.DETERMINISTIC_ERRORS)
+    for index in range(100):
+        module.add(f"stale-{index}", kinds[index % 3], "cfo", f"CASE-S{index}", "{}", created_at=stamp(-7200),
+                   task_id=f"task-{index}", attempts=10 + index % 20, last_error=errors[index % len(errors)],
+                   updated_at=stamp(-3600))
+    module.first_hop("FRESH", priority="P2", created_at=stamp())   # enqueued this instant
+    module.sources.add("case:CASE-FRESH")
+    caplog.set_level("INFO", logger="common.review_worker")
+    assert await worker.run_once() == 1
+    assert module.claimed() == ["first_hop:FRESH"]
+    assert [call["id"] for call in module.calls("ack_outbox")] == ["first_hop:FRESH"]
+    assert module.outbox["first_hop:FRESH"]["status"] == "done"
+    assert module.dispatch["FRESH"]["status"] == "accepted"
+    assert {row["status"] for key, row in module.outbox.items() if key.startswith("stale-")} == {"pending"}
+    summary = ("outbox pass: first_hop due=1 delivered=1 backoff=0 leased=0; review claimed=0 delivered=0 "
+               "backoff=0 exhausted=100 deferred=0 leased=0")
+    assert pass_lines(caplog) == [summary]
+
+
+async def test_transient_review_failures_back_off_and_at_most_20_are_claimed_per_pass(module, worker, agent,
+                                                                                       caplog):
+    due = set()
+    for index in range(50):
+        attempts = 1 + index % 5                                  # backoff 2, 4, 8, 16 or 32 s
+        wait = 2 ** attempts
+        is_due = index % 2 == 1
+        module.review(f"r{index:02}", attempts=attempts, last_error="ConnectError",
+                      age_s=wait + 1 if is_due else wait / 2, created_at=stamp(-1000 + index))
+        if is_due:
+            due.add(f"r{index:02}")
+    agent.failure = httpx.ConnectError("validator down")
+    caplog.set_level("INFO", logger="common.review_worker")
+    assert await worker.run_once() == 0
+    first = module.claimed()
+    assert len(first) == 20 and set(first) <= due and first == sorted(first)   # oldest due rows first
+    assert pass_lines(caplog)[-1].endswith("review claimed=20 delivered=0 backoff=25 exhausted=0 deferred=5 "
+                                           "leased=0")
+    assert await worker.run_once() == 0                          # the 20 just nacked are backing off now
+    second = module.claimed()[20:]
+    assert set(second) == due - set(first)
+    assert pass_lines(caplog)[-1].endswith("review claimed=5 delivered=0 backoff=45 exhausted=0 deferred=0 "
+                                           "leased=0")
+
+
+async def test_a_failing_first_hop_backs_off_at_most_15_seconds(module, worker, agent):
+    module.first_hop("E11")
+    module.sources.add("case:CASE-E11")
+    # A review row with the first hop's final history (7 failures) waits 128 s; the loop below spans 92 s.
+    module.review("slow", attempts=7, last_error="ConnectError", age_s=15.5)
+    agent.failure = TimeoutError("agent busy")
+    assert await worker.run_once() == 0
+    for wait in (2, 4, 8, 15, 15, 15):                            # after 1..6 failures: 2, 4, 8, then capped
+        claims = len(module.claimed())
+        module.elapse(wait - 0.5)
+        await worker.run_once()
+        assert len(module.claimed()) == claims, f"retried before its {wait} s backoff"
+        module.elapse(1)
+        await worker.run_once()
+        assert module.claimed()[claims:] == ["first_hop:E11"], f"not retried after {wait} s"
+    assert module.outbox["first_hop:E11"]["attempts"] == 7
+    assert "slow" not in module.claimed()
+    agent.failure = None
+    module.elapse(15)
+    assert await worker.run_once() == 1
+    assert module.dispatch["E11"]["status"] == "accepted"
+
+
+@pytest.mark.parametrize("kind, attempts, seconds", [
+    ("first_hop", 0, 0), ("first_hop", 1, 2), ("first_hop", 3, 8), ("first_hop", 4, 15), ("first_hop", 40, 15),
+    ("review_followup", 0, 0), ("review_followup", 4, 16), ("review_flag", 8, 256), ("review_output", 9, 300),
+    ("review_output", 29, 300), ("review_output", 10 ** 9, 300),
+])
+def test_backoff_doubles_from_two_seconds_with_caps(kind, attempts, seconds):
+    assert backoff_seconds({"kind": kind, "attempts": attempts}) == seconds
+
+
+async def test_only_review_rows_with_deterministic_errors_are_given_up_on(module, worker, agent):
+    old = 400                                                     # past every backoff
+    module.review("at-9", attempts=9, last_error="SourceUnavailable", age_s=old)
+    module.review("at-10", attempts=10, last_error="SourceUnavailable", age_s=old)
+    module.review("key-error", attempts=12, last_error="KeyError", age_s=old)
+    module.review("connect", attempts=25, last_error="ConnectError", age_s=old)
+    module.review("server", attempts=25, last_error="SpacetimeHTTPError 503", age_s=old)
+    module.review("timeout-recent", attempts=25, last_error="TimeoutError", age_s=200)
+    hop = module.first_hop("E12")
+    hop.update(attempts=50, last_error="SourceUnavailable", updated_at=stamp(-16))
+    module.sources.add("case:CASE-E12")
+    assert await worker.run_once() == 4
+    assert module.claimed()[0] == "first_hop:E12"
+    assert set(module.claimed()[1:]) == {"at-9", "connect", "server"}
+    assert module.outbox["at-10"]["status"] == "pending"
+    assert module.outbox["at-10"]["last_error"] == "SourceUnavailable"   # left visible for an operator
+
+
+async def test_review_limits_come_from_the_environment(module, stores, agent, monkeypatch):
+    monkeypatch.setenv("REVIEW_MAX_ATTEMPTS", "3")
+    monkeypatch.setenv("DISPATCH_MAX_REVIEW_CLAIMS", "1")
+    module.review("given-up", attempts=3, last_error="ValueError", age_s=400)
+    module.review("first", attempts=2, last_error="ValueError", age_s=400, created_at=stamp(-900))
+    module.review("second", attempts=2, last_error="ValueError", age_s=400, created_at=stamp(-800))
+    worker = ReviewWorker(db=module.client(), store=stores[0], submit=agent)
+    assert await worker.run_once() == 1
+    assert module.claimed() == ["first"]
+
+    monkeypatch.setenv("DISPATCH_MAX_REVIEW_CLAIMS", "0")         # a first-hop-only worker
+    module.first_hop("E13")
+    module.sources.add("case:CASE-E13")
+    worker = ReviewWorker(db=module.client(), store=stores[0], submit=agent)
+    assert await worker.run_once() == 1
+    assert module.claimed() == ["first", "first_hop:E13"]
+
+
+@pytest.mark.parametrize("name, value", [("DISPATCH_MAX_REVIEW_CLAIMS", "-1"), ("DISPATCH_MAX_REVIEW_CLAIMS", "x"),
+                                         ("REVIEW_MAX_ATTEMPTS", "0"), ("REVIEW_MAX_ATTEMPTS", "2.5")])
+async def test_invalid_review_limits_fail_before_polling(module, stores, monkeypatch, name, value):
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match=name):
+        ReviewWorker(db=module.client(), store=stores[0])
+
+
+async def test_each_pass_logs_one_summary_line_and_idle_passes_log_at_debug(module, worker, caplog):
+    module.review("waiting", attempts=3, last_error="ConnectError", age_s=1)
+    caplog.set_level("DEBUG", logger="common.review_worker")
+    await worker.run_once()
+    await worker.run_once()
+    records = [record for record in caplog.records if record.getMessage().startswith("outbox pass:")]
+    assert len(records) == 2 and {record.levelname for record in records} == {"DEBUG"}
+    assert "review claimed=0 delivered=0 backoff=1" in records[0].getMessage()
 
 
 def test_worker_does_not_import_the_harness():

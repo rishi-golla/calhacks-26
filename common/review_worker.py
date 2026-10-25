@@ -6,6 +6,13 @@ and corrections use stable IDs; terminal tasks are never reopened. A
 ``first_hop`` row is pushed to its agent with idempotency key ``event:<event_id>``
 and acknowledged only after its ``dispatch`` row records the accepted task.
 ``DISPATCH_POLL_SECONDS`` (default 1) sets the poll interval.
+
+A failed row waits ``min(2**attempts, 300)`` seconds from its ``updated_at``
+before it is claimed again (at most 15 s for a first hop). Each pass delivers
+every due first hop, then claims at most ``DISPATCH_MAX_REVIEW_CLAIMS``
+(default 20) review rows. A review row that has failed ``REVIEW_MAX_ATTEMPTS``
+(default 10) times with a deterministic error is no longer claimed; it stays
+``pending`` with its ``last_error`` for an operator.
 """
 from __future__ import annotations
 
@@ -14,6 +21,7 @@ import json
 import logging
 import math
 import os
+from collections import Counter
 from datetime import UTC, datetime
 
 from sqlalchemy import Column, MetaData, String, Table, insert, select
@@ -35,6 +43,10 @@ LEASE_SECONDS = 60
 REDUCER_REJECTED = 530   # SpacetimeDB's status for a reducer that threw: retrying the same write cannot succeed
 PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 DEFAULT_RANK = PRIORITY_RANK[TaskEnvelope.model_fields["priority"].default]
+BACKOFF_CAP_SECONDS = 300
+FIRST_HOP_BACKOFF_CAP_SECONDS = 15
+# Nack reasons that repeat identically on every attempt, so an exhausted review row is left alone.
+DETERMINISTIC_ERRORS = {"SourceUnavailable", "ValueError", "TypeError", "KeyError"}
 metadata = MetaData()
 corrections = Table("freight_review_correction", metadata,
     Column("lineage_id", String(36), primary_key=True),
@@ -62,6 +74,47 @@ def nack_reason(error: Exception) -> str:
     return name
 
 
+def backoff_seconds(row: dict) -> int:
+    """Wait after a failed attempt: 2, 4, 8 ... seconds, capped at 300 (15 for a first hop); none before the first."""
+    attempts = int(row.get("attempts", 0))
+    cap = FIRST_HOP_BACKOFF_CAP_SECONDS if row.get("kind") == FIRST_HOP else BACKOFF_CAP_SECONDS
+    return min(2 ** min(attempts, 16), cap) if attempts > 0 else 0
+
+
+def _timestamp(value) -> datetime | None:
+    try:
+        moment = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def leased(row: dict, now: datetime) -> bool:
+    expires = _timestamp(row.get("lease_expires_at"))
+    return row.get("status") == "processing" and expires is not None and expires > now
+
+
+def backing_off(row: dict, now: datetime) -> bool:
+    updated = _timestamp(row.get("updated_at"))
+    return updated is not None and (now - updated).total_seconds() < backoff_seconds(row)
+
+
+def exhausted(row: dict, max_attempts: int) -> bool:
+    """A review row that keeps failing the same way; first hops are never given up on."""
+    return (row.get("kind") in REVIEW_KINDS and int(row.get("attempts", 0)) >= max_attempts
+            and str(row.get("last_error", "")).partition(" ")[0] in DETERMINISTIC_ERRORS)
+
+
+def _count(name: str, default: str, minimum: int) -> int:
+    try:
+        value = int(os.getenv(name, default))
+    except ValueError:
+        value = minimum - 1
+    if value < minimum:
+        raise ValueError(f"{name} must be an integer of at least {minimum}")
+    return value
+
+
 def poll_seconds() -> float:
     try:
         seconds = float(os.getenv("DISPATCH_POLL_SECONDS", "1"))
@@ -86,6 +139,8 @@ class ReviewWorker:
         self.db = db or SpacetimeClient(actor="router")
         self.store = store or RuntimeStore()
         self.submit = submit or send_task
+        self.max_review_claims = _count("DISPATCH_MAX_REVIEW_CLAIMS", "20", 0)
+        self.review_max_attempts = _count("REVIEW_MAX_ATTEMPTS", "10", 1)
         self._initialized = False
 
     async def initialize(self):
@@ -235,40 +290,65 @@ class ReviewWorker:
             raise ValueError("A2A acceptance does not match the stable review task ID")
         return "accepted"
 
+    async def claim_and_deliver(self, row: dict) -> bool:
+        """One claim/deliver/ack cycle; False when the row was not delivered (it stays pending or leased)."""
+        attempt = str(int(row.get("attempts", 0)) + 1)
+        try:
+            await self.db.mutate("claim_outbox", {"id": row["id"], "lease_seconds": LEASE_SECONDS,
+                "write_id": stable_id("review-claim", row["id"], attempt)})
+        except Exception as error:  # noqa: BLE001 -- competing leases and outages retry on the next poll
+            log.warning("outbox lease unavailable for %s: %s", row["id"], nack_reason(error))
+            return False
+        try:
+            outcome = await self.deliver(row)
+            await self.db.mutate("ack_outbox", {"id": row["id"], "success": True,
+                "write_id": stable_id("review-ack", row["id"], attempt)})
+            log.info("outbox delivery %s: %s", row["id"], outcome)
+            return True
+        except Exception as error:  # noqa: BLE001 -- retain outbox work after any destination failure
+            # A repeated stable A2A key reconciles uncertain acceptance on retry.
+            reason = nack_reason(error)
+            log.warning("outbox delivery retry %s: %s", row["id"], reason)
+            try:
+                await self.db.mutate("ack_outbox", {"id": row["id"], "success": False, "error": reason,
+                    "write_id": stable_id("review-nack", row["id"], attempt)})
+            except Exception:  # noqa: BLE001 -- an uncertain acknowledgement recovers after lease expiry
+                log.warning("outbox lease for %s will expire before retry", row["id"])
+            return False
+
     async def run_once(self) -> int:
+        """Deliver every due first hop, then at most `max_review_claims` review rows; return the delivered count."""
         await self.initialize()
         items = await self.db.query_rows("SELECT * FROM routing_outbox WHERE status <> 'done'")
-        candidates = [row for row in items if row.get("kind") in REVIEW_KINDS | {FIRST_HOP}]
-        candidates.sort(key=lambda row: (priority_rank(row), str(row.get("created_at", ""))))
-        delivered = 0
-        for row in candidates:
-            if row.get("status") == "processing":
-                expires = datetime.fromisoformat(row["lease_expires_at"])
-                if expires > datetime.now(UTC):
+        now = datetime.now(UTC)
+        candidates = sorted((row for row in items if row.get("kind") in REVIEW_KINDS | {FIRST_HOP}),
+                            key=lambda row: (priority_rank(row), row.get("kind") != FIRST_HOP,
+                                             str(row.get("created_at", ""))))
+        counts = Counter()
+        # First hops go first even when they rank below a review row, so a review backlog never delays intake.
+        for phase in (FIRST_HOP, "review"):
+            for row in candidates:
+                if (row["kind"] == FIRST_HOP) != (phase == FIRST_HOP):
                     continue
-            attempt = str(int(row.get("attempts", 0)) + 1)
-            try:
-                await self.db.mutate("claim_outbox", {"id": row["id"], "lease_seconds": LEASE_SECONDS,
-                    "write_id": stable_id("review-claim", row["id"], attempt)})
-            except Exception as error:  # noqa: BLE001 -- competing leases and outages retry on the next poll
-                log.warning("outbox lease unavailable for %s: %s", row["id"], nack_reason(error))
-                continue
-            try:
-                outcome = await self.deliver(row)
-                await self.db.mutate("ack_outbox", {"id": row["id"], "success": True,
-                    "write_id": stable_id("review-ack", row["id"], attempt)})
-                log.info("outbox delivery %s: %s", row["id"], outcome)
-                delivered += 1
-            except Exception as error:  # noqa: BLE001 -- retain outbox work after any destination failure
-                # A repeated stable A2A key reconciles uncertain acceptance on retry.
-                reason = nack_reason(error)
-                log.warning("outbox delivery retry %s: %s", row["id"], reason)
-                try:
-                    await self.db.mutate("ack_outbox", {"id": row["id"], "success": False, "error": reason,
-                        "write_id": stable_id("review-nack", row["id"], attempt)})
-                except Exception:  # noqa: BLE001 -- an uncertain acknowledgement recovers after lease expiry
-                    log.warning("outbox lease for %s will expire before retry", row["id"])
-        return delivered
+                if leased(row, now):
+                    counts[f"{phase}_leased"] += 1
+                elif exhausted(row, self.review_max_attempts):
+                    counts["review_exhausted"] += 1
+                elif backing_off(row, now):
+                    counts[f"{phase}_backoff"] += 1
+                elif phase == "review" and counts["review_claimed"] >= self.max_review_claims:
+                    counts["review_deferred"] += 1
+                else:
+                    counts[f"{phase}_claimed"] += 1
+                    counts[f"{phase}_delivered"] += await self.claim_and_deliver(row)
+        level = logging.INFO if counts["first_hop_claimed"] or counts["review_claimed"] else logging.DEBUG
+        log.log(level, "outbox pass: first_hop due=%d delivered=%d backoff=%d leased=%d; review claimed=%d "
+                "delivered=%d backoff=%d exhausted=%d deferred=%d leased=%d",
+                *(counts[key] for key in ("first_hop_claimed", "first_hop_delivered", "first_hop_backoff",
+                                          "first_hop_leased", "review_claimed", "review_delivered",
+                                          "review_backoff", "review_exhausted", "review_deferred",
+                                          "review_leased")))
+        return counts["first_hop_delivered"] + counts["review_delivered"]
 
 
 async def main():

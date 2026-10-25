@@ -32,6 +32,11 @@ class Assessment(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class LessonDraft(Assessment):
+    lesson: str
+    instruction: str
+
+
 class CallAssessment(Assessment):
     claim_confirmed: bool | None
     authorized_change: bool | None
@@ -225,6 +230,13 @@ async def infer(agent: str, env: TaskEnvelope, evidence: dict, *, purpose: str =
                        "name or cites a supplied evidence ref that contradicts the artifact. A passed check is "
                        "not an issue. Do not restate advisory checks as issues. Prefer an empty issues list to "
                        "speculation.")
+        if purpose == "lesson":
+            system += ("\nYou are writing a lesson for the reviewed agent from the failed deterministic checks. "
+                       "lesson: two or three plain sentences the agent can act on next time; name the control "
+                       "that failed and what to do differently, with no case identifiers, names or amounts. "
+                       "instruction: one general rule of at most 250 characters that would have prevented the "
+                       "failure, or an empty string if none applies. Never loosen a control, limit, approval, "
+                       "permission or policy; only make the agent more careful.")
         if purpose == "call_findings":
             system += ("\nExtract caller statements. Set claim_confirmed and authorized_change to null unless "
                        "the caller explicitly confirms that fact. Include an exact supporting_quote from "
@@ -233,7 +245,7 @@ async def infer(agent: str, env: TaskEnvelope, evidence: dict, *, purpose: str =
         assessment, usage = await complete(config, system, {
             "purpose": purpose, "skill": env.task_type, "case_id": env.case_id,
             "evidence": evidence, "evidence_refs": env.evidence_refs,
-        }, response_type=CallAssessment if purpose == "call_findings" else Assessment)
+        }, response_type={"call_findings": CallAssessment, "lesson": LessonDraft}.get(purpose, Assessment))
     return {"model_used": f"{config.provider}/{config.model}" if config.provider != "fixture" else config.model,
             "assessment": assessment.model_dump(), "usage": usage,
             "latency_ms": int((time.monotonic() - started) * 1000),

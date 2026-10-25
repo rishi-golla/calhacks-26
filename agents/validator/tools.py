@@ -651,12 +651,36 @@ def grounded_issues(issues: list[str], checks: list[dict]) -> tuple[list[str], l
     return grounded, [issue for issue in issues if issue not in grounded]
 
 
-def instruction_proposal(original: str) -> str:
-    """Generate a bounded advisory patch; no incoming model/flag text becomes instructions."""
-    reminder = "\nBefore completing a result, cite the source records and recheck monetary totals in exact cents.\n"
-    if reminder.strip() in original:
+# Mirrors validateAutomatedInstruction in the SpacetimeDB module, which enforces the same bounds.
+CONTROL_WORDS = re.compile(r"\b(ignore|disregard|override|bypass|disable|allowlist|permissions?|credentials?"
+                           r"|passwords?|tokens?|api keys?)\b", re.IGNORECASE)
+MAX_LEARNED_LINES = 8
+
+
+def plain_text(value, limit: int) -> str:
+    """One printable-ASCII line: model-drafted learning never carries markup, control characters or newlines."""
+    text = " ".join(str(value or "").split())
+    return "".join(ch for ch in text if " " <= ch <= "~")[:limit].strip()
+
+
+def drafted_lesson(draft: dict) -> str:
+    text = plain_text(draft.get("lesson"), 900)
+    return text if len(text) >= 20 and not CONTROL_WORDS.search(text) else ""
+
+
+def learned_line(draft: dict) -> str:
+    text = plain_text(draft.get("instruction"), 290)
+    return f"Learned: {text}" if len(text) >= 10 and not CONTROL_WORDS.search(text) else ""
+
+
+def instruction_proposal(original: str, line: str = "") -> str:
+    """Generate a bounded append-only patch: the code-owned reminder, or one model-drafted learned line."""
+    line = line or "Before completing a result, cite the source records and recheck monetary totals in exact cents."
+    lines = original.splitlines()
+    if line in lines or (line.startswith("Learned: ") and
+                         sum(x.startswith("Learned: ") for x in lines) >= MAX_LEARNED_LINES):
         return ""
-    revised = original + reminder
+    revised = original + f"\n{line}\n"
     patch = "".join(difflib.unified_diff(original.splitlines(keepends=True), revised.splitlines(keepends=True),
                                        fromfile="a/instructions.md", tofile="b/instructions.md", n=0))
     if apply_instruction_patch(original, patch) != revised:

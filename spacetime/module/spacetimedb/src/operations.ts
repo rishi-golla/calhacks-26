@@ -903,12 +903,17 @@ function checkInstructionVersion(m: Mutation, agent: string): void {
   if (uint(m.p, 'expected_version') !== latest) throw new Error('instruction version conflict');
 }
 
-// Automated learning is append-only and uses a code-owned advisory template.
-// No source, flag or model text can remove instructions or introduce permissions.
+// Automated learning is append-only: one blank line plus either the code-owned advisory template
+// or one bounded model-written "Learned:" line. Nothing can remove instructions or touch controls.
+const ADVISORY_TEMPLATE = 'Before completing a result, cite the source records and recheck monetary totals in exact cents.';
+const LEARNED_LINE = /^Learned: [\x20-\x7E]{10,300}$/;
+const CONTROL_WORDS = /\b(ignore|disregard|override|bypass|disable|allowlist|permissions?|credentials?|passwords?|tokens?|api keys?)\b/i;
 function validateAutomatedInstruction(diff: string): void {
-  const match = /^--- a\/instructions\.md\n\+\+\+ b\/instructions\.md\n@@ -(\d+),0 \+(\d+),2 @@\n\+\n\+Before completing a result, cite the source records and recheck monetary totals in exact cents\.\n$/.exec(diff);
-  if (!match || Number(match[2]) !== Number(match[1]) + 1) {
-    throw new Error('P-012: validator instructions must use the approved append-only template');
+  const match = /^--- a\/instructions\.md\n\+\+\+ b\/instructions\.md\n@@ -(\d+),0 \+(\d+),2 @@\n\+\n\+([^\n]*)\n$/.exec(diff);
+  const line = match?.[3] ?? '';
+  const allowed = line === ADVISORY_TEMPLATE || (LEARNED_LINE.test(line) && !CONTROL_WORDS.test(line));
+  if (!match || Number(match[2]) !== Number(match[1]) + 1 || !allowed) {
+    throw new Error('P-012: validator instructions must be one approved append-only line');
   }
 }
 

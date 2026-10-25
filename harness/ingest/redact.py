@@ -57,6 +57,9 @@ SENSITIVE_KEYS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"(?i)^(signed_by|signer|receiver|driver|driver_name|loader|contact|contact_name|requested_by)$"),
      "NAME"),
 ]
+# Demo outreach allowlist labels (W4): Voice Desk resolves "team-1", "team-2"... to an allowlisted number at dial
+# time, so they must never be tokenized by any layer.
+ALLOWLIST_LABEL = re.compile(r"(?i)team-\d+")
 # Company names are kept on purpose (agents and the directory need them); person-name keys skip these.
 BUSINESS = re.compile(r"(?i)\b(llc|inc|corp|co|company|ltd|transport|trucking|logistics|freight|haul|produce|"
                       r"carriers?|express|lines|bank)\b\.?")
@@ -99,6 +102,8 @@ def redact_obj(obj: Any, vault: Vault, key: str = "") -> tuple[Any, list[str]]:
             toks += t
         return out_l, toks
     kind = _key_kind(key) if key else None
+    if isinstance(obj, str) and ALLOWLIST_LABEL.fullmatch(obj.strip()):
+        return obj, []
     if kind == "NAME" and isinstance(obj, str) and BUSINESS.search(obj):
         kind = None
     if kind and isinstance(obj, (str, int)) and not isinstance(obj, bool) and str(obj).strip():

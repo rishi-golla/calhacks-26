@@ -66,7 +66,8 @@ async def _telemetry(entry_id, ev: dict, res: dict, received_ms: int) -> None:
     elif status == "duplicate":
         prior = res.get("prior") or res.get("dispatch") or {}
         if prior.get("task_id"):   # only an accepted event has a dispatch row to mark as duplicate
-            await record_dispatch(entry_id, ev, "duplicate", "re-delivered event", agent=prior.get("agent") or "",
+            await record_dispatch(entry_id, ev, "duplicate", res.get("reason") or "re-delivered event",
+                                  agent=prior.get("agent") or "",
                                   skill=prior.get("skill") or "", task_id=prior["task_id"], received_ms=received_ms)
     elif status == "triage":
         await record_dispatch(entry_id, ev, "triage", reason, received_ms=received_ms)

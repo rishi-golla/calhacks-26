@@ -115,3 +115,11 @@ def test_known_spans_scrub_free_text(vault):
     out = replace_spans(out, known_spans(toks, vault))
     assert "Secaucus" not in out["text"] and "Gomez" not in out["text"]
     assert out["text"].count("[[ADDR_") == 1 and out["text"].count("[[NAME_") == 1
+
+
+@pytest.mark.parametrize("key", ["demo_target", "demotarget", "phone", "contact", "routed_to", "signed_by"])
+def test_demo_allowlist_labels_are_never_tokenized(vault, key):
+    """W4's Voice Desk resolves team-N to an allowlisted number at dial time; tokenizing it would block demo calls."""
+    out, toks = redact_obj({key: "team-1"}, vault)
+    assert out[key] == "team-1" and toks == []
+    assert redact_text("Route the call to team-2.", vault)[0] == "Route the call to team-2."

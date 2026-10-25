@@ -73,7 +73,7 @@ def test_held_invoice_payment_and_invented_citations_are_issues():
     bundle["artifact"].update(outcome="approve", evidence_refs=["made-up.pdf"], findings={"match": {
         "invoice_amount": 2500, "contract_rate": 2500, "delta": 0, "above_tolerance": False}})
     checks = {x["name"]: x["ok"] for x in deterministic_review(bundle).checks}
-    assert not checks["held_invoice_blocked"] and not checks["evidence_grounded"]
+    assert not checks["approve_clear_of_active_hold"] and not checks["evidence_grounded"]
 
 
 async def test_live_review_uses_stored_artifact_not_payload(monkeypatch):

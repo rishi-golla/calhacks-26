@@ -1,6 +1,6 @@
 from agents.carrier_ap.tools import duplicate_invoices
 from agents.risk.card import DESCRIPTIONS
-from agents.risk.tools import audit_charges
+from agents.risk.tools import audit_charges, charge_workings
 from common.agent_support import child_envelope, evidence, finish
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
@@ -23,6 +23,7 @@ class RiskAgent(FreightAgent):
         refs = evidence(source, env)
         if env.task_type == "investigate_charge":
             findings = audit_charges(source)
+            findings["workings"] = charge_workings(source, findings)
             if duplicate_invoices(source):
                 return await finish(self, env, task_id, outcome="reject", findings=findings,
                                     policy_ids=["P-007"], evidence_refs=refs)

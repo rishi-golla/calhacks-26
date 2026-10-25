@@ -1,0 +1,436 @@
+/* Liquid-glass theme: frosted translucent panels over an atmospheric backdrop,
+   Inter / Inter Tight, and a choreographed entry. Layers on top of mono.css. */
+
+.fl.theme-glass {
+  --ink: #fff;
+  --glass: rgba(255, 255, 255, 0.155);
+  --glass-line: rgba(255, 255, 255, 0.2);
+  --e-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --e-soft: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --e-pen: cubic-bezier(0.37, 0.01, 0.2, 1);
+
+  --bg-0: #04121b;
+  --bg-1: rgba(255, 255, 255, 0.08);
+  --bg-2: rgba(255, 255, 255, 0.12);
+  --bg-3: rgba(255, 255, 255, 0.18);
+  --line: rgba(255, 255, 255, 0.18);
+  --line-soft: rgba(255, 255, 255, 0.1);
+  --line-strong: rgba(255, 255, 255, 0.42);
+  --text: #fff;
+  --text-dim: rgba(255, 255, 255, 0.8);
+  --text-mute: rgba(255, 255, 255, 0.58);
+  --teal: #fff;
+  --aqua: rgba(255, 255, 255, 0.85);
+  --coral: rgba(255, 255, 255, 0.7);
+  --ok: #9be7bd;
+  --warn: #ffd88a;
+  --hot: #ffb27a;
+  --bad: #ff8c8c;
+  --info: rgba(255, 255, 255, 0.85);
+  --agent: rgba(255, 255, 255, 0.85);
+  --font-display: var(--ff-tight), "Inter Tight", var(--font-body);
+  --radius: 24px;
+  --card: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.2) 0%,
+    rgba(255, 255, 255, 0.258) 24%,
+    rgba(255, 255, 255, 0.252) 78%,
+    rgba(255, 255, 255, 0.232) 100%
+  );
+  --card-soft: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.125) 0%,
+    rgba(255, 255, 255, 0.135) 13%,
+    rgba(255, 255, 255, 0.098) 34%,
+    rgba(255, 255, 255, 0.092) 100%
+  );
+  --card-edge: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  background: var(--bg-0);
+  position: relative;
+  isolation: isolate;
+}
+
+/* ------------------------------ backdrop ------------------------------ */
+.fl.theme-glass::before,
+.fl.theme-glass::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+.fl.theme-glass::before {
+  background:
+    radial-gradient(60% 55% at 78% 8%, rgba(34, 170, 150, 0.7), transparent 70%),
+    radial-gradient(55% 60% at 12% 30%, rgba(40, 95, 175, 0.62), transparent 70%),
+    radial-gradient(50% 45% at 55% 95%, rgba(24, 130, 140, 0.55), transparent 70%),
+    radial-gradient(40% 40% at 90% 70%, rgba(60, 60, 120, 0.35), transparent 70%),
+    linear-gradient(180deg, #0a2e3c 0%, #061a26 45%, #030d14 100%);
+  animation: glass-drift 36s ease-in-out infinite alternate;
+}
+.fl.theme-glass::after {
+  background:
+    linear-gradient(105deg, rgba(4, 16, 24, 0.34) 0%, rgba(4, 16, 24, 0.2) 40%, rgba(4, 16, 24, 0.06) 78%, transparent 100%),
+    linear-gradient(180deg, rgba(4, 16, 24, 0.12) 0%, transparent 22%),
+    linear-gradient(0deg, rgba(4, 16, 24, 0.07), rgba(4, 16, 24, 0.07));
+}
+@keyframes glass-drift {
+  from {
+    transform: scale(1) translate3d(0, 0, 0);
+    filter: hue-rotate(0deg);
+  }
+  to {
+    transform: scale(1.08) translate3d(-2%, 1.5%, 0);
+    filter: hue-rotate(-14deg);
+  }
+}
+.fl.theme-glass .fm-wave {
+  opacity: 0.55;
+}
+
+/* ------------------------------ shell ------------------------------ */
+.fl.theme-glass .fl-shell {
+  background: transparent;
+}
+.fl.theme-glass .fl-rail {
+  margin: 14px 0 14px 16px;
+  height: calc(100vh - 28px);
+  position: sticky;
+  top: 14px;
+  background: var(--card-soft);
+  -webkit-backdrop-filter: blur(18px) saturate(115%);
+  backdrop-filter: blur(18px) saturate(115%);
+  border: 1px solid var(--glass-line);
+  border-radius: 26px;
+  box-shadow: var(--card-edge);
+  overflow: hidden;
+}
+.fl.theme-glass .fl-rail-foot {
+  background: transparent;
+  border-top-color: var(--line-soft);
+}
+.fl.theme-glass .fl-topbar {
+  background: transparent;
+  border-bottom: 0;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.fl.theme-glass .fl-nav-item {
+  color: rgba(255, 255, 255, 0.82);
+  border-radius: 14px;
+  transition:
+    opacity 0.25s var(--e-out),
+    transform 0.25s var(--e-out),
+    background-color 0.25s var(--e-out);
+}
+.fl.theme-glass .fl-nav-item:hover {
+  color: #fff;
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.1);
+}
+.fl.theme-glass .fl-nav-item.active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    -18px 0 0 -14px #fff,
+    -18px 0 10px -14px rgba(255, 255, 255, 0.55);
+}
+
+/* ------------------------------ glass surfaces ------------------------------ */
+.fl.theme-glass :is(.fl-panel, .fh-kpi) {
+  position: relative;
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius);
+  box-shadow: var(--card-edge);
+  -webkit-backdrop-filter: blur(26px) saturate(118%);
+  backdrop-filter: blur(26px) saturate(118%);
+}
+.fl.theme-glass .fh-kpi {
+  border-radius: 24px;
+}
+.fl.theme-glass :is(.fl-panel, .fh-kpi)::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 38%;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, 0.17) 50%, transparent 100%);
+  transform: translate3d(-150%, 0, 0) skewX(-18deg);
+  animation: sheen 1.15s var(--e-soft) 2.55s 1 both;
+}
+@keyframes sheen {
+  from {
+    transform: translate3d(-150%, 0, 0) skewX(-18deg);
+  }
+  to {
+    transform: translate3d(260%, 0, 0) skewX(-18deg);
+  }
+}
+.fl.theme-glass .fl-panel .fl-panel,
+.fl.theme-glass .fl-panel .fl-panel::after {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  animation: none;
+}
+.fl.theme-glass :is(.fh-ops-hero, .fh-stat) {
+  background: transparent;
+}
+.fl.theme-glass .fh-ops-grid {
+  background: var(--line-soft);
+}
+
+.fl.theme-glass .fl-chip,
+.fl.theme-glass .fl-tabs,
+.fl.theme-glass .fl-btn,
+.fl.theme-glass .fh-chips {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  -webkit-backdrop-filter: blur(16px) saturate(115%);
+  backdrop-filter: blur(16px) saturate(115%);
+}
+.fl.theme-glass .fh-chips {
+  background: rgba(255, 255, 255, 0.175);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  padding: 4px 8px 4px 14px;
+}
+.fl.theme-glass .fh-chips .fl-chip {
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.fl.theme-glass .fl-btn:hover,
+.fl.theme-glass .fl-tab:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+.fl.theme-glass .fl-tab.active,
+.fl.theme-glass .fl-tabs .active {
+  background: rgba(255, 255, 255, 0.9);
+  color: #06202c;
+}
+.fl.theme-glass .fl-btn.primary {
+  background: rgba(255, 255, 255, 0.92);
+  color: #06202c;
+  border-color: transparent;
+}
+.fl.theme-glass :focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+/* ------------------------------ type ------------------------------ */
+.fl.theme-glass .fh-wordmark {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: 0.003em;
+  background: none;
+  color: #fff;
+  -webkit-text-fill-color: #fff;
+}
+.fl.theme-glass .fh-wordmark .ln {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.08em;
+}
+.fl.theme-glass .fh-wordmark .ln > span {
+  display: block;
+  animation: lineUp 1.05s var(--e-out) 0.56s both;
+}
+.fl.theme-glass .fh-header-sub {
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.fl.theme-glass .fm-page-head h1 {
+  font-family: var(--font-display);
+  font-weight: 500;
+}
+.fl.theme-glass .fh-kpi-value,
+.fl.theme-glass .fh-stat-value,
+.fl.theme-glass .fh-cash-value {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.045em;
+}
+.fl.theme-glass .fh-kpi-value {
+  font-size: clamp(36px, 3vw, 48px);
+}
+
+/* ------------------------------ entry choreography ------------------------------ */
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(var(--ry, 14px));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes slideL {
+  from {
+    opacity: 0;
+    transform: translateX(-26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes slideR {
+  from {
+    opacity: 0;
+    transform: translateX(30px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes lineUp {
+  from {
+    transform: translateY(115%);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes wipeDown {
+  from {
+    clip-path: inset(0 0 100% 0);
+    opacity: 0;
+  }
+  to {
+    clip-path: inset(0);
+    opacity: 1;
+  }
+}
+@keyframes wipeRight {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0);
+  }
+}
+
+.fl.theme-glass .fl-reveal {
+  animation: none;
+}
+.fl.theme-glass .fl-rail {
+  animation: slideL 0.92s var(--e-out) 0.05s both;
+}
+.fl.theme-glass .fl-brand {
+  animation: popIn 0.7s var(--e-out) 0.26s both;
+}
+.fl.theme-glass .fl-nav-item {
+  animation: riseIn 0.6s var(--e-out) both;
+  animation-delay: calc(0.36s + var(--i, 0) * 0.05s);
+}
+.fl.theme-glass .fl-nav-item:nth-child(1) { --i: 0; }
+.fl.theme-glass .fl-nav-item:nth-child(2) { --i: 1; }
+.fl.theme-glass .fl-nav-item:nth-child(3) { --i: 2; }
+.fl.theme-glass .fl-nav-item:nth-child(4) { --i: 3; }
+.fl.theme-glass .fl-nav-item:nth-child(5) { --i: 4; }
+.fl.theme-glass .fl-nav-item:nth-child(6) { --i: 5; }
+.fl.theme-glass .fl-rail-foot {
+  animation: riseIn 0.6s var(--e-out) 0.7s both;
+}
+.fl.theme-glass .fl-topbar > * {
+  animation: riseIn 0.7s var(--e-out) 0.14s both;
+}
+.fl.theme-glass .fl-topbar > :last-child {
+  animation: popIn 0.58s var(--e-out) 0.3s both;
+}
+
+.fl.theme-glass .fh-header .fl-section {
+  animation: wipeRight 0.8s var(--e-out) 0.44s both;
+}
+.fl.theme-glass .fh-header-sub {
+  animation: wipeDown 0.9s var(--e-soft) 0.9s both;
+}
+.fl.theme-glass .fh-header-status {
+  animation: riseIn 0.7s var(--e-out) 1.04s both;
+}
+.fl.theme-glass .fh-kpi {
+  animation: riseIn 0.7s var(--e-out) both;
+  animation-delay: calc(1.26s + var(--i, 0) * 0.07s);
+}
+.fl.theme-glass .fh-kpi:nth-child(1) { --i: 0; }
+.fl.theme-glass .fh-kpi:nth-child(2) { --i: 1; }
+.fl.theme-glass .fh-kpi:nth-child(3) { --i: 2; }
+.fl.theme-glass .fh-kpi:nth-child(4) { --i: 3; }
+.fl.theme-glass .fh-row-main > :first-child {
+  animation: riseIn 0.9s var(--e-out) 1.5s both;
+}
+.fl.theme-glass .fh-row-main > :last-child {
+  animation: slideR 0.95s var(--e-out) 0.8s both;
+}
+.fl.theme-glass .fh-row-bottom > :first-child {
+  animation: riseIn 0.9s var(--e-out) 0.3s both;
+}
+.fl.theme-glass .fh-row-bottom > :last-child {
+  animation: slideR 0.95s var(--e-out) 0.5s both;
+}
+.fl.theme-glass .fm-page-head h1 {
+  animation: riseIn 0.8s var(--e-out) 0.14s both;
+}
+.fl.theme-glass .fm-page-head p {
+  animation: wipeDown 0.9s var(--e-soft) 0.4s both;
+}
+.fl.theme-glass .fl-page > .fl-reveal:not(.fh-header):not(.fh-kpis):not(.fh-row) {
+  animation: riseIn 0.8s var(--e-out) both;
+  animation-delay: calc(0.3s + var(--n, 0) * 0.12s);
+}
+.fl.theme-glass .fl-page > .fl-reveal:nth-child(3) { --n: 1; }
+.fl.theme-glass .fl-page > .fl-reveal:nth-child(4) { --n: 2; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fl.theme-glass *,
+  .fl.theme-glass *::before,
+  .fl.theme-glass *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ------------------------------ charts draw themselves ------------------------------ */
+@keyframes drawLine {
+  from {
+    stroke-dashoffset: 4000;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.fl.theme-glass .fh svg path[fill="none"][stroke] {
+  stroke-dasharray: 4000;
+  animation: drawLine 1.6s var(--e-pen) 1.5s both;
+}
+.fl.theme-glass .fh svg path[fill^="url("] {
+  animation: wipeRight 1.42s var(--e-pen) 1.72s both;
+}
+.fl.theme-glass .fl-rail {
+  border-right: 1px solid var(--glass-line);
+}
+.fl.theme-glass .fl-tabs {
+  background: rgba(255, 255, 255, 0.1);
+}

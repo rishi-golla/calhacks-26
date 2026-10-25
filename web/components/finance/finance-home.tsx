@@ -53,7 +53,11 @@ function Header() {
         <div className="fl-section" style={{ "--accent": simulated ? "var(--lilac)" : "var(--teal)" } as CSSProperties}>
           Financial health · {provenance}
         </div>
-        <h1 className="fl-display fh-wordmark">Golden Gate Freight</h1>
+        <h1 className="fl-display fh-wordmark">
+          <span className="ln">
+            <span>Golden Gate Freight</span>
+          </span>
+        </h1>
         <div className="fh-header-sub">
           Autonomous back office · <span className="fl-num">{count(ops.casesActive)}</span> open cases ·{" "}
           <span className="fl-num">{count(ops.tasksActive)}</span> tasks in flight

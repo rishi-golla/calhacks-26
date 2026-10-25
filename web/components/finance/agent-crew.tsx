@@ -2,7 +2,8 @@
 /**
  * The crew: nine agent mascots in a lineup. Mood follows the agent's live
  * workload (`moodForStatus`), a recent failure makes it alert, and live events
- * pop a short speech bubble over whoever just did something.
+ * pop a short speech bubble over whoever just did something (one at a time:
+ * a bubble is never replaced before it expires).
  */
 import Link from "next/link";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
@@ -10,48 +11,40 @@ import { useLiveEvents, useOps } from "@/components/data-provider";
 import { Mascot, moodForStatus } from "@/components/mascot";
 import { AGENT_LIST, isAgentId, skillLabel, type AgentId } from "@/lib/agents";
 import type { LiveEvent } from "@/lib/ops";
-import { nick, usdShort } from "./format";
+import { nick } from "./format";
 
-const STATUS_COLOR: Record<string, string> = {
-  working: "var(--teal)",
-  idle: "var(--text-mute)",
-  stale: "var(--yellow)",
-  offline: "var(--text-mute)",
-  error: "var(--red)",
-};
 const BUBBLE_MS = 2600;
 const FAILED_ALERT_MS = 120_000;
 
-/** One short line per event, attributed to the agent who acted. */
+/** A few words per event, attributed to the agent who acted. */
 function bubbleFor(e: LiveEvent): [string, string] | null {
   switch (e.type) {
     case "task_started":
-      return [e.agent, `${skillLabel(e.skill)}…`];
+      return [e.agent, skillLabel(e.skill)];
     case "task_finished":
-      return e.state === "failed" ? [e.agent, "Uh oh, that failed"] : e.state === "input-required" ? [e.agent, "Need a human!"] : [e.agent, "Done ✓"];
+      return e.state === "failed" ? [e.agent, "Failed"] : e.state === "input-required" ? [e.agent, "Need you"] : [e.agent, "Done"];
     case "delegation":
       return [e.from, `→ ${nick(e.to)}`];
-    case "tool_call":
-      return e.status === "completed" ? [e.agent, `${e.name}()`] : null;
     case "hold":
-      return [e.agent || "controller", e.status === "placed" ? "Hold placed" : "Hold released"];
+      return [e.agent || "controller", e.status === "placed" ? "Hold" : "Released"];
     case "approval":
-      return e.decision === "pending" ? [e.agent || "controller", e.amount ? `Need OK on ${usdShort(e.amount)}` : "Need approval"] : null;
+      return e.decision === "pending" ? [e.agent || "controller", "Need OK"] : null;
     case "call":
-      return ["voice_desk", e.status === "in_progress" ? "Dialing…" : e.status.replaceAll("_", " ")];
+      return e.status === "in_progress" ? ["voice_desk", "Calling"] : null;
     case "review":
-      return ["validator", e.verdict === "pass" ? "Looks good" : "Found an issue"];
-    case "doc_read":
-      return [e.agent, "Reading…"];
+      return ["validator", e.verdict === "pass" ? "Looks good" : "Issue"];
     default:
       return null;
   }
 }
 
+/** "Carrier Settlement" → "Carrier settlement"; acronyms (POD) stay. */
+const sentence = (name: string) => name.replace(/ (\w+)/g, (m, w: string) => (/^[A-Z]{2,}$/.test(w) ? m : m.toLowerCase()));
+
 export function AgentCrew() {
-  const { workloads, attention, now, ops } = useOps();
+  const { workloads, attention, now } = useOps();
   const [bubbles, setBubbles] = useState<Partial<Record<AgentId, { text: string; until: number }>>>({});
-  const lastBubble = useRef<Partial<Record<AgentId, number>>>({});
+  const shownUntil = useRef<Partial<Record<AgentId, number>>>({});
 
   useLiveEvents((events) => {
     const t = Date.now();
@@ -61,10 +54,10 @@ export function AgentCrew() {
       const b = bubbleFor(e);
       if (!b || !isAgentId(b[0])) continue;
       const id = b[0];
-      // Give each bubble time to be read before replacing it.
-      if (t - (lastBubble.current[id] ?? 0) < 1_800 && !next[id]) continue;
+      // One bubble at a time: let it be read before another replaces it.
+      if ((shownUntil.current[id] ?? 0) > t || next[id]) continue;
       next[id] = { text: b[1], until: t + BUBBLE_MS };
-      lastBubble.current[id] = t;
+      shownUntil.current[id] = t + BUBBLE_MS;
     }
     if (Object.keys(next).length) setBubbles((prev) => ({ ...prev, ...next }));
   });
@@ -83,7 +76,6 @@ export function AgentCrew() {
   const recentlyFailed = new Set(
     attention.filter((a) => a.kind === "task_failed" && now - a.at < FAILED_ALERT_MS).map((a) => a.agent),
   );
-  const busy = AGENT_LIST.filter((a) => workloads[a.id]?.status === "working").length;
 
   return (
     <section className="fl-panel fh-crew-panel" aria-label="Agent crew">
@@ -91,14 +83,9 @@ export function AgentCrew() {
         <span className="fl-section" style={{ "--accent": "var(--lilac)" } as CSSProperties}>
           Agent crew
         </span>
-        <span className="fh-head-meta">
-          <span className="fl-micro">
-            {busy}/{AGENT_LIST.length} busy · {ops.tasksActive} tasks
-          </span>
-          <Link href="/agents" className="fl-btn small quiet">
-            Agent universe →
-          </Link>
-        </span>
+        <Link href="/agents" className="fl-btn small quiet">
+          Open map →
+        </Link>
       </header>
       <ul className="fh-crew">
         {AGENT_LIST.map((a, i) => {
@@ -115,12 +102,7 @@ export function AgentCrew() {
               >
                 <Mascot id={a.id} size={64} mood={moodForStatus(status, failed)} bubble={bubbles[a.id]?.text} />
                 <span className="fh-crew-nick">{a.nick}</span>
-                <span className="fh-crew-role">{a.short} · {a.name}</span>
-                <span className="fh-crew-stat">
-                  <i className="fl-dot" style={{ "--accent": STATUS_COLOR[status] } as CSSProperties} />
-                  <span className="fl-num">{w?.active ?? 0}</span> active
-                  {(w?.queued ?? 0) > 0 && <span className="fh-crew-q">+{w?.queued} queued</span>}
-                </span>
+                <span className="fh-crew-role">{sentence(a.name)}</span>
               </Link>
             </li>
           );

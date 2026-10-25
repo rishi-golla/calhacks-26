@@ -46,10 +46,8 @@ export const nick = (id: string) =>
 
 const dayFmt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
 const monthFmt = new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" });
-const clockFmt = new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
 export const dayLabel = (t: number) => dayFmt.format(t);
-export const clock = (t: number) => clockFmt.format(t);
 
 /** Forecast periods are ISO dates (week start) or months; anything else is shown as-is. */
 export function periodLabel(period: string) {

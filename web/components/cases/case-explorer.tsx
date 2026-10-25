@@ -213,17 +213,12 @@ export default function CaseExplorer() {
   return (
     <div className={`cx-page ${simulated ? "is-sim" : ""}`}>
       <header className="cx-head">
-        <div className="cx-head-title">
-          <div className="fl-section">Case explorer</div>
-          <h1 className="fl-display cx-h1">Every case, every hop</h1>
-        </div>
         <div className="cx-stats">
           <Stat label="Open" value={ops.casesActive} tone="var(--yellow)" />
           <Stat label="Resolved today" value={ops.casesResolvedToday} tone="var(--teal)" />
           <Stat label="Needs attention" value={ops.casesNeedingAttention} tone="var(--orange)" />
           <Stat label="Median resolution" value={fmtDuration(ops.medianResolutionS)} />
         </div>
-        <Histogram cases={caseList} now={now} />
       </header>
 
       <div className="cx-filters">
@@ -233,7 +228,7 @@ export default function CaseExplorer() {
             <input
               value={filters.q}
               onChange={(e) => patch({ q: e.target.value })}
-              placeholder="Search id, title, carrier, agent, skill"
+              placeholder="Search cases"
               aria-label="Search cases"
               spellCheck={false}
             />
@@ -298,7 +293,7 @@ export default function CaseExplorer() {
               </button>
             ))}
           </div>
-          <div className="cx-agent-toggles" role="group" aria-label="Agents visited (all selected)" title="Cases that visited every selected agent">
+          <div className="cx-agent-toggles" role="group" aria-label="Agents">
             {AGENT_IDS.map((id) => {
               const on = filters.agents.includes(id);
               return (
@@ -348,7 +343,7 @@ export default function CaseExplorer() {
               {caseList.length === 0 ? (
                 <>
                   <Mascot id="intake" size={64} mood="sleeping" />
-                  <span>{source === "connecting" ? "Connecting to SpacetimeDB…" : "No cases yet. New events will appear here as they are routed."}</span>
+                  <span>{source === "connecting" ? "Connecting…" : "No cases yet."}</span>
                 </>
               ) : (
                 <>
@@ -378,7 +373,7 @@ function CaseRow({ c, kind, now, top, fresh }: { c: CaseView; kind: CaseKind; no
   return (
     <Link
       href={`/cases/${encodeURIComponent(c.caseId)}`}
-      className={`cx-row ${fresh ? "cx-fresh" : ""} ${c.attention.length && !resolved ? "needs" : ""}`}
+      className={`cx-row ${fresh ? "cx-fresh" : ""}`}
       style={{ transform: `translateY(${top}px)` }}
       role="row"
     >
@@ -386,7 +381,7 @@ function CaseRow({ c, kind, now, top, fresh }: { c: CaseView; kind: CaseKind; no
       <span className="cx-title">
         <span className="cx-title-text">{c.title}</span>
         <span className="cx-sub">
-          {KIND_LABEL[kind]} · {c.loadId || "no load"} · {c.tasks.length} task{c.tasks.length === 1 ? "" : "s"}
+          {KIND_LABEL[kind]} · {c.loadId || "no load"}
           {c.synthetic && " · synthetic"}
         </span>
       </span>
@@ -431,47 +426,6 @@ function Stat({ label, value, tone }: { label: string; value: number | string; t
       <span className="fl-num cx-stat-value" style={tone ? { color: tone } : undefined}>
         {value}
       </span>
-    </div>
-  );
-}
-
-/** Cases opened per 10 minutes over the last three hours, split resolved / still open. */
-function Histogram({ cases, now }: { cases: CaseView[]; now: number }) {
-  const BUCKET = 10 * 60_000;
-  const COUNT = 18;
-  const bins = useMemo(() => {
-    const end = Math.floor(now / BUCKET) * BUCKET + BUCKET;
-    const out = Array.from({ length: COUNT }, (_, i) => ({ from: end - (COUNT - i) * BUCKET, open: 0, resolved: 0 }));
-    for (const c of cases) {
-      const i = Math.floor((c.openedAt - (end - COUNT * BUCKET)) / BUCKET);
-      if (i < 0 || i >= COUNT) continue;
-      if (c.status === "resolved") out[i].resolved += 1;
-      else out[i].open += 1;
-    }
-    return out;
-    // Re-bin once a minute, not every tick.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cases, Math.floor(now / 60_000)]);
-  const max = Math.max(1, ...bins.map((b) => b.open + b.resolved));
-  return (
-    <div className="cx-hist" aria-label="Cases opened per 10 minutes, last 3 hours">
-      <div className="cx-hist-bars">
-        {bins.map((b, i) => {
-          const total = b.open + b.resolved;
-          const label = `${new Date(b.from).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })} · ${total} opened, ${b.open} still open`;
-          return (
-            <span key={b.from} className={`cx-hist-bar ${i === COUNT - 1 ? "now" : ""}`} title={label}>
-              <i className="res" style={{ transform: `scaleY(${b.resolved / max})` }} />
-              <i className="open" style={{ transform: `scaleY(${b.open / max})`, bottom: `${(b.resolved / max) * 100}%` }} />
-            </span>
-          );
-        })}
-      </div>
-      <div className="cx-hist-axis fl-micro">
-        <span>−3h</span>
-        <span>per 10 min</span>
-        <span>now</span>
-      </div>
     </div>
   );
 }

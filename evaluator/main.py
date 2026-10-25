@@ -183,11 +183,16 @@ def read_answer_key(path: pathlib.Path) -> list[dict]:
 
 async def fetch_rows(client) -> dict[str, list[dict]]:
     """Snapshot every table the scorer reads. Table names are constants, never caller input."""
+    from common.spacetime_client import SpacetimeHTTPError
     rows = {table: await client.query_rows(f'SELECT * FROM "{table}"') for table in TABLES}
     try:
         rows[EPOCH_TABLE] = await client.query_rows(f'SELECT * FROM "{EPOCH_TABLE}"')
-    except Exception as error:  # noqa: BLE001 -- an older module has no view_epoch table: no boundary
-        log.warning("view_epoch unavailable (%s); scoring every load", type(error).__name__)
+    except SpacetimeHTTPError as error:
+        # Only a module published before the table existed (SQL "no such table", HTTP 400) means no
+        # boundary. Any other failure propagates, so a pass never publishes unbounded historical scores.
+        if error.status_code != 400:
+            raise
+        log.warning("view_epoch table is missing on this module; scoring every load")
         rows[EPOCH_TABLE] = []
     return rows
 

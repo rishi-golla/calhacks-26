@@ -1000,13 +1000,17 @@ test('settle_cases sweeps pre-existing cases once and is idempotent', () => {
   const before = h.rows('change_set').length;
   sweep(h);
   assert.deepEqual(['CASE-1', 'CASE-2', 'CASE-3'].map(id => status(h, id)), ['resolved', 'open', 'in_progress']);
-  assert.equal(h.rows('change_set').length, before + 1);
-  const change = h.rows('change_set').at(-1) as Row;
-  assert.equal(change.case_id, '', 'the sweep chains under the system scope');
-  assert.equal(change.action, 'settle_cases');
+  // One change set per changed case, each on its own case chain so the case history shows it.
+  const changes = h.rows('change_set').slice(before);
+  assert.deepEqual(changes.map(x => x.case_id).sort(), ['CASE-1', 'CASE-2', 'CASE-3']);
+  assert.ok(changes.every(x => x.action === 'settle_cases' && x.agent === 'admin:publisher'));
+  for (const change of changes) {
+    assert.ok(h.rows('audit_event').some(x => x.change_set_id === change.id && x.case_id === change.case_id));
+    assert.ok(h.rows('cell_change').some(x => x.change_set_id === change.id && x.sheet === 'case' && x.row_key === change.case_id && x.column === 'status'));
+  }
   sweep(h);
   sweep(h);
-  assert.equal(h.rows('change_set').length, before + 1, 'later sweeps only write receipts');
+  assert.equal(h.rows('change_set').length, before + 3, 'later sweeps only write receipts');
 });
 
 test('set_view_epoch upserts and clears the audited Start fresh boundary', () => {

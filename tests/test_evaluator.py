@@ -455,11 +455,26 @@ def test_view_epoch_counts_only_calls_started_since_the_boundary():
     assert evaluator.scoreboard([], {**rows, "view_epoch": epoch("2026-10-24T12:00:00.000Z")})["calls_placed"] == 1
 
 
+class EpochClient:
+    def __init__(self, error):
+        self.error = error
+
+    async def query_rows(self, sql):
+        if '"view_epoch"' in sql:
+            raise self.error
+        return []
+
+
 async def test_fetch_rows_treats_a_missing_view_epoch_table_as_no_boundary():
-    class Client:
-        async def query_rows(self, sql):
-            if '"view_epoch"' in sql:
-                raise RuntimeError("no such table")
-            return []
-    rows = await evaluator.fetch_rows(Client())
+    from common.spacetime_client import SpacetimeHTTPError
+    rows = await evaluator.fetch_rows(EpochClient(SpacetimeHTTPError(400, mutation=False)))  # "no such table"
     assert rows["view_epoch"] == [] and evaluator.view_since(rows) is None
+
+
+@pytest.mark.parametrize("status", [408, 500, 503])
+async def test_an_unreadable_view_epoch_fails_the_pass_instead_of_scoring_history(status):
+    from common.spacetime_client import SpacetimeHTTPError
+    with pytest.raises(SpacetimeHTTPError):
+        await evaluator.fetch_rows(EpochClient(SpacetimeHTTPError(status, mutation=False)))
+    with pytest.raises(TimeoutError):
+        await evaluator.fetch_rows(EpochClient(TimeoutError()))

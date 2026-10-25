@@ -38,7 +38,7 @@ Authentication comes only from the actual SpacetimeDB sender identity. The init 
 | `set_agent_model` | human | `agent`, `model`, `enabled` (default true) |
 | `ensure_agent_defaults` | admin | none; inserts `{model: auto, enabled: true}` for every agent missing from `agent_config` and leaves existing rows alone |
 | `set_view_epoch` | human, admin | `since` (optional ISO timestamp, default now) upserts the `view_epoch` row; or `clear: true` (without `since`) deletes it. Clearing when no row exists writes only the receipt |
-| `settle_cases` | admin | none; runs the case-settlement rule below over every case (one-time sweep for cases written before the rule; idempotent, a no-op sweep writes only its receipt) |
+| `settle_cases` | admin | none; runs the case-settlement rule below over every case (one-time sweep for cases written before the rule). Each changed case gets its own change set and audit event on its case chain, in one transaction; the sweep itself and a no-op sweep write only receipts |
 | `upsert_forecast` | cfo | `id`, `case_id`, `period`, `category`, `amount` (signed), `confidence`, `assumptions_json` |
 | `upsert_company` | ingest | `id`, `kind`, `name`, optional `usdot`, `mc`, `phone`, `website`, `source_url` |
 | `upsert_source_record` | ingest | `id` (`case:<case_id>`, `company:<id>`, `contacts:<company_id>` or `dataset:meta`), `kind` (`case`, `company`, `contacts`, `dataset`, matching the id prefix), `record_json` (object, or array for `contacts`), `digest` (SHA-256 hex of `record_json` exactly as sent) |
@@ -193,6 +193,8 @@ or by the reviews it enqueues; a later new task (for example the Validator's rev
 issue does reopen it. A status change is captured as `case` cells in the triggering mutation's
 change set, under the case chain; nothing is written when the status is unchanged.
 `update_case` remains the explicit override. No tables or indexes change.
+An approval that expires undecided stops counting as active, but expiry alone triggers no reducer;
+the requesting task normally settles the case when it finishes, and `settle_cases` can be re-run.
 
 ### Start fresh view boundary
 

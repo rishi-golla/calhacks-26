@@ -280,12 +280,19 @@ function settleCase(m: Mutation, caseId: string, reopen = false): boolean {
 }
 
 // One-time admin sweep for cases settled before this rule existed. Never reopens a resolved case.
+// Each changed case gets its own change set and audit event on its own chain, in this same
+// transaction, so case histories show the settlement; the sweep itself records only its receipt.
 export const settleCases: Handler = m => {
-  const { ctx, p } = m;
-  for (const row of [...ctx.db.case.iter()]) settleCase(m, row.case_id);
-  // The sweep spans cases, so it chains under the system scope rather than the first changed case.
-  delete p.case_id;
-  m.unchanged = !m.cells.length;
+  const { ctx, p, actor } = m;
+  const writeId = text(p, 'write_id', undefined, 200);
+  for (const row of [...ctx.db.case.iter()]) {
+    const inner = new Mutation(ctx, {
+      write_id: `settle_cases:${hash(canonical([writeId, row.case_id])).slice(0, 40)}`,
+      case_id: row.case_id, summary: 'Settle case status from its tasks, outbox, approvals and flags',
+    }, actor, 'settle_cases');
+    if (settleCase(inner, row.case_id)) inner.finish();
+  }
+  m.unchanged = true;
 };
 
 export const upsertInvoice: Handler = m => {

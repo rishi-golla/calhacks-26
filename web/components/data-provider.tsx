@@ -52,6 +52,7 @@ import { caseIdFromPath } from "@/lib/live-queries";
 import {
   readViewEpoch,
   scopeEvents,
+  attentionSince,
   scopeSnapshot,
   financeScope,
   hasImportedHistory,
@@ -91,10 +92,12 @@ export type ViewEpochControl = {
   support: ViewEpochSupport;
   /** Cases opened before the epoch kept because they were still in flight. */
   carried: number;
-  /** Hide everything before now. Nothing is deleted. */
+  /** Hide everything before now (moving an existing epoch forward too). Nothing is deleted. */
   set: () => Promise<void>;
   /** Remove the epoch for everyone. */
   clear: () => Promise<void>;
+  /** Put back an earlier epoch exactly (ms), or none: how "Clear queue" undoes itself. */
+  restore: (since: number | null) => Promise<void>;
 };
 
 type OpsContext = {
@@ -282,7 +285,7 @@ function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?:
             : "observer";
   const liveMutate = live.mutate;
   const changeEpoch = useCallback(
-    async (change: { clear?: true }) => {
+    async (change: { clear?: true; since?: number }) => {
       if (simulated) {
         if (!sim.current) return;
         sim.current.setViewEpoch(change);
@@ -291,15 +294,21 @@ function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?:
       }
       if (support === "absent") throw new Error("Start fresh needs a module update: this database has no view_epoch table yet.");
       if (support === "observer") throw new Error(OBSERVER_HINT);
-      await liveMutate("set_view_epoch", change);
+      // The reducer takes `since` as ISO text.
+      await liveMutate("set_view_epoch", change.since === undefined ? change : { since: new Date(change.since).toISOString() });
     },
     [simulated, support, liveMutate],
   );
-  const setEpochNow = useCallback(() => changeEpoch({}), [changeEpoch]);
+  // A new epoch is the point of the click, so this viewer's "Show earlier" goes off with it.
+  const setEpochNow = useCallback(async () => {
+    await changeEpoch({});
+    setShowEarlier(false);
+  }, [changeEpoch, setShowEarlier]);
   const clearEpoch = useCallback(() => changeEpoch({ clear: true }), [changeEpoch]);
+  const restoreEpoch = useCallback((at: number | null) => changeEpoch(at === null ? { clear: true } : { since: at }), [changeEpoch]);
   const viewEpoch = useMemo<ViewEpochControl>(
-    () => ({ epoch, active: since !== undefined, showEarlier, setShowEarlier, support, carried: scope?.carried.size ?? 0, set: setEpochNow, clear: clearEpoch }),
-    [epoch, since, showEarlier, setShowEarlier, support, scope, setEpochNow, clearEpoch],
+    () => ({ epoch, active: since !== undefined, showEarlier, setShowEarlier, support, carried: scope?.carried.size ?? 0, set: setEpochNow, clear: clearEpoch, restore: restoreEpoch }),
+    [epoch, since, showEarlier, setShowEarlier, support, scope, setEpochNow, clearEpoch, restoreEpoch],
   );
 
   // Emit deltas to subscribers. Diffs run on every row so a change of scope
@@ -346,7 +355,7 @@ function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?:
   const ops = useMemo(() => buildOpsMetrics(snapshot, cases, now), [snapshot, cases, now]);
   const history = useMemo(() => hasImportedHistory(fullSnapshot), [fullSnapshot]);
   const finance = useMemo(() => buildFinance(snapshot, now, financeScope(since, history)), [snapshot, now, since, history]);
-  const attention = useMemo(() => buildAttention(snapshot, cases, now), [snapshot, cases, now]);
+  const attention = useMemo(() => attentionSince(buildAttention(snapshot, cases, now), since), [snapshot, cases, now, since]);
 
   const value = useMemo<OpsContext>(
     () => ({

@@ -223,3 +223,14 @@ export function fmtSince(since: number, now: number): string {
     ? time
     : `${at.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
 }
+
+/**
+ * Work-queue items raised at or after the epoch. A carried-over case keeps its
+ * whole history for its trace and totals, but what it flagged before "Start
+ * fresh" (or "Clear" on the queue) was dealt with by that click, so the queue
+ * drops it; anything it raises afterwards comes back. Undated items are kept.
+ */
+export function attentionSince<T extends { at: number }>(items: T[], since: number | undefined): T[] {
+  if (since === undefined) return items;
+  return items.filter((item) => !item.at || item.at >= since);
+}

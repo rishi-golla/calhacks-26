@@ -17,6 +17,7 @@ import { isAgentId } from "@/lib/agents";
 import { str } from "@/lib/data";
 import { fmtAgo, needsPerson, type AttentionItem } from "@/lib/ops";
 import { emptyNote, nick, usd } from "./format";
+import { ClearQueue } from "@/components/shell/view-epoch";
 import { useFresh, useSettled } from "./fresh";
 
 type Kind = AttentionItem["kind"];
@@ -89,6 +90,7 @@ export function AttentionQueue({ id }: { id?: string }) {
           Work queue
         </span>
         <span className="fh-head-meta">
+          <ClearQueue count={attention.length} />
           {critical > 0 && <span className="fl-chip bad outline">{critical} critical</span>}
           <span
             className={`fl-chip ${mine.length ? "hot solid" : source === "live" || source === "simulation" ? "ok outline" : "outline"}`}

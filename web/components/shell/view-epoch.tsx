@@ -15,7 +15,78 @@ const errorText = (e: unknown) => {
   return /provision|role|not allowed|unauthori[sz]ed|forbidden|permission/i.test(message) ? OBSERVER_HINT : message;
 };
 
-/** Top-bar control on /demo: "Start fresh", or the epoch with Undo once one is set. */
+/** Why the epoch can't be moved from here, or "" when it can. */
+const unavailable = (support: ReturnType<typeof useOps>["viewEpoch"]["support"]) =>
+  support === "absent"
+    ? "needs module update"
+    : support === "pending"
+      ? "checking database…"
+      : support === "read-only"
+        ? "needs the live database"
+        : support === "observer"
+          ? OBSERVER_HINT
+          : "";
+
+/**
+ * "Clear" in the work queue header: one click moves the shared Start fresh
+ * point to now, so everything already in the queue drops out for every viewer
+ * (cases still running carry over). Nothing is deleted; for a few seconds the
+ * button offers Undo, which puts the previous point back exactly.
+ */
+export function ClearQueue({ count }: { count: number }) {
+  const { viewEpoch } = useOps();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [undo, setUndo] = useState<{ previous: number | null } | null>(null);
+  useEffect(() => {
+    if (!undo) return;
+    const t = window.setTimeout(() => setUndo(null), 8_000);
+    return () => window.clearTimeout(t);
+  }, [undo]);
+  const reason = unavailable(viewEpoch.support);
+  const act = async (action: () => Promise<void>, after: typeof undo) => {
+    setBusy(true);
+    setError("");
+    try {
+      await action();
+      setUndo(after);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (undo)
+    return (
+      <span className="fl-micro fh-clear-done" role="status">
+        Cleared ·{" "}
+        <button type="button" className="fl-textbtn" disabled={busy} onClick={() => act(() => viewEpoch.restore(undo.previous), null)}>
+          {busy ? "Undoing…" : "Undo"}
+        </button>
+      </span>
+    );
+  if (!count) return null;
+  return (
+    <>
+      <button
+        type="button"
+        className="fl-btn quiet small fh-clear"
+        disabled={busy || Boolean(reason)}
+        onClick={() => act(viewEpoch.set, { previous: viewEpoch.epoch?.since ?? null })}
+        title={reason || "Hide everything in the queue for everyone (Start fresh from now). Nothing is deleted."}
+      >
+        <Eraser size={12} aria-hidden /> {busy ? "Clearing…" : "Clear"}
+      </button>
+      {error && (
+        <span className="fl-micro" role="alert" title={error}>
+          Couldn’t clear
+        </span>
+      )}
+    </>
+  );
+}
+
+/** Top-bar control on /demo: "Start fresh", or the epoch with Undo (and Start fresh again) once one is set. */
 export function StartFresh() {
   const { viewEpoch } = useOps();
   const { epoch, support } = viewEpoch;
@@ -54,7 +125,12 @@ export function StartFresh() {
   if (epoch)
     return (
       <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-        <EpochNote toggle={viewEpoch.showEarlier} undo={support === "ready" ? () => run(viewEpoch.clear) : undefined} busy={busy} />
+        <EpochNote
+          toggle={viewEpoch.showEarlier}
+          undo={support === "ready" ? () => run(viewEpoch.clear) : undefined}
+          restart={support === "ready" ? () => run(viewEpoch.set) : undefined}
+          busy={busy}
+        />
         {error && (
           <span className="fl-micro" role="alert">
             {error}
@@ -64,16 +140,7 @@ export function StartFresh() {
     );
 
   const ready = support === "ready";
-  const reason =
-    support === "absent"
-      ? "needs module update"
-      : support === "pending"
-        ? "checking database…"
-        : support === "read-only"
-          ? "needs the live database"
-          : support === "observer"
-            ? OBSERVER_HINT
-            : "";
+  const reason = unavailable(support);
   return (
     <div ref={ref} style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 8 }}>
       <button
@@ -111,9 +178,22 @@ export function StartFresh() {
 /**
  * "Since 05:58 · Show earlier", or with this viewer's opt-out
  * "All activity · Hide earlier". Renders nothing without an
- * epoch. `toggle` shows the viewer switch; `undo` adds the shared Undo.
+ * epoch. `toggle` shows the viewer switch; `undo` adds the shared Undo;
+ * `restart` adds "Start fresh" again, moving the point to now in one click.
  */
-export function EpochNote({ toggle = true, undo, busy = false, style }: { toggle?: boolean; undo?: () => void; busy?: boolean; style?: CSSProperties }) {
+export function EpochNote({
+  toggle = true,
+  undo,
+  restart,
+  busy = false,
+  style,
+}: {
+  toggle?: boolean;
+  undo?: () => void;
+  restart?: () => void;
+  busy?: boolean;
+  style?: CSSProperties;
+}) {
   const { viewEpoch, now } = useOps();
   const { epoch, showEarlier, setShowEarlier } = viewEpoch;
   if (!epoch) return null;
@@ -134,6 +214,14 @@ export function EpochNote({ toggle = true, undo, busy = false, style }: { toggle
           {" · "}
           <button type="button" className="fl-textbtn" onClick={undo} disabled={busy} title="Remove the epoch for everyone">
             {busy ? "Undoing…" : "Undo"}
+          </button>
+        </>
+      )}
+      {restart && (
+        <>
+          {" · "}
+          <button type="button" className="fl-textbtn" onClick={restart} disabled={busy} title="Move the start to now for everyone. Nothing is deleted.">
+            Start fresh
           </button>
         </>
       )}

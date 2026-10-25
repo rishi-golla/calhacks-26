@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SCOPED_TABLES, CARRY_GRACE_MS, carriedOver, financeScope, fmtSince, hasImportedHistory, readViewEpoch, rowInScope, scopeEvents, scopeSnapshot, showEarlierApplies, showEarlierValue, viewScope } from "./view-epoch";
+import { SCOPED_TABLES, CARRY_GRACE_MS, attentionSince, carriedOver, financeScope, fmtSince, hasImportedHistory, readViewEpoch, rowInScope, scopeEvents, scopeSnapshot, showEarlierApplies, showEarlierValue, viewScope } from "./view-epoch";
 import { emptySnapshot, type Row, type Snapshot } from "./data";
 import { DemoSim } from "./demo-sim";
 import { buildFinance, buildWorkloads, type LiveEvent } from "./ops";
@@ -462,4 +462,11 @@ test("Finance after Start fresh with imported history: the books plus live activ
   const g = buildFinance(scoped(live), NOW, financeScope(SINCE, hasImportedHistory(live)));
   assert.equal(g.since, SINCE);
   assert.equal(g.ar, 500);
+});
+
+test("attentionSince drops queue items raised before the epoch, keeps later and undated ones", () => {
+  const items = [{ id: "old", at: 1_000 }, { id: "new", at: 5_000 }, { id: "undated", at: 0 }];
+  assert.deepEqual(attentionSince(items, undefined).map((i) => i.id), ["old", "new", "undated"]);
+  assert.deepEqual(attentionSince(items, 3_000).map((i) => i.id), ["new", "undated"]);
+  assert.deepEqual(attentionSince(items, 5_000).map((i) => i.id), ["new", "undated"]);
 });

@@ -44,15 +44,6 @@ class GuardedSkillFailed(RuntimeError):
         super().__init__(self.reason)
 
 
-def _raise_last_skill_failure(result: dict | None, records: list[dict]) -> None:
-    """A budget that runs out after the guarded workflow already failed reports that failure, not the budget."""
-    if result is None:
-        return
-    failures = sum(1 for item in records if item["name"] == "execute_current_skill" and item["status"] == "failed")
-    attempts = f" after {failures} attempts" if failures > 1 else ""
-    raise GuardedSkillFailed(f"{skill_failure(result)[:170]}{attempts}")
-
-
 def retryable_turn_error(error: ProviderError) -> bool:
     """A turn with no usable answer executed no tool, so asking again is safe: a cut-short turn, a transport
     failure, a rate limit or a provider 5xx."""
@@ -219,7 +210,6 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
     }, allow_nan=False)}]
     refs: set[str] = set()
     records: list[dict] = []
-    last_skill_failure: dict | None = None
     usage: list[dict] = []
     seen_ids: set[str] = set()
     artifact = None
@@ -291,7 +281,6 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
                 raise ProviderError("provider reused a tool call identifier")
             seen_ids.add(call["id"])
             if len(records) >= MAX_TOOL_CALLS:
-                _raise_last_skill_failure(last_skill_failure, records)
                 raise ended(ProviderError("model tool call budget exhausted"))
             await _audit(agent, env, task_id, call, status="started", model=model)
 
@@ -361,7 +350,6 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
             records.append({"id": call["id"], "name": call["name"], "status": completed["status"],
                             "duration_ms": completed["duration_ms"]})
             if call["name"] == "execute_current_skill" and completed["status"] == "failed":
-                last_skill_failure = result
                 # Counted from the checkpointed results, so a replay after a crash or wait decides the same way.
                 failures = sum(1 for item in records
                                if item["name"] == "execute_current_skill" and item["status"] == "failed")
@@ -377,5 +365,4 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
     if artifact is not None:
         return _finish(artifact, None, records, settings, usage, model,
                        "Final model summary budget exhausted; guarded operation result preserved.")
-    _raise_last_skill_failure(last_skill_failure, records)
     raise ended(ProviderError("model tool turn budget exhausted"))

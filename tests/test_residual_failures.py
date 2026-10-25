@@ -389,7 +389,8 @@ async def test_a_budget_that_runs_out_after_failed_executions_reports_the_workfl
     monkeypatch.setattr(tool_loop, "model_turn", model)
     with pytest.raises(tool_loop.GuardedSkillFailed) as failure:
         await tool_loop.run_tool_loop(agent, env, meta, "task")
-    assert failure.value.reason == "ProviderError: evidence exceeds inference input limit after 2 attempts"
+    assert failure.value.reason == ("ProviderError: evidence exceeds inference input limit; "
+                                    "then model tool call budget exhausted")
 
 
 @pytest.mark.parametrize("limit", ["budget", "cut_short"])

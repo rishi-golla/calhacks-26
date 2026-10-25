@@ -1,0 +1,145 @@
+/* Apify provenance: logomark, run links and finding cards (components/apify.tsx). Flat, 1px rules, no radius. */
+
+.apify-mark {
+  flex: none;
+  display: inline-block;
+  vertical-align: -1px;
+}
+
+.apify-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  border: 1px solid rgba(36, 109, 255, 0.45);
+  color: var(--text, #ecedf4);
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  line-height: 15px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 200ms ease;
+}
+.apify-run:hover {
+  background: rgba(36, 109, 255, 0.14);
+}
+
+.apify-finding {
+  margin: 6px 0 4px;
+  padding: 8px 10px;
+  border-left: 2px solid #246dff;
+  background: rgba(36, 109, 255, 0.07);
+  display: grid;
+  gap: 6px;
+}
+.apify-finding.mismatch {
+  border-left-color: var(--red, #e40014);
+  background: rgba(228, 0, 20, 0.07);
+}
+.apify-finding.not_found,
+.apify-finding.unavailable {
+  border-left-color: var(--yellow, #d1d11a);
+  background: rgba(209, 209, 26, 0.06);
+}
+.apify-finding-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.apify-finding-check {
+  font-family: var(--font-label, monospace);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text, #ecedf4);
+  white-space: nowrap;
+}
+.apify-finding-head .apify-outcome {
+  margin-left: auto;
+}
+.apify-finding-line {
+  margin: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text, #ecedf4);
+  overflow-wrap: anywhere;
+}
+.apify-finding-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 16px;
+  color: var(--text-dim, #a8adb8);
+}
+.apify-finding-note strong {
+  color: var(--text, #ecedf4);
+  font-weight: 600;
+}
+.apify-finding-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Case trace: Apify calls on node cards and lane ticks. */
+.fl .ct-tool.apify {
+  grid-template-columns: 12px minmax(0, 1fr) 12px 42px;
+  align-items: center;
+  color: var(--text);
+}
+.fl .ct-tick.apify.running {
+  animation: ct-blink 0.9s ease-in-out infinite;
+}
+.fl .ct-list > li.apify .ct-line .apify-mark {
+  margin-right: -2px;
+}
+.fl .apify-case-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-color: rgba(36, 109, 255, 0.6);
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color var(--t-hover) var(--ease-hover);
+}
+.fl .apify-case-chip:hover {
+  background: rgba(36, 109, 255, 0.16);
+}
+
+/* Cases list. */
+.fl .cx-toggle.apify-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.fl .cx-toggle.apify-toggle.on {
+  background: #246dff;
+  color: #fff;
+}
+.fl .cx-toggle.apify-toggle.on .fl-mute {
+  color: rgba(255, 255, 255, 0.75);
+}
+.fl .apify-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-color: rgba(36, 109, 255, 0.6);
+  color: var(--text);
+}
+
+/* Agent inbox. */
+.ai-tool-summary .apify-mark {
+  align-self: center;
+}
+.ai-source-tag.apify {
+  color: #8fb3ff;
+}
+.ai-source-tag.apify.bad {
+  color: #ff7a85;
+}
+.ai-source-tag.apify.warn {
+  color: #e2e27a;
+}

@@ -7,8 +7,10 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, SlidersHorizontal, X } from "lucide-react";
 import { useLiveEvents, useOps } from "@/components/data-provider";
+import { ApifyMark } from "@/components/apify";
 import { Mascot } from "@/components/mascot";
 import { AGENT_META, skillLabel, type AgentId } from "@/lib/agents";
+import { apifyCaseIds } from "@/lib/apify";
 import { str } from "@/lib/data";
 import { fmtDuration, fmtMoney, type AttentionKind, type CaseView } from "@/lib/ops";
 import { fmtSince } from "@/lib/view-epoch";
@@ -83,9 +85,11 @@ type Filters = {
   handling: AttentionKind[];
   agents: AgentId[];
   kinds: CaseKind[];
+  /** Only cases where an agent called Apify. */
+  apify: boolean;
   sort: SortKey;
 };
-const EMPTY: Filters = { q: "", status: "all", priorities: [], attention: [], handling: [], agents: [], kinds: [], sort: "newest" };
+const EMPTY: Filters = { q: "", status: "all", priorities: [], attention: [], handling: [], agents: [], kinds: [], apify: false, sort: "newest" };
 
 function readFilters(): Filters {
   if (typeof window === "undefined") return EMPTY;
@@ -104,6 +108,7 @@ function readFilters(): Filters {
     ),
     agents: list("agent").filter((v): v is AgentId => v in AGENT_META),
     kinds: list("kind").filter((v): v is CaseKind => (KINDS as string[]).includes(v)),
+    apify: p.get("apify") === "1",
     sort: SORTS.some((s) => s.id === sort) ? sort : "newest",
   };
 }
@@ -117,6 +122,7 @@ function writeFilters(f: Filters) {
   set("wait", f.handling.join(","));
   set("agent", f.agents.join(","));
   set("kind", f.kinds.join(","));
+  set("apify", f.apify ? "1" : "");
   set("sort", f.sort === "newest" ? "" : f.sort);
   const qs = p.toString();
   window.history.replaceState(window.history.state, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
@@ -162,6 +168,7 @@ export default function CaseExplorer() {
   }, [fresh]);
 
   const companies = useMemo(() => new Map(snapshot.company.map((c) => [str(c.id, ""), str(c.name, "")])), [snapshot.company]);
+  const apifyCases = useMemo(() => apifyCaseIds(snapshot.audit_event, snapshot.task), [snapshot.audit_event, snapshot.task]);
   const indexed = useMemo(
     () =>
       caseList.map((c) => {
@@ -193,6 +200,7 @@ export default function CaseExplorer() {
       if (filters.status === "human_owned" && c.status !== "human_owned") return false;
       if (filters.priorities.length && !filters.priorities.includes(c.priority)) return false;
       if (filters.kinds.length && !filters.kinds.includes(kind)) return false;
+      if (filters.apify && !apifyCases.has(c.caseId)) return false;
       // "Needs you" and "Agents handling" chips are one choice of open items: a
       // case matches any chip picked in either group (so an old `attn` link
       // holding a hold and another kind still matches either).
@@ -208,7 +216,7 @@ export default function CaseExplorer() {
     if (filters.sort === "exposure") out.sort((a, b) => b.c.exposureUsd - a.c.exposureUsd || b.c.openedAt - a.c.openedAt);
     else if (filters.sort === "duration") out.sort((a, b) => caseDuration(b.c, now) - caseDuration(a.c, now));
     return out;
-  }, [indexed, filters, now]);
+  }, [indexed, filters, now, apifyCases]);
 
   const anyFilter =
     filters.q ||
@@ -217,7 +225,8 @@ export default function CaseExplorer() {
     filters.attention.length ||
     filters.handling.length ||
     filters.agents.length ||
-    filters.kinds.length;
+    filters.kinds.length ||
+    filters.apify;
 
   /* windowing */
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -292,6 +301,17 @@ export default function CaseExplorer() {
                 {p}
               </button>
             ))}
+          </div>
+          <div className="cx-toggles" role="group" aria-label="External evidence">
+            <button
+              className={`cx-toggle apify-toggle ${filters.apify ? "on" : ""}`}
+              aria-pressed={filters.apify}
+              onClick={() => patch({ apify: !filters.apify })}
+              title="Cases where an agent checked public records through Apify"
+            >
+              <ApifyMark size={11} /> Apify
+              <span className="fl-mono fl-mute">{apifyCases.size}</span>
+            </button>
           </div>
           <MoreFilters count={filters.kinds.length + filters.attention.length + filters.handling.length}>
             <div className="cx-more-group">
@@ -403,7 +423,7 @@ export default function CaseExplorer() {
           ) : (
             <div className="cx-rows" style={{ height: rows.length * ROW_H }}>
               {rows.slice(first, last).map(({ c, kind }, i) => (
-                <CaseRow key={c.caseId} c={c} kind={kind} now={now} top={(first + i) * ROW_H} fresh={fresh.has(c.caseId)} />
+                <CaseRow key={c.caseId} c={c} kind={kind} now={now} top={(first + i) * ROW_H} fresh={fresh.has(c.caseId)} apify={apifyCases.has(c.caseId)} />
               ))}
             </div>
           )}
@@ -414,7 +434,7 @@ export default function CaseExplorer() {
   );
 }
 
-function CaseRow({ c, kind, now, top, fresh }: { c: CaseView; kind: CaseKind; now: number; top: number; fresh: boolean }) {
+function CaseRow({ c, kind, now, top, fresh, apify }: { c: CaseView; kind: CaseKind; now: number; top: number; fresh: boolean; apify: boolean }) {
   const resolved = c.status === "resolved";
   // The load id is already in the case id; only say it again when it is not.
   const sub = [c.loadId && !c.caseId.includes(c.loadId) ? c.loadId : "", c.synthetic ? "synthetic" : ""].filter(Boolean).join(" · ");
@@ -455,6 +475,11 @@ function CaseRow({ c, kind, now, top, fresh }: { c: CaseView; kind: CaseKind; no
       </span>
       <span className={`num fl-mono cx-age ${resolved ? "" : "live"}`}>{c.openedAt ? shortDur(caseDuration(c, now)) : null}</span>
       <span className="cx-attn">
+        {apify && (
+          <span className="fl-chip outline cx-chip apify-chip" title="An agent checked this case against public records through Apify">
+            <ApifyMark size={10} /> Apify
+          </span>
+        )}
         {c.needsYou.map((k) => (
           <span key={k} className={`fl-chip outline ${ATTENTION_META[k].tone} cx-chip`}>
             {ATTENTION_META[k].label}

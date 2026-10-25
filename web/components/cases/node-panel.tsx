@@ -6,10 +6,12 @@
  */
 import type { CSSProperties, ReactNode } from "react";
 import { ArrowDownRight, ArrowUpLeft, Phone, X } from "lucide-react";
+import { ApifyFinding, ApifyMark } from "@/components/apify";
 import { EvidenceChip } from "@/components/evidence";
 import { Mascot } from "@/components/mascot";
 import { CheckList, Workings } from "@/components/workings";
 import { agentColor, agentLabel, skillLabel } from "@/lib/agents";
+import { apifyEvidence, APIFY_TOOLS } from "@/lib/apify";
 import { json, num, str, timestamp, type Row } from "@/lib/data";
 import { fmtMoney, type TimelineEvent } from "@/lib/ops";
 import {
@@ -244,12 +246,15 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
       {tools.length > 0 && (
         <Section title="Actions" count={tools.length}>
           <ul className="ct-list">
-            {tools.map(({ call, status: s }) => (
-              <li key={call.id}>
+            {tools.map(({ call, status: s }) => {
+              const apify = apifyEvidence({ ...call, status: s === "running" ? "started" : call.status });
+              return (
+              <li key={call.id} className={apify ? "apify" : undefined}>
                 <Expandable
                   line={
                     <>
                       <span className={`ct-tool-glyph ${s}`}>{s === "running" ? "…" : s === "completed" ? "✓" : "✗"}</span>
+                      {apify && <ApifyMark size={12} title="Called Apify" />}
                       <span title={call.name}>{toolLabel(call.name)}</span>
                       <span className="fl-micro" style={{ marginLeft: "auto" }}>
                         {s === "running" ? "running" : call.durationMs ? shortDur(call.durationMs) : s === "completed" ? "" : s}
@@ -261,8 +266,10 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
                     ["result", s === "running" ? null : call.result],
                   ]}
                 />
+                {apify && <ApifyFinding evidence={apify} />}
               </li>
-            ))}
+              );
+            })}
           </ul>
         </Section>
       )}
@@ -517,6 +524,9 @@ const KIND_GLYPH: Partial<Record<TimelineEvent["kind"], string>> = {
   policy: "⛔",
 };
 
+const apifyTool = (e: TimelineEvent) =>
+  e.kind === "tool_call" && str(json<Row>(e.row.summary, {}).tool_name, "") in APIFY_TOOLS;
+
 /** "Run workflow · 8.6s", or "… failed" when it did not complete. */
 function toolLogTitle(row: Row) {
   const call = json<Row>(row.summary, {});
@@ -571,7 +581,7 @@ export function CaseLog({ trace, cursor, onSelect, onClose }: { trace: CaseTrace
             <>
               <span className="fl-mono fl-mute ct-log-time">{clock(e.at)}</span>
               <span className="ct-log-glyph" style={{ color: agentColor(e.agent) }}>
-                {milestone ? "·" : (KIND_GLYPH[e.kind] ?? "·")}
+                {milestone ? "·" : apifyTool(e) ? <ApifyMark size={11} title="Apify" /> : (KIND_GLYPH[e.kind] ?? "·")}
               </span>
               <span className="ct-log-body">
                 <span className="ct-log-agent" style={{ color: agentColor(e.agent) }}>

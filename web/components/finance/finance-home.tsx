@@ -4,9 +4,9 @@
  * back office that keeps it, in real time. Everything renders from `useOps()`
  * (live SpacetimeDB or the labeled browser simulation); nothing polls.
  *
- * Layout: greeting → 4 KPI cards → needs attention | cash flow, cash position
- * + operations | payables breakdown, live ledger, automation goal → agent crew
- * → invoices & payments.
+ * Layout: greeting → 4 KPI cards → needs attention | cash flow → cash
+ * position, beside payables breakdown and automation goal; below, one tabbed
+ * card holds invoices, the live ledger and the agent crew.
  */
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState, type CSSProperties } from "react";
@@ -48,15 +48,11 @@ export default function FinanceHome() {
         </div>
         <aside className="fn-side fl-reveal" style={reveal(1)}>
           <PayablesDonut />
-          <LiveTicker />
           <AutomationGoal />
         </aside>
       </div>
       <div className="fl-reveal" style={reveal(4)}>
-        <AgentCrew />
-      </div>
-      <div className="fl-reveal" style={reveal(5)}>
-        <InvoicesPanel />
+        <Activity />
       </div>
       <Suspense fallback={null}>
         <FocusFromQuery />
@@ -98,11 +94,20 @@ function Greeting({ range, setRange }: { range: Range; setRange: (r: Range) => v
           {lastUpdated ? `updated ${fmtAgo(lastUpdated, now)}` : "no updates yet"}
           {simulated && " · browser simulation, nothing is written"}
         </p>
-        <div className="fn-chips">
-          <Link href="/cases">{count(ops.casesActive)} active cases</Link>
-          <Link href="/agents">{count(ops.tasksActive)} tasks in flight</Link>
-          <Link href="/agents">{ops.agentsOnline}/9 agents online</Link>
-          <a href="#attention" className={attention.length ? "hot" : "ok"}>
+        <div className="fn-summary">
+          <Link href="/cases">
+            <b>{count(ops.casesActive)}</b> active cases
+          </Link>
+          <i className="fn-sep" />
+          <Link href="/agents">
+            <b>{count(ops.tasksActive)}</b> tasks in flight
+          </Link>
+          <i className="fn-sep" />
+          <Link href="/agents">
+            <b>{ops.agentsOnline}/9</b> agents online
+          </Link>
+          <i className="fn-sep" />
+          <a href="#attention" className={attention.length ? "hot" : ""}>
             {attention.length} need attention
           </a>
         </div>
@@ -126,9 +131,9 @@ function Greeting({ range, setRange }: { range: Range; setRange: (r: Range) => v
 
 const KPIS: { key: "cash" | "ap" | "ar" | "revenue"; label: string; icon: LucideIcon; tone: string; good: "up" | "down" }[] = [
   { key: "cash", label: "Cash balance", icon: Wallet, tone: "green", good: "up" },
-  { key: "ar", label: "Receivables", icon: HandCoins, tone: "violet", good: "up" },
-  { key: "ap", label: "Payables", icon: Receipt, tone: "blue", good: "down" },
-  { key: "revenue", label: "Revenue MTD", icon: TrendingUp, tone: "pink", good: "up" },
+  { key: "ar", label: "Receivables", icon: HandCoins, tone: "blue", good: "up" },
+  { key: "ap", label: "Payables", icon: Receipt, tone: "amber", good: "down" },
+  { key: "revenue", label: "Revenue MTD", icon: TrendingUp, tone: "sky", good: "up" },
 ];
 
 function KpiCards({ range }: { range: Range }) {
@@ -174,14 +179,14 @@ function AttentionList() {
     return [...m.entries()];
   }, [attention]);
   const shown = attention.filter((a) => filter === "all" || a.kind === filter);
-  const rows = all ? shown : shown.slice(0, 5);
+  const rows = all ? shown : shown.slice(0, 4);
   return (
     <section id="attention" className="fn-card fn-att" aria-label="Needs attention">
       <header className="fn-card-head">
         <h2>
           Needs attention <span className="fn-badge">{attention.length}</span>
         </h2>
-        {shown.length > 5 && (
+        {shown.length > 4 && (
           <button className="fn-more" onClick={() => setAll((v) => !v)}>
             {all ? "Show less" : `View all ${shown.length}`} <ArrowRight size={13} />
           </button>
@@ -280,18 +285,11 @@ function CashFlow() {
 }
 
 function CashPosition({ range }: { range: Range }) {
-  const { finance, ops, source } = useOps();
+  const { finance, source } = useOps();
   const [hover, setHover] = useState<number | null>(null);
   const points: TrendPoint[] = finance.trends.cash.slice(-range);
   const d = change(points);
   const at = hover === null ? null : points[hover];
-  const stats = [
-    { label: "Cases resolved today", value: count(ops.casesResolvedToday), tone: "green" },
-    { label: "Throughput", value: `${Math.round(ops.throughputPerHour)}/h`, tone: "violet" },
-    { label: "Median resolution", value: fmtDuration(ops.medianResolutionS), tone: "blue" },
-    { label: "Clerk time saved", value: `${count(ops.minutesSaved / 60)} h`, tone: "amber" },
-    { label: "Handoffs · tool calls", value: `${count(ops.handoffs)} · ${count(ops.toolCalls)}`, tone: "pink" },
-  ];
   return (
     <section className="fn-card fn-pos" aria-label="Cash position">
       <div className="fn-pos-chart">
@@ -309,26 +307,14 @@ function CashPosition({ range }: { range: Range }) {
         {points.length < 2 ? (
           <div className="fn-empty">{emptyNote(source, "Not enough history to chart yet.")}</div>
         ) : (
-          <LineChart points={points} color="#7c5cfc" height={170} drawKey={`cash-${range}`} label="Cash position" hover={hover} onHover={setHover} />
+          <LineChart points={points} color="#3d5af1" height={170} drawKey={`cash-${range}`} label="Cash position" hover={hover} onHover={setHover} />
         )}
-      </div>
-      <div className="fn-pos-stats">
-        <CardHead title="Operations" href="/agents" more="Agents" />
-        <ul className="fn-list">
-          {stats.map((s) => (
-            <li key={s.label} className="fn-stat">
-              <span className={`fn-dot ${s.tone}`} />
-              <span className="fn-stat-label">{s.label}</span>
-              <span className="fn-stat-value">{s.value}</span>
-            </li>
-          ))}
-        </ul>
       </div>
     </section>
   );
 }
 
-const DONUT_TONES = ["#7c5cfc", "#f5a524", "#ef5d6c", "#22c08a"];
+const DONUT_TONES = ["#3d5af1", "#f5b041", "#ef6b78", "#2fbf8a"];
 
 function PayablesDonut() {
   const { finance, source } = useOps();
@@ -400,6 +386,14 @@ function PayablesDonut() {
 function AutomationGoal() {
   const { ops } = useOps();
   const rate = ops.automationRate;
+  const stats = [
+    { label: "Cases resolved today", value: count(ops.casesResolvedToday), tone: "green" },
+    { label: "Throughput", value: `${Math.round(ops.throughputPerHour)}/h`, tone: "violet" },
+    { label: "Median resolution", value: fmtDuration(ops.medianResolutionS), tone: "blue" },
+    { label: "Clerk time saved", value: `${count(ops.minutesSaved / 60)} h`, tone: "amber" },
+    { label: "Handoffs · tool calls", value: `${count(ops.handoffs)} · ${count(ops.toolCalls)}`, tone: "grey" },
+  ];
+
   const onTrack = rate >= GOAL;
   return (
     <section className="fn-card fn-goal" aria-label="Automation goal">
@@ -429,6 +423,49 @@ function AutomationGoal() {
         </span>
         <ArrowRight size={14} />
       </Link>
+      <ul className="fn-list">
+        {stats.map((s) => (
+          <li key={s.label} className="fn-stat">
+            <span className={`fn-dot ${s.tone}`} />
+            <span className="fn-stat-label">{s.label}</span>
+            <span className="fn-stat-value">{s.value}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+const PANES = [
+  { id: "invoices", label: "Invoices & payments" },
+  { id: "ledger", label: "Live ledger" },
+  { id: "crew", label: "Agent crew" },
+] as const;
+
+/** Secondary panels share one card; all stay mounted so live state survives tab switches. */
+function Activity() {
+  const [pane, setPane] = useState<(typeof PANES)[number]["id"]>("invoices");
+  return (
+    <section className="fn-card fn-activity" aria-label="Activity">
+      <header className="fn-card-head">
+        <h2>Activity</h2>
+        <div className="fn-seg" role="tablist" aria-label="Activity views">
+          {PANES.map((p) => (
+            <button key={p.id} role="tab" aria-selected={pane === p.id} className={pane === p.id ? "on" : ""} onClick={() => setPane(p.id)}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </header>
+      <div className="fn-activity-pane" hidden={pane !== "invoices"}>
+        <InvoicesPanel />
+      </div>
+      <div className="fn-activity-pane" hidden={pane !== "ledger"}>
+        <LiveTicker />
+      </div>
+      <div className="fn-activity-pane" hidden={pane !== "crew"}>
+        <AgentCrew />
+      </div>
     </section>
   );
 }

@@ -1,4 +1,4 @@
-import { Archivo, Doto, Inter, JetBrains_Mono, Plus_Jakarta_Sans } from "next/font/google";
+import { Archivo, Doto, Inter, JetBrains_Mono } from "next/font/google";
 
 /** Display: condensed, uppercase, industrial (Senra / Edgerun tone). */
 export const display = Archivo({
@@ -30,11 +30,4 @@ export const body = Inter({
   display: "swap",
 });
 
-/** Finance home (light theme): soft geometric sans. */
-export const sans = Plus_Jakarta_Sans({
-  subsets: ["latin"],
-  variable: "--ff-sans",
-  display: "swap",
-});
-
-export const fontClassNames = [display.variable, label.variable, mono.variable, body.variable, sans.variable].join(" ");
+export const fontClassNames = [display.variable, label.variable, mono.variable, body.variable].join(" ");

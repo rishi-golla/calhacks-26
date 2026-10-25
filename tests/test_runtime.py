@@ -530,3 +530,55 @@ async def test_tool_audit_survives_restart_with_same_write_id(tmp_path, monkeypa
         assert delivered == [original]
     finally:
         await restarted.store.close()
+
+
+async def test_background_projection_delivery_keeps_slow_writes_off_the_task_path(tmp_path, monkeypatch):
+    """Against a remote SpacetimeDB every projection is a slow round trip. The task must finish without waiting
+    for them, and the delivery worker must still land every row, in order, with the original write IDs."""
+    from common.spacetime_client import SpacetimeClient
+    monkeypatch.setenv("SPACETIME_DISABLED", "0")
+    delivered = []
+
+    async def slow_mutate(_self, reducer, payload):
+        if reducer == "agent_heartbeat":  # presence shares the client; only outbox rows matter here
+            return
+        await asyncio.sleep(0.4)
+        delivered.append((reducer, payload["write_id"]))
+    monkeypatch.setattr(SpacetimeClient, "mutate", slow_mutate)
+    async with running(tmp_path) as (handler, agent, _):
+        assert not agent.inline_projections
+        queued = []
+        queue_projection = agent.store.queue_projection
+
+        async def record(agent_name, payload):
+            queued.append(payload["write_id"])
+            await queue_projection(agent_name, payload)
+        monkeypatch.setattr(agent.store, "queue_projection", record)
+        started = asyncio.get_running_loop().time()
+        result = await handler.on_message_send(request(), ServerCallContext())
+        elapsed = asyncio.get_running_loop().time() - started
+        assert result.status.state == TaskState.TASK_STATE_COMPLETED
+        assert elapsed < 0.4, "the task waited for a projection write"
+        assert len(queued) == 2
+        async with asyncio.timeout(5):
+            while await agent.store.pending_projections("risk"):
+                await asyncio.sleep(0.05)
+        assert [write_id for _reducer, write_id in delivered] == queued
+
+
+async def test_inline_projection_delivery_can_be_configured(tmp_path, monkeypatch):
+    from common.spacetime_client import SpacetimeClient
+    monkeypatch.setenv("SPACETIME_DISABLED", "0")
+    monkeypatch.setenv("A2A_PROJECTION_DELIVERY", "inline")
+    delivered = []
+
+    async def mutate(_self, reducer, payload):
+        if reducer != "agent_heartbeat":
+            delivered.append(reducer)
+    monkeypatch.setattr(SpacetimeClient, "mutate", mutate)
+    async with running(tmp_path) as (handler, agent, _):
+        assert agent.inline_projections
+        result = await handler.on_message_send(request(), ServerCallContext())
+        assert result.status.state == TaskState.TASK_STATE_COMPLETED
+        assert delivered == ["upsert_task", "upsert_task"]
+        assert not await agent.store.pending_projections("risk")

@@ -56,6 +56,12 @@ class FreightAgent(AgentExecutor):
         self._capacity = asyncio.Semaphore(int(os.getenv("A2A_CONCURRENCY", "4")))
         self.wake_recovery: Callable[[], None] = lambda: None
         self._projection_lock = asyncio.Lock()
+        # Dashboard projections are durable in the outbox the moment they are queued; delivering them is a
+        # SpacetimeDB round trip per row (seconds against Maincloud), so by default a task only signals the
+        # delivery worker (projection_loop) instead of waiting for the write. A2A_PROJECTION_DELIVERY=inline
+        # restores waiting, for tests or a local database.
+        self._projection_wakeup = asyncio.Event()
+        self.inline_projections = os.getenv("A2A_PROJECTION_DELIVERY", "background") == "inline"
 
     async def confirm_state(self, task_id: str, state: int) -> None:
         """Bound to the SDK store by build_app; direct handler tests have no SDK queue."""
@@ -230,13 +236,35 @@ class FreightAgent(AgentExecutor):
         if check("upsert_task", self.name, payload).result != "allow":
             raise PermissionError("task projection denied by policy")
         await self.store.queue_projection(self.name, payload)
-        await self.flush_projections(task_id)
+        await self.deliver_projections(task_id)
+
+    async def deliver_projections(self, task_id: str) -> None:
+        """Queued rows are durable already; wait for the write only when inline delivery is configured."""
+        if self.inline_projections:
+            await self.flush_projections(task_id)
+        else:
+            self._projection_wakeup.set()
+
+    async def projection_loop(self, interval: float = 1.0) -> None:
+        """Drain the activity outbox off every task's critical path: on each signal and at least once per interval."""
+        while True:
+            self._projection_wakeup.clear()
+            try:
+                await self.flush_projections()
+            except Exception as error:  # noqa: BLE001 -- a rejected row is logged and retried, never fatal here
+                log.warning("Projection delivery pass deferred: %s", type(error).__name__)
+            try:
+                await asyncio.wait_for(self._projection_wakeup.wait(), timeout=interval)
+            except TimeoutError:
+                pass
 
     async def flush_projections(self, task_id: str | None = None) -> None:
-        """Deliver persisted activity in task order; ambiguous retries keep the same write ID."""
+        """Deliver persisted activity in task order; ambiguous retries keep the same write ID. A row the module
+        rejects outright blocks only its own task's later rows, so one bad projection cannot stall every task."""
         from common.policy import check
         from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError, SpacetimeTransportError
         blocked = set()
+        rejected: Exception | None = None
         async with self._projection_lock:
             for event in await self.store.pending_projections(self.name, task_id):
                 if event["task_id"] in blocked:
@@ -251,10 +279,14 @@ class FreightAgent(AgentExecutor):
                     await SpacetimeClient(actor=self.name).mutate(operation, payload)
                     await self.store.acknowledge_projection(event["id"])
                 except (SpacetimeTransportError, SpacetimeHTTPError) as error:
-                    if isinstance(error, SpacetimeHTTPError) and error.status_code not in {408, 429} and error.status_code < 500:
-                        raise
                     blocked.add(event["task_id"])
+                    if isinstance(error, SpacetimeHTTPError) and error.status_code not in {408, 429} and error.status_code < 500:
+                        rejected = rejected or error
+                        log.warning("Task projection rejected (HTTP %s); its task's later rows wait", error.status_code)
+                        continue
                     log.warning("Task projection queued for retry: %s", type(error).__name__)
+        if rejected is not None:
+            raise rejected
 
     async def queue_tool_audit(self, payload: dict) -> None:
         """Persist tool telemetry in the task's ordered outbox before best-effort delivery.
@@ -274,7 +306,7 @@ class FreightAgent(AgentExecutor):
         if check("append_audit", self.name, document).result != "allow":
             raise PermissionError("tool audit denied by policy")
         await self.store.queue_projection(self.name, {**document, "_operation": "append_audit"})
-        await self.flush_projections(payload["task_id"])
+        await self.deliver_projections(payload["task_id"])
 
     async def cancel(self, ctx: RequestContext, q: EventQueue) -> None:
         await self.store.cancel(ctx.task_id)

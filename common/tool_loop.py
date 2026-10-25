@@ -284,8 +284,10 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
                             result = {"error": "tool_execution_failed", "error_type": type(exc).__name__,
                                       "execution_status": "unknown"}
                             if getattr(exc, "reason", ""):
-                                # A refused reducer's bounded, module-authored reason (spacetime_client).
+                                # A refused reducer's or a delegated child's bounded, service-authored reason.
                                 result["refusal"] = exc.reason
+                            elif isinstance(exc, ProviderError):  # its message names no data, key or prompt
+                                result["detail"] = str(exc)[:200]
                             status = "failed"
                 return {"result": result, "artifact": canonical_artifact, "status": status,
                         "duration_ms": int((time.monotonic() - started) * 1000)}

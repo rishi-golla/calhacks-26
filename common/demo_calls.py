@@ -22,7 +22,7 @@ from common import policy
 from common.a2a_transport import send_task
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.outreach import route_target
-from common.runtime_store import RuntimeStore, dependencies, digest, task_id_for
+from common.runtime_store import RuntimeStore, dependencies, digest, task_id_for, wire_form
 from common.source_repository import SourceRepository
 from common.spacetime_client import SpacetimeClient
 
@@ -314,15 +314,18 @@ class DemoCallStore:
                 or root["status"] in TERMINAL or root["request_key"] != request_key(row["request_id"])
                 or digest(root["envelope"]) != digest(envelope(row["request_id"]).model_dump())
                 or not child or child["agent"] != "voice_desk" or child["sender"] != "verification"
-                or child["status"] in TERMINAL or digest(child["envelope"]) != digest(env.model_dump())
-                or digest(child["delegation"]) != digest(meta.model_dump(exclude_none=True))):
+                or child["status"] in TERMINAL
+                or digest(wire_form(child["envelope"])) != digest(wire_form(env.model_dump()))
+                or digest(wire_form(child["delegation"])) != digest(wire_form(meta.model_dump(exclude_none=True)))):
             raise DemoCallBlocked("Team call authorization has no active durable delegation.")
         async with self.engine.connect() as conn:
             reservation = (await conn.execute(select(dependencies).where(
                 dependencies.c.parent_id == row["task_id"], dependencies.c.child_id == task_id,
                 dependencies.c.invocation == "verified_callback", dependencies.c.target == "voice_desk"))).mappings().first()
-        if (not reservation or digest(json.loads(reservation["envelope"])) != digest(env.model_dump())
-                or digest(json.loads(reservation["delegation"])) != digest(meta.model_dump(exclude_none=True))):
+        if (not reservation
+                or digest(wire_form(json.loads(reservation["envelope"]))) != digest(wire_form(env.model_dump()))
+                or digest(wire_form(json.loads(reservation["delegation"])))
+                != digest(wire_form(meta.model_dump(exclude_none=True)))):
             raise DemoCallBlocked("Team call authorization does not match the reserved delegation.")
         if policy.check("consume_team_demo_call", "voice_desk", {"case_id": CASE_ID,
                 "company_id": COMPANY_ID, "task_id": task_id}).result != "allow":

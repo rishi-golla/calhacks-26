@@ -659,15 +659,17 @@ async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict,
         exported = exporter is not None and any(
             event.get("type") != "document.extracted" and (event.get("payload") or {}).get("case_id")
             for event in events)
-        if routed or exported:
+        if routed:
             # Agents read the case from the export and write against its SpacetimeDB rows as soon as the router
             # admits it, so both land first. A failed mirror write leaves the entry unacked; its retry resends
             # the same write IDs, which the module treats as no-ops.
             dataset = source_export.build(db)
-            if routed:
-                await mirror.cases(dataset, events)
-            if exported:
+            await mirror.cases(dataset, events)
+            if exporter is not None:
                 exporter.flush(db, dataset)
+        elif exported:
+            # TMS progress on a case nobody is routed to yet only needs the export fresh within a bounded delay.
+            exporter.flush_if_due(db)
         for event in events:
             stream = DOCUMENTS_STREAM if event.get("type") == "document.extracted" else EVENTS_STREAM
             await r.xadd(stream, {"json": json.dumps(event, default=str)},

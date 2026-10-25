@@ -346,3 +346,42 @@ async def test_runtime_audit_outbox_is_preferred_to_direct_mutation(setup):
     assert events == []
     assert queued[0]["task_id"] == "task" and queued[0]["case_id"] == "case"
     assert queued[0]["reason_code"] == "tool_waiting"
+
+
+async def test_incomplete_model_turn_is_retried_before_failing(setup, monkeypatch):
+    """A cut-short turn executed no tool, so it is asked again; a persistent cutoff still fails the task."""
+    agent, env, meta, _events = setup
+    executions = []
+
+    async def execute(ctx, args):
+        executions.append(ctx.tool_call_id)
+        return {"artifact": ResultArtifact(outcome="clear", confidence=.9, findings={}, evidence_refs=[]).model_dump()}
+
+    monkeypatch.setattr(tool_registry, "registry_for", lambda _: {
+        "execute_current_skill": ToolSpec("execute_current_skill", "Execute", EMPTY_PARAMETERS, execute)})
+    turns = iter([ProviderError("tool response incomplete (max_messages)"),
+                  response("execute_current_skill", "call_1"),
+                  ProviderError("tool response incomplete (max_output_tokens)"), final()])
+    attempts = 0
+
+    async def model(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        item = next(turns)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(tool_loop, "model_turn", model)
+    result = await tool_loop.run_tool_loop(agent, env, meta, "task")
+    assert result.outcome == "clear" and executions == ["call_1"] and attempts == 4
+
+    always = iter([ProviderError("tool response incomplete (max_messages)")] * 10)
+
+    async def cut_short(*args, **kwargs):
+        raise next(always)
+
+    monkeypatch.setattr(tool_loop, "model_turn", cut_short)
+    agent.checkpoints.clear() if hasattr(agent.checkpoints, "clear") else None
+    with pytest.raises(ProviderError):
+        await tool_loop.run_tool_loop(agent, env, meta, "task-2")

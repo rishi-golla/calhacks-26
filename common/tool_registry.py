@@ -126,7 +126,7 @@ async def find_similar_cases(ctx: ToolContext, arguments: dict) -> dict:
                                      dispute if isinstance(dispute, str) else "") if v)
     cases = await agent_recall.similar_cases(
         carrier_id=str(source.get("carrier_id") or ""), claim_type=str(source.get("claim_type") or ""),
-        lane=str(source.get("lane") or ""), skill=ctx.env.task_type, text=text)
+        lane=str(source.get("lane") or ""), skill=ctx.env.task_type, text=text, actor=ctx.agent.name)
     # A case never counts as its own precedent.
     cases = [c for c in cases if c.get("case_id") != ctx.env.case_id]
     return _with_refs(source, ctx, {"available": True, "cases": cases})

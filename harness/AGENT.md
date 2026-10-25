@@ -67,7 +67,7 @@ sim / inbox → Redis `raw` → W4 ingest (mirrors cases/invoices/directory into
 | W4 demo allowlist labels (`team-N`) never tokenized | ✅ guaranteed in code with a regression test |
 | PODs → Documents `receive_document` (W4 #9) | ✅ |
 | Live demo script | ✅ `python -m harness.demo` (6 events end to end) |
-| Agent recall ("never asks twice"): Elastic Cloud `agent-memory` mirror of SpacetimeDB `agent_memory` + `precedent`; `find_similar_cases` tool for Carrier AP, Risk, Controller, Validator | ✅ `common/agent_recall.py`; scoped keys verified (7/7); sync running. Only fills once agents run live |
+| Agent recall ("never asks twice"): Elastic Cloud `agent-memory` mirror of SpacetimeDB `agent_memory` + `precedent`; `find_similar_cases` tool for Carrier AP, Risk, Controller, Validator | ✅ `common/agent_recall.py`; scoped keys verified (7/7); sync running. Elastic returns ranked ids only; rows are read back from SpacetimeDB (reverted lessons dropped; SpacetimeDB down → no recall, never the stale copy). The looping sync sends only new, changed or removed docs and retries failed items |
 | Fully open models | ✅ tested, alternative lineup (`OPEN_MODELS.md`); **not live**, the team chose speed |
 
 ### Open items

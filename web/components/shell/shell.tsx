@@ -28,15 +28,7 @@ export default function Shell({ children }: { children: ReactNode }) {
       <div className="fl-shell" style={{ opacity: ready ? 1 : 0, transition: "opacity 400ms var(--ease-out)" }}>
         <aside className="fl-rail">
           <Link href="/" className="fl-brand" aria-label="FreightLine home">
-            <span className="fl-brand-mark" aria-hidden>
-              <i />
-              <i />
-              <i />
-            </span>
-            <span className="fl-brand-name">
-              FreightLine
-              <small>GOLDEN GATE FREIGHT</small>
-            </span>
+            <span className="fl-brand-name">FreightLine</span>
           </Link>
           <nav className="fl-nav" aria-label="Main">
             <span className="fl-label fl-nav-group">Operations</span>

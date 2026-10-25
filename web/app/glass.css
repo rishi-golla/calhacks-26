@@ -434,3 +434,155 @@
 .fl.theme-glass .fl-tabs {
   background: rgba(255, 255, 255, 0.1);
 }
+
+/* ------------------------------ no live dots ------------------------------ */
+.fl.theme-glass .fl-dot,
+.fl.theme-glass .fl-section::before,
+.fl.theme-glass .fh-live-dot,
+.fl.theme-glass .ct-commit-pulse,
+.fl.theme-glass .fm-wave {
+  display: none !important;
+}
+
+/* ------------------------------ finance: dashboard header ------------------------------ */
+.fl.theme-glass .fh-header {
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: space-between;
+  text-align: left;
+  padding: 8px 0 4px;
+  gap: 24px;
+}
+.fl.theme-glass .fh-header-id {
+  align-items: flex-start;
+}
+.fl.theme-glass .fh-header .fl-section {
+  animation: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 13px;
+  color: var(--text-mute);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.fl.theme-glass .fh-wordmark {
+  margin-top: 6px;
+  font-size: clamp(30px, 3vw, 40px);
+  line-height: 1.1;
+}
+.fl.theme-glass .fh-wordmark .ln > span {
+  animation: riseIn 0.7s var(--e-out) 0.2s both;
+}
+.fl.theme-glass .fh-header-sub {
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--text-dim);
+  animation: riseIn 0.7s var(--e-out) 0.3s both;
+}
+.fl.theme-glass .fh-header-status {
+  align-items: flex-end;
+  animation: riseIn 0.7s var(--e-out) 0.4s both;
+}
+.fl.theme-glass .fh-kpi {
+  animation-delay: calc(0.5s + var(--i, 0) * 0.07s);
+}
+.fl.theme-glass .fh-row-main > :first-child {
+  animation-delay: 0.85s;
+}
+.fl.theme-glass .fh-row-main > :last-child {
+  animation-delay: 0.7s;
+}
+.fl.theme-glass .fh svg path[fill="none"][stroke] {
+  animation-delay: 1s;
+}
+.fl.theme-glass .fh svg path[fill^="url("] {
+  animation-delay: 1.2s;
+}
+.fl.theme-glass :is(.fl-panel, .fh-kpi)::after {
+  animation-delay: 1.9s;
+}
+
+/* ------------------------------ agents + cases: same type, glass surfaces ------------------------------ */
+.fl.theme-glass :is(.au, .cx-page),
+.fl.theme-glass :is(.au, .cx-page) * {
+  font-family: var(--font-body);
+  text-transform: none;
+}
+.fl.theme-glass :is(.au, .cx-page) :is(.fl-display, h1, h2) {
+  font-family: var(--font-display);
+  font-weight: 500;
+}
+.fl.theme-glass :is(.au, .cx-page) :is(.fl-num, .num, [class*="-value"], [class*="-n"]) {
+  font-variant-numeric: tabular-nums;
+}
+.fl.theme-glass .au-map {
+  background: transparent;
+  border-right-color: var(--line-soft);
+}
+.fl.theme-glass :is(.au-rail, .au-panel, .au-casebar, .au-recv) {
+  background: var(--card-soft);
+  -webkit-backdrop-filter: blur(18px) saturate(115%);
+  backdrop-filter: blur(18px) saturate(115%);
+}
+.fl.theme-glass .au-rail {
+  border-left: 1px solid var(--glass-line);
+}
+.fl.theme-glass .au-casebar {
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+}
+.fl.theme-glass .au-chip {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+.fl.theme-glass .au-filters select {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--text);
+}
+.fl.theme-glass .au-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.fl.theme-glass .au-row.sel {
+  background: rgba(255, 255, 255, 0.14);
+}
+.fl.theme-glass .au-legend {
+  font-size: 12px;
+}
+
+/* ------------------------------ intro splash: same type ------------------------------ */
+.fl.theme-glass .fl-intro {
+  background: #04121b;
+}
+.fl.theme-glass .fl-intro-word {
+  font-family: var(--font-display);
+  font-variation-settings: normal;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: -0.03em;
+}
+.fl.theme-glass .fl-intro-word small {
+  font-family: var(--font-body);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: var(--text-dim);
+}
+
+/* ------------------------------ brand ------------------------------ */
+.fl.theme-glass .fl-brand {
+  padding: 0 20px;
+}
+.fl.theme-glass .fl-brand-name {
+  font-family: var(--font-display);
+  font-variation-settings: normal;
+  font-weight: 600;
+  font-size: 19px;
+  letter-spacing: -0.02em;
+  text-transform: none;
+  color: #fff;
+}

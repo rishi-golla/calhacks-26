@@ -18,7 +18,6 @@ import { ForecastBars, LineChart, MiniBars, Sparkline } from "./charts";
 import { CountUp } from "./count-up";
 import { change, count, dayLabel, emptyNote, signedShort, usd, usdShort } from "./format";
 import "./finance.css";
-import { DotWave } from "./dot-wave";
 
 const pct1 = (v: number) => `${v.toFixed(1)}%`;
 const perHour = (v: number) => `${Math.round(v)}/h`;
@@ -28,7 +27,6 @@ const reveal = (i: number) => ({ "--delay": `${i * 70}ms` }) as CSSProperties;
 export default function FinanceHome() {
   return (
     <div className="fl-page fh fh-overview">
-      <DotWave />
       <Header />
       <KpiTiles />
       <div className="fh-row fh-row-main fl-reveal" style={reveal(2)}>

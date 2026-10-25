@@ -158,15 +158,36 @@ def _decode(entry_id: bytes, fields: dict) -> dict | None:
     return ev
 
 
+async def _ensure_group(r: redis.Redis, stream: str, group: str) -> None:
+    """Create the consumer group, and the stream with it, unless they already exist."""
+    try:
+        await r.xgroup_create(stream, group, id="0", mkstream=True)
+    except redis.ResponseError as error:
+        if "BUSYGROUP" not in str(error):
+            raise
+
+
+async def _recover_group(r: redis.Redis, stream: str, group: str, error: Exception) -> bool:
+    """A Redis restart without persistence loses the stream and the group, after which every XAUTOCLAIM and
+    XREADGROUP answers NOGROUP; backing off alone would stall first-hop routing for good. Recreate the group
+    and report whether the loop can go straight on."""
+    if not isinstance(error, redis.ResponseError) or "NOGROUP" not in str(error):
+        return False
+    log.warning("consumer group %s on %s is gone (Redis restarted?); recreating it", group, stream)
+    try:
+        await _ensure_group(r, stream, group)
+    except redis.RedisError as retry_error:
+        log.warning("could not recreate the consumer group yet: %s", type(retry_error).__name__)
+        return False
+    return True
+
+
 async def run_consumer(pool: Pool, url: str | None = None, *, stream: str = STREAM, group: str = GROUP,
                        triage: str = TRIAGE, consumer: str = CONSUMER, handler=process,
                        vault: Vault | None = None, dispatcher: Dispatcher | None = None) -> None:
     r = redis.from_url(url or os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     vault, dispatcher = vault or Vault(), dispatcher or Dispatcher()
-    try:
-        await r.xgroup_create(stream, group, id="0", mkstream=True)
-    except redis.ResponseError:
-        pass
+    await _ensure_group(r, stream, group)
     log.info("consuming %s as %s/%s (first hop %s, model slots %d, max in flight %d)", stream, group, consumer,
              dispatcher.transport, MODEL_CONCURRENCY, MAX_INFLIGHT)
     slots = asyncio.Semaphore(MODEL_CONCURRENCY)
@@ -216,7 +237,10 @@ async def run_consumer(pool: Pool, url: str | None = None, *, stream: str = STRE
                 backoff = 1.0
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as error:
+                if await _recover_group(r, stream, group, error):
+                    backoff = 1.0
+                    continue
                 log.exception("consumer loop error; backing off %.0fs", backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)

@@ -17,6 +17,13 @@ MAX_ARGUMENT_BYTES = 12_000
 # Reasoning models spend output tokens before the visible answer; 1,800 left about a third of live tool turns
 # incomplete on gpt-6-luna. The budget bounds cost per turn, not correctness, so it is an operator setting.
 MAX_OUTPUT_TOKENS = max(256, min(32_000, int(os.getenv("TOOL_MAX_OUTPUT_TOKENS", "8000"))))
+# A reasoning turn with that budget can run past 45 s; the HTTP timeout scales with it.
+MODEL_TIMEOUT_S = max(10.0, min(600.0, float(os.getenv("TOOL_MODEL_TIMEOUT_S", "120"))))
+# Tool turns are short decisions over structured evidence; at the default effort gpt-6-luna returned a dozen or
+# more reasoning items per turn and cut turns short with incomplete reason max_messages once they accumulated.
+REASONING_EFFORT = os.getenv("TOOL_REASONING_EFFORT", "low")
+if REASONING_EFFORT not in {"minimal", "low", "medium", "high"}:
+    raise ValueError("TOOL_REASONING_EFFORT must be minimal, low, medium or high")
 
 
 def strict_json(text: str) -> Any:
@@ -55,6 +62,7 @@ async def model_turn(config: ProviderConfig, system: str, history: list[dict], t
         "input": history, "tools": tools,
         "tool_choice": "required" if require_tool else ("auto" if tools else "none"),
         "parallel_tool_calls": False, "max_output_tokens": MAX_OUTPUT_TOKENS,
+        "reasoning": {"effort": REASONING_EFFORT},
         "include": ["reasoning.encrypted_content"],
         "text": {"format": {"type": "json_schema", "name": "freight_tool_assessment",
                             "strict": True, "schema": schema}},
@@ -62,7 +70,7 @@ async def model_turn(config: ProviderConfig, system: str, history: list[dict], t
     if len(json.dumps(body, allow_nan=False).encode()) > MAX_INPUT_BYTES:
         raise ProviderError("tool conversation exceeds input limit")
     owned = client is None
-    http = client or httpx.AsyncClient(timeout=45)
+    http = client or httpx.AsyncClient(timeout=MODEL_TIMEOUT_S)
     try:
         result = await _post(http, f"{config.base_url}/responses",
                              headers={"Authorization": f"Bearer {config.api_key}"}, body=body)

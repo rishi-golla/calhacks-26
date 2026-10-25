@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { emptySnapshot, type Snapshot } from "./data";
-import { effectiveLearned, idList, learnedLines, lessonIndex, scopeChips } from "./lessons";
+import { caseMemory, effectiveLearned, idList, learnedLines, lessonIndex, reviewRefs, scopeChips } from "./lessons";
 import { diffSnapshots } from "./ops";
 
 const T0 = "2026-10-25T07:55:49.216Z";
@@ -116,4 +116,24 @@ test("lessonIndex shows the current instruction version whoever wrote it", () =>
   assert.equal(instr.revertsVersion, 4);
   // v4's state: its own diff on an empty v3 (absent from this history).
   assert.deepEqual(instr.learned, ["old"]);
+});
+
+test("caseMemory keeps the memories a case's tasks loaded and the lessons its reviews wrote", () => {
+  const s = snap();
+  // CASE-X's task loaded M1 (taught on CASE-LD-1025-6CA28255) and the human note M4.
+  const tasks = [{ task_id: "TX", case_id: "CASE-X", agent: "carrier_ap", memory_ids: ["M1", "M4"] }];
+  const out = caseMemory(s, tasks, []);
+  assert.deepEqual(out.agent_memory.map((m) => m.id).sort(), ["M1", "M4"]);
+  assert.equal(out.agent_memory.find((m) => m.id === "M1")!.source_case, "CASE-LD-1025-6CA28255");
+  assert.equal(out.instruction_version.length, 0);
+  // The reviewed case itself keeps the lesson and instruction versions its review wrote.
+  const own = caseMemory(s, [], s.review);
+  assert.deepEqual(own.agent_memory.map((m) => m.id), ["M1"]);
+  assert.deepEqual(own.instruction_version.map((v) => v.id), ["carrier_ap:4", "carrier_ap:5"]);
+  assert.deepEqual(caseMemory(s, [{ task_id: "TY", memory_ids: [] }], []), { agent_memory: [], instruction_version: [] });
+});
+
+test("reviewRefs covers the live review id, the sim review id and the task", () => {
+  assert.deepEqual([...reviewRefs("T9", { findings: { review_id: "abc" } })].sort(), ["REV-T9", "T9", "abc"]);
+  assert.deepEqual([...reviewRefs("T9", null)].sort(), ["REV-T9", "T9"]);
 });

@@ -218,3 +218,67 @@ export function lessonIndex(snapshot: LessonTables): LessonIndex {
 
   return { byAgent, all, retired, instructions, recalls: all.reduce((s, l) => s + l.recalled, 0) };
 }
+
+/* ------------------------------ one case ------------------------------ */
+
+/** A memory row as the case trace shows it: a Validator lesson, or a note a person wrote. */
+export type MemoryNote = {
+  id: string;
+  agent: string;
+  text: string;
+  scope: string[];
+  byValidator: boolean;
+  active: boolean;
+  /** The case whose review taught it ("" when unknown). */
+  sourceCase: string;
+  sourceRef: string;
+  at: number;
+};
+
+export const memoryNote = (row: Row): MemoryNote => ({
+  id: str(row.id, ""),
+  agent: str(row.agent, ""),
+  text: str(row.text, ""),
+  scope: scopeChips(row.scope),
+  byValidator: str(row.source, "") === "validator",
+  active: row.active !== false,
+  sourceCase: str(row.source_case, ""),
+  sourceRef: str(row.source_ref, ""),
+  at: timestamp(row.created_at),
+});
+
+/**
+ * Memory and instruction rows for one case's trace: every memory its tasks
+ * loaded, plus the lessons and instruction versions its own reviews wrote.
+ * Memory rows are stamped with `source_case` (looked up in the whole
+ * snapshot, since a lesson usually comes from an earlier case).
+ */
+export function caseMemory(snapshot: LessonTables, caseTasks: Row[], caseReviews: Row[]): Pick<Snapshot, "agent_memory" | "instruction_version"> {
+  const used = new Set(caseTasks.flatMap((t) => idList(t.memory_ids)));
+  // Live lessons point at their review; simulated ones at the Validator task.
+  const refs = new Set([...caseReviews.map((r) => str(r.id, "")), ...caseTasks.map((t) => str(t.task_id, ""))]);
+  refs.delete("");
+  const memory = snapshot.agent_memory.filter((m) => used.has(str(m.id, "")) || refs.has(str(m.source_ref, "")));
+  if (!memory.length && !snapshot.instruction_version.some((v) => refs.has(str(v.source_ref, "")))) return { agent_memory: [], instruction_version: [] };
+  const lookup = (ref: string) => {
+    if (!ref) return "";
+    const review = snapshot.review.find((r) => r.id === ref || r.id === `REV-${ref}`);
+    if (review) return str(review.case_id, "");
+    return str(snapshot.task.find((t) => t.task_id === ref)?.case_id, "");
+  };
+  return {
+    agent_memory: memory.map((m) => ({ ...m, source_case: lookup(str(m.source_ref, "")) })),
+    instruction_version: snapshot.instruction_version.filter((v) => refs.has(str(v.source_ref, ""))),
+  };
+}
+
+/**
+ * The refs a Validator task's lessons point at: the review it wrote (live:
+ * `findings.review_id` in its artifact; sim: `REV-<task>`) or the task itself.
+ */
+export function reviewRefs(taskId: string, artifact: Record<string, unknown> | null | undefined): Set<string> {
+  const findings = artifact?.findings as Record<string, unknown> | undefined;
+  const out = new Set([taskId, `REV-${taskId}`, str(findings?.review_id, "")]);
+  out.delete("");
+  return out;
+}

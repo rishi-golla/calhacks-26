@@ -9,13 +9,14 @@
  * renders exactly what had happened at that moment.
  */
 import { memo, useMemo, useState, type CSSProperties } from "react";
-import { FileText } from "lucide-react";
+import { FileText, Lightbulb } from "lucide-react";
 import { ApifyMark } from "@/components/apify";
 import { Mascot, type Mood } from "@/components/mascot";
 import { agentColor, agentLabel, NODE_META, skillLabel } from "@/lib/agents";
 import { fmtMoney } from "@/lib/ops";
 import { apifyEvidence, APIFY_OUTCOME, isApifyCall } from "@/lib/apify";
-import { str } from "@/lib/data";
+import { str, timestamp } from "@/lib/data";
+import { idList, reviewRefs } from "@/lib/lessons";
 import {
   clock,
   eventLabel,
@@ -426,6 +427,11 @@ function TaskBody({ node, trace, status, statuses, cursor, clockAt }: CardProps)
   const shown = tools.filter((t) => pinned.has(t) || tail.has(t));
   const hidden = tools.length - shown.length;
   const docs = node.docs.filter((d) => d.at <= cursor).length;
+  // Validator lessons this task loaded, or (for a review) wrote.
+  const refs = t.agent === "validator" ? reviewRefs(node.id, t.artifact) : null;
+  const lessons = refs
+    ? trace.slice.agent_memory.filter((m) => m.source === "validator" && refs.has(str(m.source_ref, "")) && timestamp(m.created_at) <= cursor).length
+    : idList(t.row.memory_ids).filter((id) => trace.slice.agent_memory.some((m) => m.id === id && m.source === "validator")).length;
   const pendingChildren = trace.edges
     .filter((e) => e.kind === "delegation" && e.from === node.id && e.at <= cursor)
     .map((e) => trace.nodeById.get(e.to)!)
@@ -471,6 +477,11 @@ function TaskBody({ node, trace, status, statuses, cursor, clockAt }: CardProps)
         {!shown.length && !TERMINAL.includes(status) && <span className="ct-tool more">planning…</span>}
       </span>
       <span className="ct-card-foot">
+        {lessons > 0 && (
+          <span className="ct-docs ct-lesson-count" title={t.agent === "validator" ? `Wrote ${lessons} lesson${lessons === 1 ? "" : "s"}` : `Used ${lessons} lesson${lessons === 1 ? "" : "s"} from Settlement Quality Review`}>
+            <Lightbulb size={11} /> {lessons}
+          </span>
+        )}
         {docs > 0 && (
           <span className="ct-docs" title={`${docs} document${docs === 1 ? "" : "s"} read`}>
             <FileText size={11} /> {docs}

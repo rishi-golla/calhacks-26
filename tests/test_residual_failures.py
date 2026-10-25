@@ -369,3 +369,54 @@ async def test_review_tools_return_a_bounded_view_and_share_one_load(review_worl
     assert encoded_size(inspected) <= REVIEW_TOOL_CHARS < tool_loop.MAX_TOOL_RESULT_BYTES
     assert checked["review"]["verdict"] == result.outcome == "pass"
     assert world["loads"] == 1, "the tools and the guarded workflow judge one checkpointed bundle"
+
+
+async def test_a_budget_that_runs_out_after_failed_executions_reports_the_workflow_error(loop, monkeypatch):
+    # Devin on #44: 12 inspections leave room for only two failed executions before the call budget ends.
+    agent, env, meta = loop
+
+    async def execute(ctx, args):
+        raise ProviderError("evidence exceeds inference input limit")
+
+    guarded(monkeypatch, execute)
+    calls = [response("read", f"r{i}") for i in range(tool_loop.MAX_TOOL_CALLS - 2)]
+    calls += [response("execute_current_skill", f"x{i}") for i in range(3)]
+    turns = iter(calls)
+
+    async def model(*args, **kwargs):
+        return next(turns)
+
+    monkeypatch.setattr(tool_loop, "model_turn", model)
+    with pytest.raises(tool_loop.GuardedSkillFailed) as failure:
+        await tool_loop.run_tool_loop(agent, env, meta, "task")
+    assert failure.value.reason == "ProviderError: evidence exceeds inference input limit after 2 attempts"
+
+
+@pytest.mark.parametrize("limit", ["budget", "cut_short"])
+async def test_a_model_limit_after_a_failed_workflow_still_reports_the_workflow_error(loop, monkeypatch, limit):
+    """Devin on #44: 12 inspections leave room for only two failed workflow calls before the call budget ends the
+    loop; the task must still say why the workflow failed."""
+    agent, env, meta = loop
+
+    async def execute(ctx, args):
+        raise ProviderError("evidence exceeds inference input limit")
+
+    guarded(monkeypatch, execute)
+    reads = tool_loop.MAX_TOOL_CALLS - 2
+    turns = 0
+
+    async def model(*args, **kwargs):
+        nonlocal turns
+        turns += 1
+        if turns <= reads:
+            return response("read", f"r{turns}")
+        if limit == "cut_short" and turns > reads + 1:
+            raise ProviderError("tool response incomplete (max_messages)")
+        return response("execute_current_skill", f"x{turns}")
+
+    monkeypatch.setattr(tool_loop, "model_turn", model)
+    with pytest.raises(tool_loop.GuardedSkillFailed) as failure:
+        await tool_loop.run_tool_loop(agent, env, meta, "task")
+    expected = ("model tool call budget exhausted" if limit == "budget"
+                else "tool response incomplete (max_messages)")
+    assert failure.value.reason == f"ProviderError: evidence exceeds inference input limit; then {expected}"

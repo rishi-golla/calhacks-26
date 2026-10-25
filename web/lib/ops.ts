@@ -926,7 +926,7 @@ export function buildAttention(snapshot: Snapshot, cases: Map<string, CaseView>,
     if (["open", "reviewing"].includes(str(f.status)))
       add({ id: `flag:${str(f.id)}`, kind: "flag_open", severity: "medium", at: timestamp(f.ts), caseId: str(f.case_id, ""), taskId: "", agent: "human", title: `Flag: ${str(f.kind)}`, detail: str(f.note, ""), amount: 0, row: f });
   for (const r of snapshot.review)
-    if (r.verdict === "issue" && now - timestamp(r.ts) < 6 * 3_600_000)
+    if (r.verdict === "issue" && now - timestamp(r.ts) < 6 * 3_600_000 && openCase(str(r.case_id, "")))
       add({ id: `review:${str(r.id)}`, kind: "review_issue", severity: "medium", at: timestamp(r.ts), caseId: str(r.case_id, ""), taskId: str(r.target_task_id, ""), agent: "validator", title: "Quality review found an issue", detail: cases.get(str(r.case_id))?.title ?? "", amount: cases.get(str(r.case_id))?.exposureUsd ?? 0, row: r });
   for (const e of snapshot.audit_event)
     if (e.kind === "policy_deny" && openCase(str(e.case_id, "")))

@@ -520,6 +520,20 @@ test("buildAttention puts critical approvals first and sorts by severity then re
   assert.equal(items[0].detail, "Case one");
 });
 
+test("buildAttention drops review issues once their case resolves", () => {
+  const s = snap({
+    case: [
+      { case_id: "OPEN", status: "open" },
+      { case_id: "DONE", status: "resolved" },
+    ],
+    review: [
+      { id: "R1", case_id: "OPEN", verdict: "issue", ts: at(-1) },
+      { id: "R2", case_id: "DONE", verdict: "issue", ts: at(-1) },
+    ],
+  });
+  assert.deepEqual(buildAttention(s, buildCases(s), NOW).map((i) => i.id), ["review:R1"]);
+});
+
 test("diffSnapshots emits exactly the new events and nothing when unchanged", () => {
   const base = snap({
     case: [{ case_id: "C1", opened_at: at(0) }],

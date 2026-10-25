@@ -182,7 +182,7 @@ def _finish(artifact: ResultArtifact, assessment: dict | None, calls: list[dict]
 
 
 async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
-    from common.tool_registry import ToolContext, registry_for
+    from common.tool_registry import ToolContext, first_calls, registry_for
 
     # The executor ends the task at its deadline; a retry that could not finish before then only hides the reason.
     # Outside an executor run (direct calls, tests) the loop's own start stands in for the executor's.
@@ -226,6 +226,7 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
             return error
         return GuardedSkillFailed(f"{skill_failed[:150]}; then {error}")
     final_only = [tool for tool in tools if tool["name"] == "execute_current_skill"]
+    required_first = first_calls(ctx, registry)
 
     def offered(artifact, turn_index: int) -> list[dict]:
         if artifact is not None:
@@ -234,6 +235,11 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
         # model may only execute the assigned skill instead of exhausting the loop on inspections.
         if len(records) >= MAX_TOOL_CALLS - 1 or turn_index >= MAX_TURNS - 2:
             return final_only
+        # A skill's mandatory checks come first, one per turn, whatever they return. `records` is rebuilt from
+        # checkpoints on replay, so a resumed task offers the same tools it did before.
+        pending = [name for name in required_first if not any(item["name"] == name for item in records)]
+        if pending:
+            return [tool for tool in tools if tool["name"] == pending[0]]
         return tools
 
     for turn_index in range(MAX_TURNS):

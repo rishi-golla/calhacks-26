@@ -356,19 +356,19 @@ delegate to allowed peers through the existing A2A runtime. The task-bound workf
 the source validation, policy, approval, hold, outreach routing and idempotency controls already
 implemented by that role. The model's summary cannot replace the workflow's business outcome.
 
-The registries expose **22 distinct tools across up to 68 role grants**. Shipper credit-review tasks omit optional A2A delegation. Counts include the three shared
+The registries expose **23 distinct tools across up to 73 role grants**. Shipper credit-review tasks omit optional A2A delegation. Counts include the three shared
 tools: `read_load_record`, `integration_availability`, and `execute_current_skill`.
 
 | Brokerage agent | Tool count | Additional role tools |
 | --- | ---: | --- |
-| Carrier Settlement | 8 | Invoice matching, duplicate detection, packet inspection, settlement state, accessorial audit |
+| Carrier Settlement | 10 | Apify carrier lookup (always the first call when settling an invoice), invoice matching, duplicate detection, packet inspection, settlement state, accessorial audit, precedent recall |
 | Shipper Billing & Collections | 10 | Deposit matching, ingested credit evidence, journal inspection, verified directory, website inspection, outreach readiness, specialist A2A delegation |
 | Load Profitability | 7 | Margin calculation, cash exposure, settlement state, specialist A2A delegation |
-| Accessorial Audit | 9 | Charge audit, duplicate detection, packet inspection, verification evidence, Apify carrier lookup, specialist A2A delegation |
-| Settlement Approvals | 7 | Settlement state, journal inspection, charge audit, specialist A2A delegation |
+| Accessorial Audit | 10 | Charge audit, duplicate detection, packet inspection, verification evidence, Apify carrier lookup, precedent recall, specialist A2A delegation |
+| Settlement Approvals | 8 | Settlement state, journal inspection, charge audit, precedent recall, specialist A2A delegation |
 | Carrier Trust & Verification | 9 | Verified directory, ingested verification evidence, packet inspection, Apify carrier lookup, website inspection, outreach readiness |
 | Dispatcher Outreach | 6 | Verified directory, redacted ingested inbound transcript, outreach readiness |
-| Settlement Quality Review | 5 | Persisted review target/history, independent quality checks |
+| Settlement Quality Review | 6 | Persisted review target/history, independent quality checks, precedent recall |
 | POD & Document Chase | 7 | Packet inspection, verified directory, website inspection, outreach readiness |
 
 Tool schemas reject unknown fields and are bound to the current case. There is no arbitrary SQL,

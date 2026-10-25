@@ -108,7 +108,7 @@ Local acceptance `tools-002` verified 38 completed tool calls across all nine co
 two A2A handoffs and no task/summary failures, with no calls or restricted financial writes added.
 
 **Sponsor implementation (v1.9):** focus is Cartesia and Apify; CRS and Nessie are deferred.
-The tool catalog now contains 22 distinct tools across up to 68 role grants. Apify lookups use
+The tool catalog now contains 23 distinct tools across up to 73 role grants. Carrier Settlement's first call on every invoice is the Apify FMCSA carrier lookup. Apify lookups use
 case-bound USDOT/MC identifiers or an ingested public company URL, bounded actor runs, durable
 start tracking, a 24-hour cache and source citations. Public records and scraped contacts remain
 external observations and never become outreach or financial authorization automatically. The

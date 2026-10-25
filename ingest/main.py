@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 import uuid
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from email.utils import parseaddr
 from pathlib import Path
 from time import monotonic
@@ -32,6 +33,7 @@ RAW_STREAM = os.getenv("RAW_STREAM", "raw")
 EVENTS_STREAM = os.getenv("EVENTS_STREAM", "events")
 DOCUMENTS_STREAM = os.getenv("DOCUMENTS_STREAM", "documents")
 DEAD_LETTER_STREAM = f"{RAW_STREAM}:dead_letter"
+DEFAULT_STREAM_MAXLEN = 200_000
 GROUP = "ingest"
 CONSUMER = "ingest-1"
 TRANSIENT, DETERMINISTIC, OTHER = "transient", "deterministic", "other"
@@ -46,7 +48,30 @@ CREATE TABLE IF NOT EXISTS bank_offsets (file TEXT PRIMARY KEY, offset INT NOT N
 CREATE TABLE IF NOT EXISTS bank_txns (txn_id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS bank_changes (case_id TEXT PRIMARY KEY, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS deposits (txn_id TEXT PRIMARY KEY, invoice_id TEXT, json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS remittances (reference TEXT PRIMARY KEY, json TEXT NOT NULL);
 """
+
+
+def _stream_maxlen(name: str) -> int:
+    value = os.getenv(name, str(DEFAULT_STREAM_MAXLEN))
+    try:
+        cap = int(value)
+    except ValueError:
+        cap = 0
+    if cap <= 0:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return cap
+
+
+def events_maxlen() -> int:
+    """Cap on Redis `events` (approximate MAXLEN). Entries past it are trimmed whether or not the router has read
+    them, so keep it well above the longest backlog the router may build up."""
+    return _stream_maxlen("EVENTS_STREAM_MAXLEN")
+
+
+def documents_maxlen() -> int:
+    """Cap on Redis `documents` (approximate MAXLEN); unread entries past it are trimmed, as on `events`."""
+    return _stream_maxlen("DOCUMENTS_STREAM_MAXLEN")
 
 
 def data_dir() -> Path:
@@ -440,6 +465,12 @@ def _remittance_advice(trigger: dict, message: dict, db: sqlite3.Connection) -> 
         if invoice_id else None
     invoice = _read_json(row)
     if not invoice:
+        if invoice_id:
+            # A collections clerk applying unreferenced cash reads the advice that came with it (UNAPPLIED_CASH).
+            po_match = re.search(r"\(PO\s+([^)\s]+)\)", message.get("body", ""), re.IGNORECASE)
+            db.execute("INSERT OR REPLACE INTO remittances(reference, json) VALUES (?,?)", (invoice_id, _dump({
+                "reference": invoice_id, "po": po_match.group(1) if po_match else None,
+                "source_email": message.get("mail_id"), "evidence_refs": refs})))
         fields = {"invoice_id": invoice_id, "deduction_reason": reason}
         return [_document_event(trigger, "remittance_advice", "needs_review", fields,
                                 {"invoice_id": 0.95 if invoice_id else 0.0,
@@ -454,6 +485,95 @@ def _remittance_advice(trigger: dict, message: dict, db: sqlite3.Connection) -> 
     return [_document_event(trigger, "remittance_advice", "extracted", fields,
                             {"invoice_id": 0.95, "deduction_reason": 0.95 if reason else 0.0},
                             load={"load_id": invoice.get("load_id")}, case_id=case_id, evidence_refs=refs)]
+
+
+def _cents(value) -> int | None:
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    return int((amount * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP)) if amount.is_finite() else None
+
+
+def _shipper_named(party: dict | None, name: str) -> bool:
+    party = party or {}
+    return any(_same_identifier(party.get(key), name) for key in ("name", "legal_name"))
+
+
+def _unapplied_cash(db: sqlite3.Connection, txn_id: str, amount: float, counterparty: str | None,
+                    reference: str | None) -> dict:
+    """Match a deposit whose remittance reference names no shipper invoice the way a collections clerk applies
+    unreferenced cash: the one open shipper invoice of the remitting shipper whose open balance is exactly this
+    amount; across every shipper only when the remitter is not a known shipper. Several candidates are narrowed by
+    the PO of a remittance advice that cited this reference. The result's `invoice` is None unless exactly one
+    invoice is left; the match is a candidate for review, never an applied payment."""
+    applied: dict[str, int] = {}
+    for (row,) in db.execute("SELECT json FROM deposits"):
+        deposit = json.loads(row)
+        target = deposit.get("matched_invoice_id") or deposit.get("invoice_id")
+        if deposit.get("id") != txn_id and target:
+            applied[target] = applied.get(target, 0) + (_cents(deposit.get("amount")) or 0)
+    paid = _cents(amount)
+    invoices = [json.loads(row) for (row,) in db.execute("SELECT json FROM shipper_invoices")]
+    same_amount = []
+    for invoice in invoices:
+        billed = _cents(invoice.get("amount"))
+        balance = billed - applied.get(invoice["invoice_id"], 0) if billed is not None else 0
+        if balance > 0 and balance == paid:
+            same_amount.append(invoice)
+    shippers = [*directory.load().get("shippers", []), *(invoice.get("shipper") or {} for invoice in invoices)]
+    known = bool(counterparty) and any(_shipper_named(party, counterparty) for party in shippers)
+    if known:
+        basis = "shipper_and_amount"
+        candidates = [invoice for invoice in same_amount if _shipper_named(invoice.get("shipper"), counterparty)]
+    else:
+        basis, candidates = "amount_only", same_amount
+    advice = _read_json(db.execute("SELECT json FROM remittances WHERE reference=?", (reference,)).fetchone()) \
+        if reference else None
+    if len(candidates) > 1 and advice:
+        narrowed = [invoice for invoice in candidates if _same_identifier(invoice.get("po"), (advice or {}).get("po"))]
+        if len(narrowed) == 1:
+            basis, candidates = f"{basis}_and_remittance_po", narrowed
+    return {"invoice": candidates[0] if len(candidates) == 1 else None, "basis": basis,
+            "shipper_known": known, "advice_refs": list((advice or {}).get("evidence_refs") or []),
+            "candidate_invoice_ids": sorted(invoice["invoice_id"] for invoice in candidates),
+            "reason": "matched" if len(candidates) == 1 else "ambiguous" if candidates else "no_open_invoice"}
+
+
+def _payment_event(trigger: dict, invoice: dict, line: str, txn_id: str | None, paid_amount: float,
+                   direction: str, reference: str | None, match: dict | None = None) -> dict:
+    """The routable shipper_payment.received for a deposit on `invoice`. With `match` the deposit's reference named
+    no invoice; ingest found this one by shipper and amount, so nothing is applied and Shipper Billing & Collections
+    reviews it."""
+    invoice_id = invoice["invoice_id"]
+    billed_amount = float(invoice.get("amount", 0))
+    shipper = invoice.get("shipper") or {}
+    payload = {"case_id": f"{invoice.get('case_id')}-AR", "load_id": invoice.get("load_id"), "lane": invoice.get("lane"),
+               "pro": invoice.get("pro"), "bol": invoice.get("bol"), "po": invoice.get("po"),
+               "invoice_id": invoice_id, "shipper": invoice.get("shipper"), "invoice_amount": billed_amount,
+               "paid_amount": paid_amount, "chase": paid_amount < billed_amount, "remittance": "ACH",
+               "bank_txn": txn_id, "deduction_reason": invoice.get("deduction_reason"),
+               "payment_id": txn_id, "shipper_id": shipper.get("id"), "shipper_name": shipper.get("name"),
+               "amount": paid_amount, "remittance_ref": reference,
+               "invoices_applied": [{"invoice_id": invoice_id, "amount": paid_amount}],
+               "posted_at": trigger.get("sim_ts"), "direction": direction,
+               "text": f"{line}\n{invoice.get('remittance_text', '')}".rstrip(),
+               "evidence_refs": []}
+    if match is not None:
+        payload.update(
+            reference_mismatch=True, invoices_applied=[], candidate_invoice_id=invoice_id,
+            match_basis=match["basis"], ingest_flags=["reference_mismatch"],
+            review_reason=f"remittance reference {reference!r} matches no shipper invoice; {invoice_id} is the only "
+                          f"open invoice matching by {match['basis'].replace('_', ' ')}. Unapplied cash: review "
+                          "before applying.",
+            text=line)
+    evidence_refs = list(invoice.get("_evidence_refs", []))
+    if match is not None:
+        evidence_refs.extend(ref for ref in match["advice_refs"] if ref not in evidence_refs)
+    elif invoice.get("source_email"):
+        evidence_refs.append(f"mail:{invoice['source_email']}")
+    payload["evidence_refs"] = evidence_refs
+    return _event(trigger, "shipper_payment.received", payload, "P2", evidence_refs)
 
 
 def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
@@ -506,40 +626,43 @@ def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
             continue
         invoice = _read_json(db.execute("SELECT json FROM shipper_invoices WHERE invoice_id=?",
                                         (reference,)).fetchone())
-        if txn_id and direction == "credit":
+        deposit_in = bool(txn_id) and direction == "credit"
+        match = _unapplied_cash(db, txn_id, paid_amount, counterparty, reference) \
+            if deposit_in and not invoice else None
+        if deposit_in:
             deposit = {"id": txn_id, "invoice_id": reference, "amount": paid_amount,
                        "shipper_id": ((invoice or {}).get("shipper") or {}).get("id"),
                        "counterparty": counterparty, "posted_at": trigger.get("sim_ts"), "file": filename}
+            if match and match["invoice"]:
+                # Bank truth stays: the deposit keeps its own reference and is not cash on the candidate invoice.
+                deposit.update(shipper_id=(match["invoice"].get("shipper") or {}).get("id"), reference_mismatch=True,
+                               matched_invoice_id=match["invoice"]["invoice_id"], match_basis=match["basis"])
             db.execute("INSERT OR IGNORE INTO deposits(txn_id, invoice_id, json) VALUES (?,?,?)",
                        (txn_id, reference, _dump(deposit)))
-        if not invoice:
+        if not invoice and not (match and match["invoice"]):
             output.append(_event(trigger, "bank.event", {
                 "amount": paid_amount, "direction": direction, "counterparty": counterparty,
                 "reference": reference, "posted_at": trigger.get("sim_ts"), "txn_id": txn_id,
                 "file": filename, "record": line,
             }))
+            if match:
+                log.warning("unapplied cash: deposit %s of %.2f from %r, reference %r, matches no shipper invoice "
+                            "(%s; candidates %s); held for review", txn_id, paid_amount, counterparty, reference,
+                            match["reason"], ", ".join(match["candidate_invoice_ids"]) or "none")
+                output.append(_document_event(trigger, "bank_deposit", "needs_review", {
+                    "txn_id": txn_id, "amount": paid_amount, "counterparty": counterparty, "reference": reference,
+                    "mismatch": "unapplied_cash", "reason": match["reason"], "match_basis": match["basis"],
+                    "candidate_invoice_ids": match["candidate_invoice_ids"]}))
             if txn_id:
                 db.execute("INSERT OR IGNORE INTO bank_txns(txn_id) VALUES (?)", (txn_id,))
             continue
-        billed_amount = float(invoice.get("amount", 0))
-        case_id = f"{invoice.get('case_id')}-AR"
-        payload = {"case_id": case_id, "load_id": invoice.get("load_id"), "lane": invoice.get("lane"),
-                   "pro": invoice.get("pro"), "bol": invoice.get("bol"), "po": invoice.get("po"),
-                   "invoice_id": reference, "shipper": invoice.get("shipper"), "invoice_amount": billed_amount,
-                   "paid_amount": paid_amount, "chase": paid_amount < billed_amount, "remittance": "ACH",
-                   "bank_txn": txn_id, "deduction_reason": invoice.get("deduction_reason"),
-                   "payment_id": txn_id, "shipper_id": (invoice.get("shipper") or {}).get("id"),
-                   "shipper_name": (invoice.get("shipper") or {}).get("name"),
-                   "amount": paid_amount, "remittance_ref": reference,
-                   "invoices_applied": [{"invoice_id": reference, "amount": paid_amount}],
-                   "posted_at": trigger.get("sim_ts"), "direction": direction,
-                   "text": f"{line}\n{invoice.get('remittance_text', '')}".rstrip(),
-                   "evidence_refs": []}
-        evidence_refs = list(invoice.get("_evidence_refs", []))
-        if invoice.get("source_email"):
-            evidence_refs.append(f"mail:{invoice['source_email']}")
-        payload["evidence_refs"] = evidence_refs
-        output.append(_event(trigger, "shipper_payment.received", payload, "P2", evidence_refs))
+        if invoice:
+            output.append(_payment_event(trigger, invoice, line, txn_id, paid_amount, direction, reference))
+        else:
+            log.info("unapplied cash: deposit %s, reference %r, routed for review against %s (%s)", txn_id,
+                     reference, match["invoice"]["invoice_id"], match["basis"])
+            output.append(_payment_event(trigger, match["invoice"], line, txn_id, paid_amount, direction,
+                                         reference, match))
         if txn_id:
             db.execute("INSERT OR IGNORE INTO bank_txns(txn_id) VALUES (?)", (txn_id,))
     if record is None:
@@ -758,10 +881,11 @@ async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict,
         elif exported:
             # TMS progress on a case nobody is routed to yet only needs the export fresh within a bounded delay.
             exporter.flush_if_due(db)
+        caps = {DOCUMENTS_STREAM: documents_maxlen(), EVENTS_STREAM: events_maxlen()}
         for event in events:
             stream = DOCUMENTS_STREAM if event.get("type") == "document.extracted" else EVENTS_STREAM
             await r.xadd(stream, {"json": json.dumps(event, default=str)},
-                         maxlen=20_000, approximate=True)
+                         maxlen=caps[stream], approximate=True)
         db.commit()
         await r.xack(RAW_STREAM, GROUP, entry_id)
     except Exception as error:
@@ -814,6 +938,7 @@ class DirectoryWatch:
 
 
 async def main() -> None:
+    events_maxlen(), documents_maxlen()  # fail fast on a bad EVENTS_STREAM_MAXLEN or DOCUMENTS_STREAM_MAXLEN
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     db = connect()
     exporter = source_export.Exporter()

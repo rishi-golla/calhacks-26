@@ -453,7 +453,9 @@ def review_shipper_ar(c: Checks, artifact: ResultArtifact, source: dict, skill: 
     if findings.get("matched_deposit_ids") is not None:
         c.add("matched_deposit_ids", sorted(findings["matched_deposit_ids"]) == sorted(ids), sorted(ids),
               findings["matched_deposit_ids"], basis="cash applies only to this shipper's invoice")
-    expected = "partial" if balance > 0 else "suspicious" if balance < 0 else "verified"
+    # Unreferenced cash matched to a settled invoice is held for a person, never reported as settled.
+    expected = "partial" if balance > 0 else "suspicious" if balance < 0 else (
+        "hold" if source.get("unapplied_deposits") else "verified")
     not_due = skill == "chase_overdue" and balance > 0 and not source.get("overdue") and outcome == "clear"
     c.add("outcome_matches_balance", outcome == expected or not_due, expected, outcome,
           basis="short pay is partial, overpayment is suspicious, settled is verified")

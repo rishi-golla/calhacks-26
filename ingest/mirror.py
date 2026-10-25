@@ -171,7 +171,8 @@ def title(case_id: str, case: dict) -> str:
     if kind == "bank_change":
         subject, what = carrier, "bank change"
     elif kind == "receivable":
-        subject, what = shipper, "short pay" if _short_paid(case) > 0 else "payment"
+        subject, what = shipper, ("unapplied payment" if case.get("unapplied_deposits")
+                                  else "short pay" if _short_paid(case) > 0 else "payment")
     elif kind == "payable" and case.get("carrier_identity_mismatch"):
         subject, what = carrier, "carrier identity mismatch"
     elif kind == "payable":

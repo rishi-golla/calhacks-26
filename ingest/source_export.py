@@ -98,10 +98,20 @@ def _receivable(shipper_invoice: dict | None, deposits: list[dict]) -> dict:
     if not shipper_invoice:
         return {}
     invoice_id = shipper_invoice["invoice_id"]
-    return {"shipper_invoice_id": invoice_id, "shipper_invoice_amount": shipper_invoice.get("amount"),
-            "deposits": [{key: deposit[key] for key in ("id", "shipper_id", "invoice_id", "amount", "posted_at")}
-                         for deposit in deposits if deposit.get("invoice_id") == invoice_id],
-            "deduction_reason": shipper_invoice.get("deduction_reason")}
+    receivable = {"shipper_invoice_id": invoice_id, "shipper_invoice_amount": shipper_invoice.get("amount"),
+                  "deposits": [{key: deposit[key] for key in ("id", "shipper_id", "invoice_id", "amount", "posted_at")}
+                               for deposit in deposits if deposit.get("invoice_id") == invoice_id],
+                  "deduction_reason": shipper_invoice.get("deduction_reason")}
+    # Cash whose bank reference named no invoice, matched to this one by shipper and amount: a candidate for
+    # review, never cash applied (`deposits`). Only present when there is some, so other cases keep their digest.
+    unapplied = [{"id": deposit["id"], "shipper_id": deposit.get("shipper_id"), "amount": deposit.get("amount"),
+                  "posted_at": deposit.get("posted_at"), "remittance_ref": deposit.get("invoice_id"),
+                  "candidate_invoice_id": invoice_id, "match_basis": deposit.get("match_basis"),
+                  "reference_mismatch": True}
+                 for deposit in deposits if deposit.get("matched_invoice_id") == invoice_id]
+    if unapplied:
+        receivable["unapplied_deposits"] = unapplied
+    return receivable
 
 
 def _payable(invoice: dict, invoices: list[dict], documents: list[dict]) -> dict:

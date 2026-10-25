@@ -194,9 +194,13 @@ def test_ingestion_extracts_and_routes_raw_scenario(world, scenario):
         assert bank.aba_valid(change["new_routing"])
 
     if scenario == "misapplied_payment":
-        assert not any(event["type"] == "shipper_payment.received" for event in derived)
-        assert any(event["type"] == "bank.event" and
-                   event["payload"]["reference"].startswith("SINV-MISSING-") for event in derived)
+        # Unreferenced cash is matched to the load's open invoice by shipper and amount, flagged, never applied.
+        payment = next(event["payload"] for event in derived if event["type"] == "shipper_payment.received")
+        assert payment["case_id"] == f"{load['case_id']}-AR" and payment["invoice_id"] == f"SINV-{load['load_id']}"
+        assert payment["reference_mismatch"] is True and payment["invoices_applied"] == []
+        assert payment["remittance_ref"] == f"SINV-MISSING-{load['load_id']}"
+        assert payment["match_basis"] == "shipper_and_amount"
+        assert not any(event["type"] == "bank.event" for event in derived)
         return
     payment = next(event["payload"] for event in derived if event["type"] == "shipper_payment.received")
     assert payment["chase"] == (scenario == "shipper_short_pay")

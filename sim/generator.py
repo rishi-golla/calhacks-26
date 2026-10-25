@@ -16,6 +16,7 @@ import math
 import os
 import pathlib
 import random
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -471,9 +472,45 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
     return steps
 
 
+def raw_maxlen() -> int:
+    """Cap on Redis `raw` (approximate MAXLEN). Entries past it are trimmed whether or not ingest has read them, so
+    keep it well above the longest backlog ingest may build up."""
+    value = os.getenv("RAW_STREAM_MAXLEN", "200000")
+    try:
+        cap = int(value)
+    except ValueError:
+        cap = 0
+    if cap <= 0:
+        raise ValueError(f"RAW_STREAM_MAXLEN must be a positive integer, got {value!r}")
+    return cap
+
+
+RAW_STREAM_WARN_FRACTION = 0.8
+RAW_STREAM_CHECK_S = 5.0
+_last_length_check = 0.0
+
+
+async def _warn_near_cap(r: redis.Redis, cap: int) -> None:
+    """At most every RAW_STREAM_CHECK_S, XLEN `raw` and warn once it nears the cap; never fails a publish."""
+    global _last_length_check
+    now = time.monotonic()
+    if now - _last_length_check < RAW_STREAM_CHECK_S:
+        return
+    _last_length_check = now
+    try:
+        length = int(await r.xlen(RAW_STREAM))
+    except Exception:  # noqa: BLE001 -- the check is advisory; publishing must not depend on it
+        return
+    if length >= cap * RAW_STREAM_WARN_FRACTION:
+        log.warning("Redis %s holds %d entries, %.0f%% of RAW_STREAM_MAXLEN=%d; unread arrivals past the cap are "
+                    "trimmed, so ingest may be falling behind", RAW_STREAM, length, 100 * length / cap, cap)
+
+
 async def publish(r: redis.Redis | None, ev: dict) -> None:
     if r is not None:
-        await r.xadd(RAW_STREAM, {"json": json.dumps(ev)}, maxlen=20_000, approximate=True)
+        cap = raw_maxlen()
+        await r.xadd(RAW_STREAM, {"json": json.dumps(ev)}, maxlen=cap, approximate=True)
+        await _warn_near_cap(r, cap)
     events.append_event(ev)
 
 
@@ -687,6 +724,7 @@ async def retention_loop() -> None:
 
 
 async def main() -> None:
+    raw_maxlen()  # fail fast on a bad RAW_STREAM_MAXLEN
     world = ensure()
     await seed_hero(world)
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))

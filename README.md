@@ -141,6 +141,9 @@ SIM_DATA_DIR=/tmp/w4-data WORLD_FILE=/tmp/w4-data/world.json .venv/bin/python -m
 ```
 `make verify-data` defaults to `data/` and writes `verify_report.json` there.
 
+`RAW_STREAM_MAXLEN` (default 200000) caps Redis `raw`. Redis trims past the cap whether or not ingest has read an
+entry, so the simulator logs a warning once the stream reaches 80% of it.
+
 ## Rules
 - `OUTREACH_MODE=demo`: calls/emails are only ever routed to `DEMO_ALLOWLIST_*`; the real contact is shown as `intended_to`.
 - Money and ledger changes go through `common/policy.py` and SpacetimeDB reducers; never through the LLM.

@@ -142,7 +142,9 @@ def test_input_names_never_collide_or_round_the_ceiling():
     assert items["Within tolerance"]["inputs"]["ceiling"] == 1020.3366
     source = invoice(1700, 1200)
     source.update(line_items=[{"kind": "linehaul", "amount": 1200},
+                              {"kind": "lumper", "amount": 100, "receipt_required": True, "receipt_ref": "doc:LR-1"},
                               {"kind": "lumper", "amount": 250, "receipt_required": True, "receipt_ref": None},
                               {"kind": "lumper", "amount": 250, "receipt_required": True, "receipt_ref": None}])
     totals = {w["label"]: w for w in charge_workings(source, audit_charges(source))}["Unsupported charges total"]
-    assert totals["inputs"] == {"lumper": 250.0, "lumper_3": 250.0} and totals["result"] == 500
+    # The receipted $100 lumper is supported and stays out; the two unreceipted lines keep distinct names.
+    assert totals["inputs"] == {"lumper": 250.0, "lumper_4": 250.0} and totals["result"] == 500

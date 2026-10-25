@@ -32,6 +32,24 @@ def gps_dwell_minutes(subject: dict) -> int | None:
     return int(minutes)
 
 
+ACCESSORIALS = {"lumper", "layover", "detention", "tonu", "extra_stop"}
+
+
+def unsupported_reason(item: dict, suspicious: bool) -> str | None:
+    """Why one accessorial line cannot be paid as billed, or None when it is supported. One rule for the
+    audit and for the shown work, so the displayed total always recomputes to the audited one."""
+    kind = str(item.get("kind", "")).lower()
+    if kind not in ACCESSORIALS:
+        return None
+    if item.get("approved") is False:
+        return "not approved"
+    if item.get("receipt_required") and not item.get("receipt_ref"):
+        return "no receipt attached"
+    if kind == "detention" and suspicious:
+        return "within free time"
+    return None
+
+
 def audit_charges(source: dict) -> dict:
     dwell = gps_dwell_minutes(source)
     free = duration(source["free_time_min"], "free-time minutes") if source.get("free_time_min") is not None else None
@@ -42,11 +60,8 @@ def audit_charges(source: dict) -> dict:
     if suspicious:
         unsupported.append("detention_within_free_time")
     for item in source.get("line_items", []):
-        kind = str(item.get("kind", "")).lower()
-        if (kind in {"lumper", "layover", "detention", "tonu", "extra_stop"}
-                and (item.get("approved") is False or item.get("receipt_required") and not item.get("receipt_ref")
-                     or kind == "detention" and suspicious)):
-            unsupported.append(f"unsupported_{kind}")
+        if unsupported_reason(item, suspicious):
+            unsupported.append(f"unsupported_{str(item.get('kind', '')).lower()}")
             unsupported_amount += money(item.get("amount"))
     delta = money(source.get("invoice_amount")) - money(source.get("contract_rate"))
     return {"gps_dwell_min": dwell, "free_time_min": number(free) if free is not None else None,
@@ -84,13 +99,13 @@ def charge_workings(source: dict, audit: dict) -> list[dict]:
                              {"gps_dwell_min": dwell, "free_time_min": free}, False, unit="bool",
                              basis="a detention claim needs GPS dwell and contracted free time"))
     unsupported: dict[str, float] = {}
+    suspicious = "detention_within_free_time" in audit["unsupported_charges"]
     for index, item in enumerate(source.get("line_items", []), start=1):
         kind = str(item.get("kind", "")).lower()
-        if f"unsupported_{kind}" in audit["unsupported_charges"]:
+        reason = unsupported_reason(item, suspicious)
+        if reason:
             name = unique_name(input_name(kind, index), unsupported, index)
             unsupported[name] = number(money(item.get("amount")))
-            reason = ("no receipt attached" if item.get("receipt_required") and not item.get("receipt_ref")
-                      else "within free time" if kind == "detention" else "not approved")
             items.append(working(f"Unsupported {kind.replace('_', ' ')}", f"{name} ({reason})",
                                  {name: unsupported[name], "receipt_ref": item.get("receipt_ref")},
                                  unsupported[name], evidence_refs=refs_for(source, "invoice_amount"), basis="P-001"))

@@ -8,6 +8,7 @@ from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
 from common.source_repository import SourceRepository, SourceUnavailable, source_fixtures_only
+from common.spacetime_client import journal_lines
 
 
 class ControllerAgent(FreightAgent):
@@ -87,7 +88,7 @@ class ControllerAgent(FreightAgent):
                 else:
                     journal = await mutate(self, env, task_id, "post_journal_entry", {
                         "id": identifier(request["id"], "journal"), "request_id": request["id"],
-                        "lines": request["lines"], "period": request["period"],
+                        "lines": journal_lines(request["lines"]), "period": request["period"],
                         "requested_by": request["requested_by"],
                     })
                     entry.update(outcome="approve" if journal.get("decision", "allow") == "allow" else "reject",

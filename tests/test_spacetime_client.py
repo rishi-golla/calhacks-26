@@ -535,3 +535,15 @@ async def test_polling_failure_propagates_instead_of_returning_empty_state():
     with pytest.raises(spacetime.SpacetimeHTTPError) as error:
         await anext(client.poll_rows("SELECT * FROM hold"))
     assert error.value.may_have_committed is False
+
+
+def test_journal_lines_normalizes_sql_triples_for_policy_and_reducers():
+    """SQL reads return the module's journalLine product as [account, debit, credit] triples."""
+    stored = [["cash", 969.08, 0.0], ["accounts_receivable", 0.0, 969.08]]
+    assert spacetime.journal_lines(stored) == [{"account": "cash", "debit": 969.08, "credit": 0.0},
+                                               {"account": "accounts_receivable", "debit": 0.0, "credit": 969.08}]
+    objects = [{"account": "cash", "debit": 1, "credit": 0}]
+    assert spacetime.journal_lines(objects) == objects
+    assert spacetime.journal_lines([["cash", 1]]) == [["cash", 1]] and spacetime.journal_lines(None) is None
+    assert policy.check("post_journal_entry", "controller", {"requested_by": "shipper_ar",
+                        "lines": spacetime.journal_lines(stored)}).result == "allow"

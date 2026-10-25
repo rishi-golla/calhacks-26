@@ -628,6 +628,7 @@
 .fl.theme-glass .au-casebar {
   left: 24px;
   right: auto;
+  translate: none;
   max-width: 60%;
 }
 
@@ -638,7 +639,7 @@
   width: min(380px, 40vw);
   border: 1px solid var(--glass-line);
   border-radius: 24px;
-  background: rgba(9, 30, 42, 0.9);
+  background: rgba(9, 30, 42, 0.96);
   -webkit-backdrop-filter: blur(26px) saturate(118%);
   backdrop-filter: blur(26px) saturate(118%);
   box-shadow:
@@ -650,4 +651,64 @@
 .fl.theme-glass .fh-att-filter {
   flex-wrap: wrap;
   row-gap: 6px;
+}
+
+/* ------------------------------ mobile ------------------------------ */
+@media (max-width: 900px) {
+  /* The rail becomes a bottom tab bar so every route stays reachable. */
+  .fl.theme-glass .fl-rail {
+    display: flex;
+    position: fixed;
+    inset: auto 12px 12px 12px;
+    z-index: 40;
+    height: auto;
+    margin: 0;
+    padding: 6px;
+    border-radius: 20px;
+    background: rgba(8, 28, 40, 0.86);
+    animation: none;
+  }
+  .fl.theme-glass .fl-brand,
+  .fl.theme-glass .fl-rail-foot {
+    display: none;
+  }
+  .fl.theme-glass .fl-nav {
+    flex-direction: row;
+    flex: 1;
+    gap: 2px;
+    padding: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .fl.theme-glass .fl-nav-item {
+    flex: 1 1 0;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    padding: 7px 2px;
+    font-size: 10.5px;
+    line-height: 1.1;
+    animation: none;
+  }
+  .fl.theme-glass .fl-nav-item .fl-count {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+  }
+  .fl.theme-glass .fl-nav-item::before {
+    display: none;
+  }
+  .fl.theme-glass .fl-main {
+    padding-bottom: 76px;
+  }
+  .fl.theme-glass .au-rail {
+    margin: 0 0 76px;
+  }
+  .fl.theme-glass .au-panel {
+    inset: 0;
+    right: 0;
+    width: auto;
+    border-radius: 24px;
+  }
 }

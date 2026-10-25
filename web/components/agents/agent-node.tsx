@@ -45,7 +45,7 @@ export const shortCase = (caseId: string) => caseId.replace(/^CASE-/, "");
 const breathOffset = (id: string) => {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return h % 5200;
+  return h % 4000;
 };
 
 function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, stretch, state, focus, order, selectedCase, onHover, onSelect, onCase }: Props) {

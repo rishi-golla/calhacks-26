@@ -12,6 +12,7 @@ import { ScrollText, X } from "lucide-react";
 import { useOps } from "@/components/data-provider";
 import { AGENT_META, agentColor, isAgentId } from "@/lib/agents";
 import { json, str, timestamp } from "@/lib/data";
+import { isHistoryAudit } from "@/lib/history";
 import { buildTimeline, fmtAgo, type TimelineEvent } from "@/lib/ops";
 
 type Lane = "all" | "agents" | "validator" | "policy" | "human" | "ledger";
@@ -150,7 +151,10 @@ export function LogWindow({ onClose }: { onClose: () => void }) {
 
   const events = useMemo(() => {
     // Verdicts come from the `review` table itself (it carries the checks); the `add_review` audit rows would duplicate them.
-    const list = buildTimeline(snapshot).filter((e) => e.kind !== "doc_read" && e.kind !== "dispatch" && str(e.row.kind, "") !== "add_review");
+    // Importing or removing history is bookkeeping, not live activity.
+    const list = buildTimeline(snapshot).filter(
+      (e) => e.kind !== "doc_read" && e.kind !== "dispatch" && str(e.row.kind, "") !== "add_review" && !isHistoryAudit(e.row),
+    );
     for (const r of snapshot.review) {
       const caseId = str(r.case_id, "");
       const verdict = str(r.verdict, "pass");

@@ -12,12 +12,13 @@ import { useLiveEvents, useOps } from "@/components/data-provider";
 import Backdrop from "@/components/fx/backdrop";
 import { Mascot } from "@/components/mascot";
 import { agentColor } from "@/lib/agents";
+import { isImportedId } from "@/lib/history";
 import { fmtMoney } from "@/lib/ops";
 import { PriorityChip, StatusChip } from "./case-explorer";
 import { CaseFile } from "./case-file";
 import { CaseLog, NodeDetails } from "./node-panel";
 import { TraceGraph } from "./trace-graph";
-import { buildCaseTrace, caseKind, clock, KIND_LABEL, layoutTrace, nodeStatus, shortDur, sideEffectAt, timer, type CaseTrace as Trace, type NodeStatus } from "./model";
+import { buildCaseTrace, caseKind, clock, dayClock, KIND_LABEL, layoutTrace, nodeStatus, shortDur, sideEffectAt, timer, type CaseTrace as Trace, type NodeStatus } from "./model";
 import "./cases.css";
 
 type Speed = 1 | 4 | 16;
@@ -211,6 +212,7 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
   const openedAt = c?.openedAt || t0;
   const endedAt = c ? (c.resolvedAt && c.status === "resolved" && c.resolvedAt <= cursor ? c.resolvedAt : 0) : !trace.open && trace.last <= cursor ? trace.last : 0;
   const status = c?.status ?? (trace.open ? "in_progress" : "resolved");
+  const imported = c?.imported ?? isImportedId(caseId);
   const statusAtCursor = replay ? (c?.resolvedAt && c.resolvedAt <= cursor ? "resolved" : "in_progress") : status;
 
   return (
@@ -227,15 +229,24 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
             {c && <PriorityChip priority={c.priority} />}
             <StatusChip status={statusAtCursor} active={replay ? 0 : (c?.activeTasks ?? 0)} />
             {replay && <span className="fl-chip outline agent">Replay</span>}
+            {imported && (
+              <span className="fl-chip outline ct-imported" title="From the brokerage's books before FreightLine ran. No agent worked this case.">
+                Imported history
+              </span>
+            )}
           </div>
           <h1 className="fl-display ct-title">{c?.title ?? caseId}</h1>
           <div className="ct-meta fl-mono">
-            <span>Opened {clock(openedAt)}</span>
+            <span>Opened {dayClock(openedAt, now)}</span>
             {/* While replaying, the scrubber readout carries the elapsed time. */}
             {endedAt ? <span>Took {shortDur(endedAt - openedAt)}</span> : replay ? null : <span>{shortDur(clockAt - openedAt)} so far</span>}
-            <span>
-              {agents} agent{agents === 1 ? "" : "s"}
-            </span>
+            {imported ? (
+              <span>No agent trace</span>
+            ) : (
+              <span>
+                {agents} agent{agents === 1 ? "" : "s"}
+              </span>
+            )}
             {c?.exposureUsd ? <span>Exposure {fmtMoney(c.exposureUsd)}</span> : null}
           </div>
         </div>
@@ -274,12 +285,18 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
               celebrating={celebrating}
               pings={pings}
             />
-            {trace.nodes.length === 0 && (
-              <div className="ct-waiting">
-                <Mascot id="intake" size={56} mood="working" />
-                <span>Not routed yet.</span>
-              </div>
-            )}
+            {trace.nodes.length === 0 &&
+              (imported ? (
+                <div className="ct-waiting ct-history">
+                  <Mascot id="intake" size={56} mood="idle" />
+                  <span>Imported history: resolved before FreightLine, so there is no agent trace. Its case file and ledger are here.</span>
+                </div>
+              ) : (
+                <div className="ct-waiting">
+                  <Mascot id="intake" size={56} mood="working" />
+                  <span>Not routed yet.</span>
+                </div>
+              ))}
           </div>
           <aside className={`ct-panel ${panel !== "closed" ? "open" : ""}`} aria-hidden={panel === "closed"}>
             {panel === "node" && selectedNode ? (

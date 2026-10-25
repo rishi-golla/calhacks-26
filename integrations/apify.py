@@ -15,6 +15,7 @@ import os
 import re
 import socket
 import time
+import unicodedata
 import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlsplit, urlunsplit
@@ -195,7 +196,44 @@ def _text(value, limit=500):
     return value[:limit] if isinstance(value, str) else None
 
 
-def normalize_carriers(items: list, *, usdot: str | None, mc: str | None) -> list[dict]:
+# Registration suffixes and joiners that differ between a trading name and the FMCSA legal name.
+_NAME_NOISE = frozenset({"INC", "INCORPORATED", "LLC", "CO", "CORP", "CORPORATION", "COMPANY", "LTD", "LIMITED",
+                         "LP", "LLP", "PC", "THE", "AND", "OF", "DBA"})
+
+
+def _name_key(name) -> tuple[frozenset[str], str] | None:
+    """Tokens and their concatenation, so "J.B. Hunt Transport, Inc." and "J B HUNT TRANSPORT INC" agree."""
+    if not isinstance(name, str):
+        return None
+    folded = "".join(ch for ch in unicodedata.normalize("NFKD", name[:200]) if not unicodedata.combining(ch))
+    text = re.sub(r"[^A-Z0-9]", " ", folded.upper().replace("'", "").replace("&", " AND "))
+    # A run of single-letter initials is one token however it is dotted or spaced: "J.B.", "J B" and "JB".
+    text = re.sub(r"\b([A-Z0-9])\s+(?=[A-Z0-9]\b)", r"\1", text)
+    tokens = [token for token in text.split() if token not in _NAME_NOISE]
+    return (frozenset(tokens), "".join(tokens)) if tokens else None
+
+
+def _same_name(a: tuple[frozenset[str], str], b: tuple[frozenset[str], str]) -> bool:
+    (a_tokens, a_compact), (b_tokens, b_compact) = a, b
+    smaller, larger = sorted((a_tokens, b_tokens), key=len)
+    # A single shared word ("EXPRESS") is not an identity; a multi-word name may omit a location or suffix.
+    return a_compact == b_compact or (len(smaller) >= 2 and smaller <= larger)
+
+
+def carrier_name_matches(record: dict, names) -> bool | None:
+    """Whether the registered legal or DBA name is one of the names the case holds; None when either is unknown.
+    A USDOT whose registration names a different company is a different carrier, whatever its authority says."""
+    expected = [key for key in map(_name_key, names or ()) if key]
+    registered = [key for key in map(_name_key, (record.get("legal_name"), record.get("dba_name"))) if key]
+    if not expected or not registered:
+        return None
+    return any(_same_name(e, r) for e in expected for r in registered)
+
+
+def normalize_carriers(items: list, *, usdot: str | None, mc: str | None, names=()) -> list[dict]:
+    """Records matching the requested registration. `names` (the case's carrier names) marks a record whose
+    registered name differs as an identity mismatch; lookups leave it empty so the cached observation stays
+    name-agnostic and apply names per case afterwards (see `with_expected_names`)."""
     records = []
     for item in items[:5]:
         if not isinstance(item, dict):
@@ -214,7 +252,9 @@ def normalize_carriers(items: list, *, usdot: str | None, mc: str | None) -> lis
         record = {key: _text(item.get(value)) for key, value in fields.items()}
         record.update(usdot=dot, docket_numbers=dockets, source_url=source,
                       out_of_service=item.get("outOfService") if isinstance(item.get("outOfService"), bool) else None,
-                      contact_authority_verified=False, financial_authorization=False, identity_match=True)
+                      contact_authority_verified=False, financial_authorization=False)
+        record["name_match"] = carrier_name_matches(record, names)
+        record["identity_match"] = record["name_match"] is not False
         authority = str(item.get("operatingAuthorityStatus", "")).strip().lower()
         record["authority_confirmed_active"] = True if authority == "authorized" else (
             False if authority in {"not authorized", "out-of-service"} else None)
@@ -399,7 +439,27 @@ async def _run_lookup(agent, env, task_id: str, kind: str, actor_input: dict, id
             await http.aclose()
 
 
-async def lookup_carrier(agent, env, task_id: str, *, usdot=None, mc=None,
+def with_expected_names(result: dict, names) -> dict:
+    """Judge a (possibly cached) carrier lookup against this case's carrier names. The cache is keyed by the
+    registration identifiers alone, so the name verdict is applied per call and never stored with it."""
+    records = result.get("records")
+    if not isinstance(records, list) or not records:
+        return result
+    judged = []
+    for record in records:
+        match = carrier_name_matches(record, names)
+        judged.append({**record, "name_match": match, "identity_match": match is not False})
+    result = {**result, "records": judged, "identity_match": any(r["identity_match"] for r in judged)}
+    if not result["identity_match"]:
+        result["identity_mismatch"] = {
+            "reason": "registered_name_differs",
+            "expected_names": list(dict.fromkeys(n[:200] for n in names if isinstance(n, str) and n.strip())),
+            "registered_names": list(dict.fromkeys(n for r in judged for n in (r.get("legal_name"), r.get("dba_name"))
+                                                   if n))}
+    return result
+
+
+async def lookup_carrier(agent, env, task_id: str, *, usdot=None, mc=None, names=(),
                          client: httpx.AsyncClient | None = None) -> dict:
     try:
         dot, docket = _dot(usdot), _docket(mc)
@@ -407,10 +467,11 @@ async def lookup_carrier(agent, env, task_id: str, *, usdot=None, mc=None,
             return _unavailable("carrier_registration_identifier_missing")
     except (ValueError, TypeError):
         return _unavailable("carrier_registration_identifier_invalid")
-    return await _run_lookup(agent, env, task_id, "carrier", {
+    result = await _run_lookup(agent, env, task_id, "carrier", {
         "dotNumbers": [dot] if dot else [], "docketNumbers": [docket] if docket else [],
         "liveCheck": True, "onlyChanges": False, "maxResults": 1,
     }, {"usdot": dot, "mc": docket}, client=client)
+    return with_expected_names(result, names)
 
 
 async def scrape_company(agent, env, task_id: str, *, url: str,

@@ -215,6 +215,7 @@ export const grantRole: Handler = m => {
 export const openCase: Handler = m => {
   const { ctx, p, actor } = m;
   const case_id = text(p, 'case_id');
+  if (isImportedId(case_id)) throw new Error(`${HISTORY_PREFIX} case ids are reserved for imported history`);
   const previous = ctx.db.case.case_id.find(case_id);
   if (previous) caseFor(ctx, case_id, actor);
   const load_id = text(p, 'load_id', previous?.load_id ?? '');
@@ -345,6 +346,7 @@ export const upsertInvoice: Handler = m => {
   const id = text(p, 'id');
   const previous = ctx.db.invoice.id.find(id);
   const case_id = text(p, 'case_id');
+  if (isImportedId(case_id) || (previous && isImportedId(previous.case_id))) throw new Error('imported history invoices are written only by import_history_batch');
   const c = caseFor(ctx, case_id, actor);
   const row = {
     id, case_id, carrier_id: text(p, 'carrier_id'), load_id: text(p, 'load_id', c.load_id),
@@ -410,20 +412,28 @@ export const postJournalEntry: Handler = m => {
   ctx.db.ledger_entry.insert(row);
   const posted = { ...request, posted_entry_id: row.id };
   ctx.db.journal_request.id.update(posted);
-  m.capture('ledger_entry', row.id, null, row);
+  captureLedger(m, row);
+  m.capture('journal_request', request.id, request, posted);
+  p.case_id = row.case_id;
+};
+
+type LedgerRow = NonNullable<ReturnType<Ctx['db']['ledger_entry']['id']['find']>>;
+
+// A posted entry's header row plus its line projections into `gl` and the AR/AP subledgers.
+function captureLedger(m: Mutation, row: LedgerRow): void {
+  const change = (sheet: string, key: string, value: object) => m.capture(sheet, key, null, value);
+  change('ledger_entry', row.id, row);
   row.lines.forEach((line, index) => {
     const cellRow = { entry_id: row.id, line: index + 1, case_id: row.case_id, period: row.period,
       account: line.account, debit: line.debit, credit: line.credit, memo: row.memo,
       requested_by: row.requested_by, approved_by: row.approved_by };
     const key = `${row.id}:${index}`;
-    m.capture('gl', key, null, cellRow);
+    change('gl', key, cellRow);
     const account = line.account.trim().toLowerCase().replace(/[ -]+/g, '_');
-    if (['accounts_receivable', 'account_receivable', 'ar', 'a/r', 'receivables', 'trade_receivables'].includes(account)) m.capture('ar_subledger', key, null, cellRow);
-    if (['accounts_payable', 'account_payable', 'ap', 'a/p', 'payables', 'trade_payables'].includes(account)) m.capture('ap_subledger', key, null, cellRow);
+    if (['accounts_receivable', 'account_receivable', 'ar', 'a/r', 'receivables', 'trade_receivables'].includes(account)) change('ar_subledger', key, cellRow);
+    if (['accounts_payable', 'account_payable', 'ap', 'a/p', 'payables', 'trade_payables'].includes(account)) change('ap_subledger', key, cellRow);
   });
-  m.capture('journal_request', request.id, request, posted);
-  p.case_id = row.case_id;
-};
+}
 
 function invoiceFor(m: Mutation, invoiceId: string, caseId?: string) {
   const invoice = must(m.ctx.db.invoice.id.find(invoiceId), 'invoice does not exist; ingest it first');
@@ -771,6 +781,7 @@ export const upsertSourceRecord: Handler = m => {
   const id = text(p, 'id');
   const kind = choice(p, 'kind', SOURCE_KINDS);
   if (!id.startsWith(`${kind}:`) || id.length === kind.length + 1) throw new Error('source record id must be <kind>:<key>');
+  if (id === HISTORY_MANIFEST || id.startsWith(`case:${HISTORY_PREFIX}`)) throw new Error('imported history source records are written only by import_history_batch');
   const record_json = text(p, 'record_json', undefined, 262144);
   let record: unknown;
   try { record = JSON.parse(record_json); } catch { throw new Error('record_json must be valid JSON'); }
@@ -1138,4 +1149,244 @@ export const ackOutbox: Handler = m => {
   ctx.db.routing_outbox.id.update(row);
   m.capture('routing_outbox', row.id, previous, row);
   settleCase(m, row.case_id);
+};
+
+
+/* ----------------------------- imported history ----------------------------- */
+
+// A brokerage's books from before FreightLine ran: resolved cases, their carrier invoices, posted
+// journals and source records, dated in the past. Only an admin may import them, only under ids that
+// start with HISTORY_PREFIX, never into the future and never into a locked period. Imported rows carry
+// no tasks, dispatches or reviews: they are history, not agent work, and the dashboard tells them apart
+// by the prefix. Each case's rows land in one change set on that case's own chain (the opening balance
+// and any directory rows on the system chain); the batch itself writes only its receipt.
+export const HISTORY_PREFIX = 'HIST-';
+/** The import's own manifest: generator parameters and totals, so a rerun can prove it matches. */
+export const HISTORY_MANIFEST = 'dataset:history';
+export const isImportedId = (id: string) => id.startsWith(HISTORY_PREFIX);
+const HISTORY_REQUESTER = 'import:history';
+const MAX_IMPORT_ROWS = 2000;
+const nowMs = (ctx: Ctx) => Number(ctx.timestamp.microsSinceUnixEpoch / 1000n);
+
+function pastIso(ctx: Ctx, item: Payload, key: string): string {
+  const at = iso(text(item, key));
+  if (Date.parse(at) > nowMs(ctx)) throw new Error(`${key} ${at} is in the future`);
+  return at;
+}
+
+function items(p: Payload, key: string): Payload[] {
+  const value = p[key] ?? [];
+  if (!Array.isArray(value) || value.some(x => !x || Array.isArray(x) || typeof x !== 'object')) throw new Error(`${key} must be an array of objects`);
+  return value as Payload[];
+}
+
+// Same caller-supplied contents. Who imported it is left out, so a rerun by another admin is still a no-op.
+function sameRow(previous: object, next: object, keys: readonly string[]): boolean {
+  const pick = (row: object) => canonical(Object.fromEntries(keys.map(key => [key, (row as Record<string, unknown>)[key]])));
+  return pick(previous) === pick(next);
+}
+
+// One inner mutation per chain scope (case id, or '' for the system chain), each finished on its own chain.
+function historyScopes(m: Mutation, summary: string, reason_code: string) {
+  const writeId = text(m.p, 'write_id', undefined, 200);
+  const scopes = new Map<string, Mutation>();
+  return {
+    scope(case_id: string): Mutation {
+      let inner = scopes.get(case_id);
+      if (!inner) {
+        inner = new Mutation(m.ctx, { write_id: `${m.action}:${hash(canonical([writeId, case_id])).slice(0, 40)}`, case_id, summary, reason_code }, m.actor, m.action);
+        scopes.set(case_id, inner);
+      }
+      return inner;
+    },
+    finish(): void {
+      for (const inner of scopes.values()) if (inner.cells.length) inner.finish();
+      m.unchanged = true;
+    },
+  };
+}
+
+const CASE_KEYS = ['case_id', 'load_id', 'title', 'status', 'priority', 'exposure_usd', 'opened_at', 'resolved_at'] as const;
+const INVOICE_KEYS = ['id', 'case_id', 'carrier_id', 'load_id', 'amount', 'contract_amount', 'paid_amount', 'issued_at', 'status'] as const;
+const JOURNAL_KEYS = ['id', 'case_id', 'period', 'lines', 'memo', 'posted_at'] as const;
+
+export const importHistoryBatch: Handler = m => {
+  const { ctx, p, actor } = m;
+  const source = text(p, 'source', undefined, 80);
+  if (!/^[A-Za-z0-9][A-Za-z0-9:._-]*$/.test(source)) throw new Error('source must be a short tag of letters, digits and :._-');
+  const companies = items(p, 'companies');
+  const cases = items(p, 'cases');
+  const invoices = items(p, 'invoices');
+  const entries = items(p, 'ledger_entries');
+  const records = items(p, 'source_records');
+  const total = companies.length + cases.length + invoices.length + entries.length + records.length;
+  if (!total || total > MAX_IMPORT_ROWS) throw new Error(`a history batch holds 1 to ${MAX_IMPORT_ROWS} rows`);
+  const scopes = historyScopes(m, `Imported from accounting history (${source})`, 'imported_history');
+
+  // Counterparties the history names. The live directory wins: an existing company is left alone.
+  for (const item of companies) {
+    const id = text(item, 'id');
+    if (ctx.db.company.id.find(id)) continue;
+    const row = {
+      id, kind: choice(item, 'kind', ['carrier', 'shipper', 'broker', 'other']), name: text(item, 'name'),
+      usdot: text(item, 'usdot', ''), mc: text(item, 'mc', ''), phone: text(item, 'phone', ''),
+      website: text(item, 'website', ''), source_url: text(item, 'source_url', ''),
+    };
+    if (row.phone) phone(row.phone);
+    ctx.db.company.insert(row);
+    scopes.scope('').capture('company', id, null, row);
+  }
+
+  for (const item of cases) {
+    const case_id = text(item, 'case_id', undefined, 160);
+    if (!isImportedId(case_id)) throw new Error(`imported case ids must start with ${HISTORY_PREFIX}`);
+    if (item.status !== undefined && item.status !== 'resolved') throw new Error('imported cases are resolved history');
+    const row = {
+      case_id, load_id: text(item, 'load_id'), title: text(item, 'title', undefined, 500), status: 'resolved',
+      priority: choice(item, 'priority', ['P0', 'P1', 'P2', 'P3'], 'P2'), exposure_usd: amount(item, 'exposure_usd', 0),
+      opened_at: pastIso(ctx, item, 'opened_at'), resolved_at: pastIso(ctx, item, 'resolved_at'),
+    };
+    if (Date.parse(row.resolved_at) < Date.parse(row.opened_at)) throw new Error(`imported case ${case_id} resolves before it opens`);
+    const previous = ctx.db.case.case_id.find(case_id);
+    if (previous) {
+      if (!sameRow(previous, row, CASE_KEYS)) throw new Error(`imported case ${case_id} already exists with different contents`);
+      continue;
+    }
+    ctx.db.case.insert(row);
+    scopes.scope(case_id).capture('case', case_id, null, row);
+  }
+
+  const importedCase = (case_id: string) => {
+    if (!isImportedId(case_id)) throw new Error(`imported rows must belong to a ${HISTORY_PREFIX} case`);
+    return must(ctx.db.case.case_id.find(case_id), `imported case ${case_id} does not exist; import it first`);
+  };
+
+  for (const item of invoices) {
+    const id = text(item, 'id');
+    const c = importedCase(text(item, 'case_id'));
+    const value = positiveAmount(item);
+    const paid_amount = amount(item, 'paid_amount', 0);
+    const status = choice(item, 'status', ['open', 'paid'], 'open');
+    if (cents(paid_amount) > cents(value)) throw new Error(`invoice ${id} is paid beyond its amount`);
+    if (status === 'paid' && cents(paid_amount) <= 0) throw new Error(`paid invoice ${id} needs a paid_amount`);
+    const row = {
+      id, case_id: c.case_id, carrier_id: text(item, 'carrier_id'), load_id: text(item, 'load_id', c.load_id),
+      amount: value, contract_amount: amount(item, 'contract_amount', 0), paid_amount, issued_at: pastIso(ctx, item, 'issued_at'), status,
+    };
+    if (row.load_id !== c.load_id) throw new Error('invoice must belong to the case load');
+    const previous = ctx.db.invoice.id.find(id);
+    if (previous) {
+      if (!sameRow(previous, row, INVOICE_KEYS)) throw new Error(`invoice ${id} already exists with different contents`);
+      continue;
+    }
+    ctx.db.invoice.insert(row);
+    scopes.scope(c.case_id).capture('ap_subledger', id, null, row);
+  }
+
+  for (const item of entries) {
+    const id = text(item, 'id');
+    if (!isImportedId(id)) throw new Error(`imported journal ids must start with ${HISTORY_PREFIX}`);
+    const case_id = text(item, 'case_id', '');
+    if (case_id) importedCase(case_id);
+    const posted_at = pastIso(ctx, item, 'posted_at');
+    const period = text(item, 'period', posted_at.slice(0, 7));
+    if (period !== posted_at.slice(0, 7)) throw new Error(`journal ${id} period must be the month it was posted in`);
+    const row = {
+      id, case_id, period, lines: journalLines(item.lines), memo: text(item, 'memo', undefined, 500),
+      requested_by: HISTORY_REQUESTER, approved_by: actor.actor, posted_at, request_id: '',
+      requester_identity: '', approver_identity: actor.identity,
+    };
+    // An identical journal is already on the books, even if its period has since been locked.
+    const previous = ctx.db.ledger_entry.id.find(id);
+    if (previous) {
+      if (!sameRow(previous, row, JOURNAL_KEYS)) throw new Error(`journal ${id} already exists with different contents`);
+      continue;
+    }
+    if (ctx.db.accounting_period.period.find(period)?.status === 'locked') throw new Error(`P-006: accounting period ${period} is locked`);
+    ctx.db.ledger_entry.insert(row);
+    // The header row carries every line; per-line GL projections are left out to keep the import's audit small.
+    scopes.scope(case_id).capture('ledger_entry', id, null, row);
+  }
+
+  for (const item of records) {
+    const id = text(item, 'id');
+    const case_id = id.startsWith('case:') ? id.slice('case:'.length) : '';
+    if (id !== HISTORY_MANIFEST) importedCase(case_id);
+    const kind = case_id ? 'case' : 'dataset';
+    if (item.kind !== undefined && item.kind !== kind) throw new Error(`source record ${id} must have kind ${kind}`);
+    const record_json = text(item, 'record_json', undefined, 262144);
+    let record: unknown;
+    try { record = JSON.parse(record_json); } catch { throw new Error('record_json must be valid JSON'); }
+    if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('record_json must be a JSON object');
+    const digest = text(item, 'digest');
+    if (hash(record_json) !== digest) throw new Error('digest does not match record_json');
+    const row = { id, kind, case_id, record_json, digest, updated_at: item.updated_at === undefined ? now(ctx) : pastIso(ctx, item, 'updated_at') };
+    const previous = ctx.db.source_record.id.find(id);
+    if (previous) {
+      if (previous.digest !== digest) throw new Error(`source record ${id} already exists with different contents`);
+      continue;
+    }
+    ctx.db.source_record.insert(row);
+    scopes.scope(case_id).capture('source_record', id, null, row);
+  }
+  scopes.finish();
+};
+
+// The documented way to take imported history back out: up to `limit` imported cases per call, each with
+// its invoices, journals and source record, removed in a change set on the case's own chain that keeps
+// every deleted value. Once no imported case is left, the opening entries and the manifest go too. Rows
+// without the prefix are never touched; a case anyone has worked on, or a journal in a locked period, is
+// refused rather than deleted. The import batches' write receipts are forgotten, so the same plan can be seeded again.
+function removeJournal(m: Mutation, row: LedgerRow): void {
+  // Closed books stay closed: unlock the period first if imported history there must really go.
+  if (m.ctx.db.accounting_period.period.find(row.period)?.status === 'locked') throw new Error(`P-006: journal ${row.id} is in locked period ${row.period}; remove refused`);
+  m.ctx.db.ledger_entry.id.delete(row.id);
+  m.capture('ledger_entry', row.id, row, {});
+}
+
+export const removeImportedHistory: Handler = m => {
+  const { ctx, p } = m;
+  const limit = uint(p, 'limit', 50);
+  if (limit < 1 || limit > 200) throw new Error('limit must be 1 to 200 cases');
+  const scopes = historyScopes(m, 'Removed imported history', 'imported_history_removed');
+  const targets = [...ctx.db.case.iter()].filter(c => isImportedId(c.case_id)).sort((a, b) => a.case_id < b.case_id ? -1 : 1);
+  for (const c of targets.slice(0, limit)) {
+    const id = c.case_id;
+    const worked = [...ctx.db.task.case_id.filter(id)].length + [...ctx.db.dispatch.case_id.filter(id)].length
+      + [...ctx.db.hold.case_id.filter(id)].length + [...ctx.db.payment_proposal.case_id.filter(id)].length
+      + [...ctx.db.approval.case_id.filter(id)].length + [...ctx.db.flag.case_id.filter(id)].length
+      + [...ctx.db.journal_request.case_id.filter(id)].length + [...ctx.db.cash_forecast.case_id.filter(id)].length
+      + [...ctx.db.call.case_id.filter(id)].length + [...ctx.db.review.case_id.filter(id)].length
+      + [...ctx.db.routing_outbox.case_id.filter(id)].length;
+    if (worked) throw new Error(`imported case ${id} has agent or human work on it; remove refused`);
+    const inner = scopes.scope(id);
+    for (const row of [...ctx.db.ledger_entry.case_id.filter(id)]) {
+      if (!isImportedId(row.id)) throw new Error(`journal ${row.id} on imported case ${id} was not imported; remove refused`);
+      removeJournal(inner, row);
+    }
+    for (const row of [...ctx.db.invoice.case_id.filter(id)]) {
+      if (!isImportedId(row.case_id)) throw new Error(`invoice ${row.id} was not imported; remove refused`);
+      ctx.db.invoice.id.delete(row.id);
+      inner.capture('ap_subledger', row.id, row, {});
+    }
+    const record = ctx.db.source_record.id.find(`case:${id}`);
+    if (record) {
+      ctx.db.source_record.id.delete(record.id);
+      inner.capture('source_record', record.id, record, {});
+    }
+    ctx.db.case.case_id.delete(id);
+    inner.capture('case', id, c, {});
+  }
+  // An import batch's receipt would turn a later reseed of the same plan into a no-op that restores nothing.
+  // The rows, not the receipts, are what make an import idempotent, so removal forgets the receipts.
+  for (const receipt of [...ctx.db.write_receipt.iter()].filter(x => x.action === 'import_history_batch')) ctx.db.write_receipt.id.delete(receipt.id);
+  if (targets.length <= limit) {
+    for (const row of [...ctx.db.ledger_entry.case_id.filter('')].filter(x => isImportedId(x.id))) removeJournal(scopes.scope(''), row);
+    const manifest = ctx.db.source_record.id.find(HISTORY_MANIFEST);
+    if (manifest) {
+      ctx.db.source_record.id.delete(manifest.id);
+      scopes.scope('').capture('source_record', manifest.id, manifest, {});
+    }
+  }
+  scopes.finish();
 };

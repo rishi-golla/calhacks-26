@@ -1,6 +1,35 @@
-# Golden Gate Freight dashboard (W2)
+# FreightLine dashboard (W2)
 
-A Next.js 15 / React 19 dashboard backed by real SpacetimeDB 2.10.2 subscriptions. The default
+A Next.js 15 / React 19 dashboard backed by real SpacetimeDB 2.10.2 subscriptions.
+
+## FreightLine UI (new)
+
+| Route | Screen |
+|---|---|
+| `/` | Finance home: cash / AP / AR / revenue with 30-day trends, cash forecast, needs-attention queue (approvals, failures, holds, reviews), autonomous-operations metrics, the agent crew, a live ledger ticker and open invoices. |
+| `/agents` | Agent universe: the nine specialists plus Intake and the human controller as mascots on a map; handoffs fly between nodes as document packets; per-agent activity panel; searchable case explorer; operational metrics. Readable at hundreds of concurrent cases. |
+| `/cases` | Case explorer: searchable, filterable, sortable list with route mascots and attention badges. |
+| `/cases/<id>` | Execution trace: a git-style graph built from what actually happened (dispatch, tasks, delegations, tool calls, documents, holds, approvals, calls, review), with node details, replay scrubber and live follow. |
+| `/ops` | The original operations console (agent inbox, ledger, audit workspace, counterparties, validator, harness, demo console). |
+
+Shared pieces: `lib/agents.ts` (roster, colors, delegation allowlist, mascots), `lib/ops.ts` (typed selectors over a snapshot), `lib/demo-sim.ts` (browser simulation), `components/data-provider.tsx` (`useOps()`), `app/freightline.css` (dark theme scoped under `.fl`), `components/mascot.tsx` (character moods), `components/fx/` (vgpu WebGPU backdrops with CSS fallback), `public/mascots/` (generated characters; `generate.py` regenerates them).
+
+### Data source
+
+`useOps()` feeds every new screen from one of two sources, and always says which:
+
+- **Live / Snapshot:** the SpacetimeDB subscription (or the read-only HTTP fallback), exactly as before.
+- **Simulation:** `lib/demo-sim.ts` generates a brokerage back office in the browser (cases arrive, agents delegate along the real allowlist, tool calls, documents, holds, approvals, journals). Nothing is written anywhere. It is labeled "SIMULATION" in the top bar and a banner, and the finance/attention numbers it produces are simulated.
+
+Selection: `auto` (default) uses the database when it is live or has rows and otherwise shows the simulation; `?data=live` forces the database; `?data=sim` forces the simulation; `NEXT_PUBLIC_DATA_SOURCE=sim|live` sets the default. The top-right pill switches modes and, in simulation, sets the arrival rate and injects scenarios (detention, bank change, random).
+
+### Live-data caveats
+
+The simulation fills a few fields the module does not have (`case.scenario`, `doc_read.ts`, `approval.requested_at`). On live rows the pages derive them (kind from the root skill, document time from the audit row or task start, approval time from the `request_approval` audit row). Cash, AP, AR and revenue come from `ledger_entry` lines by account name (`cash`, `accounts_receivable`/`ar`, `accounts_payable`/`ap`, `freight_revenue`/`revenue`, `freight_expense`/`expense`); a `cash_position` metric overrides cash when present.
+
+## Operations console (`/ops`)
+
+The default
 Agent inbox shows actual recorded tasks, tool calls, handoffs and results. It never invents live activity.
 An optional, explicitly labeled replay contains a captured run of the nine local A2A fixture
 services. Empty, disconnected, fallback and replay states remain distinct.

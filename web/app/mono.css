@@ -416,6 +416,17 @@
 }
 .fl.theme-mono .fh-att-row {
   border-radius: 12px;
+  border-left: 0;
+}
+/* Severity as a square marker by the age, not a colored edge that would curve with the radius. */
+.fl.theme-mono .fh-att-age::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  vertical-align: 1px;
+  background: var(--sev);
 }
 .fl.theme-mono :is(.fh-bar.out, .fh-legend i.out) {
   background: #5b5b63;

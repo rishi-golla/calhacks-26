@@ -726,6 +726,8 @@
   grid-column: 2;
   min-width: 0;
   position: relative;
+  /* Page z-indexes stay inside <main>, so no page layer can rise above the topbar or its popovers. */
+  isolation: isolate;
   /* globals.css styles bare <main> for the legacy console; neutralize it here. */
   padding: 0;
   margin: 0;

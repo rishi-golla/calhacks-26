@@ -116,6 +116,39 @@
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
+/* Clear at rest; frosts in once the page scrolls so content passing under the crumb stays legible.
+   The frost lives on a pseudo-element so the bar itself never becomes a containing block. */
+.fl.theme-glass .fl-topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: rgba(4, 18, 27, 0.55);
+  -webkit-backdrop-filter: blur(18px) saturate(115%);
+  backdrop-filter: blur(18px) saturate(115%);
+  -webkit-mask-image: linear-gradient(180deg, #000 72%, transparent);
+  mask-image: linear-gradient(180deg, #000 72%, transparent);
+  animation: glass-bar-in linear both;
+  animation-timeline: scroll(root);
+  animation-range: 0 48px;
+}
+@keyframes glass-bar-in {
+  from {
+    opacity: 0;
+  }
+}
+.fl.theme-glass .fl-popover {
+  background: rgba(9, 30, 42, 0.96);
+  border-color: var(--glass-line);
+  border-radius: 18px;
+  overflow: hidden;
+  -webkit-backdrop-filter: blur(26px) saturate(118%);
+  backdrop-filter: blur(26px) saturate(118%);
+  box-shadow:
+    var(--card-edge),
+    0 24px 60px rgba(0, 0, 0, 0.35);
+}
 .fl.theme-glass .fl-nav-item {
   color: rgba(255, 255, 255, 0.82);
   border-radius: 14px;
@@ -352,11 +385,12 @@
 .fl.theme-glass .fl-rail-foot {
   animation: riseIn 0.6s var(--e-out) 0.7s both;
 }
+/* backwards, not both: a held transform would trap the topbar popovers' position: fixed on phones. */
 .fl.theme-glass .fl-topbar > * {
-  animation: riseIn 0.7s var(--e-out) 0.14s both;
+  animation: riseIn 0.7s var(--e-out) 0.14s backwards;
 }
 .fl.theme-glass .fl-topbar > :last-child {
-  animation: popIn 0.58s var(--e-out) 0.3s both;
+  animation: popIn 0.58s var(--e-out) 0.3s backwards;
 }
 
 .fl.theme-glass .fh-header .fl-section {
@@ -687,10 +721,26 @@
   .fl.theme-glass .au-rail {
     margin: 0 0 76px;
   }
+  /* The cases workspaces are pinned to the viewport, so main's padding does not clear the tab bar for them. */
+  .fl.theme-glass :is(.cx-page, .ct-page, .ct-missing) {
+    bottom: 76px;
+  }
   .fl.theme-glass .au-panel {
     inset: 0;
     right: 0;
     width: auto;
     border-radius: 24px;
+  }
+}
+@media (max-width: 480px) {
+  /* Anchored to its button, a topbar popover runs off the left edge of a phone; pin it to the viewport instead. */
+  .fl.theme-glass .fl-popover {
+    position: fixed;
+    top: calc(var(--topbar) + 4px);
+    left: auto;
+    right: 12px;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - var(--topbar) - 92px);
+    overflow-y: auto;
   }
 }

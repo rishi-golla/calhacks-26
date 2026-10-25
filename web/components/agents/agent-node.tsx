@@ -41,6 +41,13 @@ export const PRIORITY_COLOR: Record<string, string> = { P0: "#e40014", P1: "#ff6
 
 export const shortCase = (caseId: string) => caseId.replace(/^CASE-/, "");
 
+/** Stable per-agent phase into the resting breath so the map doesn't breathe in unison. */
+const breathOffset = (id: string) => {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return h % 5200;
+};
+
 function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, stretch, state, focus, order, selectedCase, onHover, onSelect, onCase }: Props) {
   const meta = isAgentId(id) ? AGENT_META[id] : NODE_META[id as "intake" | "human"];
   const pos = nodePos(id);
@@ -64,6 +71,7 @@ function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, st
     "--c": meta.color,
     "--m": `${size}px`,
     "--w": `${NODE_WIDTH[id] ?? 200}px`,
+    "--breath-delay": `${-breathOffset(id)}ms`,
   } as CSSProperties;
 
   return (

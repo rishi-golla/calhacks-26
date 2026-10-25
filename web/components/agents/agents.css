@@ -157,9 +157,23 @@
   position: relative;
   z-index: 2;
 }
-/* On the map motion means work: an idle mascot stands still. */
+/* A resting mascot breathes: slow and shallow, so it never reads as work.
+   Each node starts at its own phase (--breath-delay). */
 .au .mascot.mood-idle .mascot-body {
-  animation: none;
+  animation: au-rest 5.2s ease-in-out infinite;
+  animation-delay: var(--breath-delay, 0ms);
+}
+.au .mascot.mood-sleeping .mascot-body {
+  animation-delay: var(--breath-delay, 0ms);
+}
+@keyframes au-rest {
+  0%,
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+  45% {
+    transform: translateY(-1.2%) scale(1.012, 1.02);
+  }
 }
 .au-glow {
   position: absolute;

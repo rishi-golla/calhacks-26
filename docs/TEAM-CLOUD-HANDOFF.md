@@ -193,6 +193,12 @@ the public identity shown by the cloud-connected dashboard. Alan grants it:
 .venv/bin/python -m scripts.spacetime_cloud grant-human <identity> --name <teammate>
 ```
 
+Payments and hold releases over $5,000 wait for one named approver. On the Mac, set
+`HUMAN_APPROVER_ID=<identity>` in `data/live/runtime.env`, using the identity of the dashboard
+that will approve, after granting it as above. Then restart the agents. Settlement Approvals
+(`controller`, :9105) reports `/readyz` 503 in live mode until this is set. Only that identity can
+decide an approval in the dashboard, and the parked task resumes on its own afterwards.
+
 ## Troubleshooting
 
 - `make cloud-verify` prints the cutover checklist from anonymous SQL: agent defaults, heartbeats,

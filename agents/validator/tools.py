@@ -21,7 +21,7 @@ from agents.documents.tools import check_packet
 from agents.risk.tools import audit_charges, charge_workings
 from common.agent_support import identifier, journal_lines, matched_deposit_total, money
 from common.envelope import Friction, Lesson, ResultArtifact, ReviewOutput
-from common.learning import apply_instruction_patch
+from common.learning import apply_instruction_patch, memory_scope
 from common.policy import APPROVAL_THRESHOLD_USD, CONTRACT_TOLERANCE
 from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
 from common.workings import plain, refs_for, working
@@ -609,9 +609,8 @@ def deterministic_review(bundle: dict) -> ReviewOutput:
     # the task is still rerun, but it teaches no lesson.
     judged = not any(item["name"] in RUN_FAILURES for item in failures)
     if failures and role in FINANCIAL_AGENTS and judged:
-        scope = {key: str(source[key]) for key in ("carrier_id", "lane", "claim_type") if source.get(key)}
-        if skill:
-            scope["skill"] = skill
+        # The same scope every reader derives (common.learning.memory_scope), so the lesson is found again.
+        scope = memory_scope(source, skill)
         lessons.append(Lesson(agent=role, type="memory", scope=scope, text_or_diff=lesson_text(skill, failures),
                               confidence=0.9, evidence_refs=artifact.evidence_refs if artifact else []))
     return ReviewOutput(verdict="issue" if failures else "pass", checks=c.items, friction=friction,

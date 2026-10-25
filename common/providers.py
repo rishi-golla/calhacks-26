@@ -12,8 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from common.config import AGENTS
 from common.envelope import TaskEnvelope
-from common.learning import reconstruct_instructions
-from common.spacetime_client import SpacetimeClient
+from common.learning import reconstruct_instructions, task_memory_scope
+from common.spacetime_client import SpacetimeClient, SpacetimeError
 
 
 class ProviderConfigurationError(ValueError):
@@ -192,9 +192,17 @@ async def infer(agent: str, env: TaskEnvelope, evidence: dict, *, purpose: str =
                 raise ProviderConfigurationError("agent disabled by operator")
             pin = selected.model
         history = await db.get_instruction_history(agent)
-        scope = {key: str(evidence[key]) for key in ("carrier_id", "lane", "claim_type") if evidence.get(key)}
-        scope["skill"] = env.task_type
-        memories = await db.get_agent_memory(agent, scope=scope, limit=10)
+    if not db.disabled:
+        # Same scope the Validator writes lessons under (derived from the case's
+        # source record, not from handler findings). Fixture runs with W2 on read
+        # memory too, best-effort: advisory memory must not break a fixture demo.
+        scope = await task_memory_scope(env)
+        try:
+            memories = await db.get_agent_memory(agent, scope=scope, limit=10)
+        except SpacetimeError:
+            if mode() == "live":
+                raise
+            memories = []
     config = configuration(agent, pin)
     instructions, version = reconstruct_instructions(agent, history)
     started = time.monotonic()

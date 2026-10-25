@@ -126,6 +126,7 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, now, o
             <div className="au-kv">
               <KV v={workload.active} k="Active" />
               <KV v={workload.queued} k="Queued" />
+              {workload.stalled > 0 && <KV v={workload.stalled} k="Stalled" hot />}
               <KV v={workload.done.toLocaleString()} k="Done" />
               {workload.errors > 0 && <KV v={workload.errors} k="Errors" hot />}
             </div>

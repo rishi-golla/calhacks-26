@@ -42,9 +42,11 @@ export default function FinanceHome() {
 /* ------------------------------- header ------------------------------- */
 
 function Header() {
-  const { source, simulated, ops, attention, now, lastUpdated } = useOps();
+  const { source, simulated, ops, workloads, attention, now, lastUpdated } = useOps();
   const total = AGENT_IDS.length;
   const online = Math.min(total, ops.agentsOnline);
+  // Orphaned `working` rows are not in flight; nothing is advancing them.
+  const inFlight = Math.max(0, ops.tasksActive - AGENT_IDS.reduce((s, id) => s + workloads[id].stalled, 0));
   const provenance = simulated ? "Simulated" : source === "live" ? "Live" : source === "fallback" ? "Snapshot" : source === "connecting" ? "Connecting" : "Offline";
   return (
     <header className="fh-header fl-reveal" style={reveal(0)}>
@@ -59,7 +61,7 @@ function Header() {
         </h1>
         <div className="fh-header-sub">
           Autonomous back office · <span className="fl-num">{count(ops.casesActive)}</span> open cases ·{" "}
-          <span className="fl-num">{count(ops.tasksActive)}</span> tasks in flight
+          <span className="fl-num">{count(inFlight)}</span> tasks in flight
         </div>
       </div>
       <div className="fh-header-status">

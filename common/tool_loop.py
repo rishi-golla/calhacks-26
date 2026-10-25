@@ -1,6 +1,7 @@
 """Durable, role-scoped model tool execution and sanitized inbox audit events."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -25,6 +26,39 @@ log = logging.getLogger(__name__)
 MAX_TURNS = 16
 MAX_TOOL_CALLS = 14
 INCOMPLETE_TURN_RETRIES = 2
+# A turn the provider never answered (transport failure, 429 or 5xx) executed nothing either, so it is asked again
+# after a short pause. Live Oct 25: one such blip failed a CFO task, and through it its parent's reconciliation.
+TURN_RETRY_BACKOFF_S = 1.0
+# The guarded workflow failing again is not something more model turns can fix. Live Oct 25 runs called a failing
+# execute_current_skill up to 9 times, until the call budget (or the provider's message cap) ran out, and the task
+# then failed as "model tool call budget exhausted", hiding the workflow's own error.
+MAX_SKILL_FAILURES = 3
+
+
+class GuardedSkillFailed(RuntimeError):
+    """The assigned skill's guarded workflow failed and retrying it cannot help. ``reason`` is safe, bounded text:
+    the error type and service-authored detail that the tool boundary already shows the model."""
+
+    def __init__(self, reason: str):
+        self.reason = reason[:200]
+        super().__init__(self.reason)
+
+
+def retryable_turn_error(error: ProviderError) -> bool:
+    """A turn with no usable answer executed no tool, so asking again is safe: a cut-short turn, a transport
+    failure, a rate limit or a provider 5xx."""
+    text = str(error)
+    if text.startswith("tool response incomplete") or text == "provider transport or protocol failure":
+        return True
+    status = text.removeprefix("provider HTTP ")
+    return status != text and status.isdigit() and (status == "429" or status.startswith("5"))
+
+
+def skill_failure(result: dict) -> str:
+    """A failed execute_current_skill result, described as the tool boundary recorded it."""
+    detail = result.get("refusal") or result.get("detail") or ""
+    kind = result.get("error_type") or result.get("error") or "failed"
+    return f"{kind}: {detail}" if detail else str(kind)
 
 
 def compact_reasoning(history: list[dict], keep_last: bool = True) -> int:
@@ -201,7 +235,7 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
                     return await model_turn(config, system, history, turn_tools,
                                             evidence_refs=sorted(refs), require_tool=artifact is None)
                 except ProviderError as error:
-                    if attempt >= INCOMPLETE_TURN_RETRIES or not str(error).startswith("tool response incomplete"):
+                    if attempt >= INCOMPLETE_TURN_RETRIES or not retryable_turn_error(error):
                         raise
                     if "max_messages" in str(error):
                         # The same conversation is cut short again at the same turn, so the retry must shrink it:
@@ -211,6 +245,8 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
                                     turn_index, error, dropped)
                     else:
                         log.warning("%s turn %d %s; retrying", agent.name, turn_index, error)
+                    if not str(error).startswith("tool response incomplete"):
+                        await asyncio.sleep(TURN_RETRY_BACKOFF_S * (attempt + 1))
 
         # Replaying after a wait/crash reads this exact decision instead of asking the model again.
         try:
@@ -305,6 +341,15 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
                          result=result, duration_ms=completed["duration_ms"])
             records.append({"id": call["id"], "name": call["name"], "status": completed["status"],
                             "duration_ms": completed["duration_ms"]})
+            if call["name"] == "execute_current_skill" and completed["status"] == "failed":
+                # Counted from the checkpointed results, so a replay after a crash or wait decides the same way.
+                failures = sum(1 for item in records
+                               if item["name"] == "execute_current_skill" and item["status"] == "failed")
+                # A delegated child that ended without a result closed its reservation: every retry returns the
+                # same ChildFailed, so the first one is final.
+                if result.get("error_type") == "ChildFailed" or failures >= MAX_SKILL_FAILURES:
+                    attempts = f" after {failures} attempts" if failures > 1 else ""
+                    raise GuardedSkillFailed(f"{skill_failure(result)[:170]}{attempts}")
             refs.update(_evidence(result))
             history.append({"type": "function_call_output", "call_id": call["id"],
                             "output": json.dumps(result, allow_nan=False, default=str)})

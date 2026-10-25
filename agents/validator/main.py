@@ -1,3 +1,5 @@
+import logging
+
 from agents.validator.card import DESCRIPTIONS
 from agents.validator.tools import (
     ISSUE,
@@ -8,6 +10,7 @@ from agents.validator.tools import (
     instruction_proposal,
     learned_line,
     load_review,
+    review_view,
 )
 from common.agent_support import identifier, mutate
 from common.envelope import DelegationMeta, Lesson, ResultArtifact, TaskEnvelope
@@ -17,6 +20,15 @@ from common.runtime import FreightAgent
 from common.server import serve
 from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError
 
+log = logging.getLogger(__name__)
+
+
+async def review_bundle(agent, env: TaskEnvelope, task_id: str) -> dict:
+    """The review evidence, loaded once per task: the inspection tools and the guarded workflow judge the same
+    bundle, and a replay reads the checkpoint instead of reading SpacetimeDB again."""
+    db = SpacetimeClient(actor=agent.name)
+    return await agent.step(task_id, "review_evidence", lambda: load_review(env, db))
+
 
 class ValidatorAgent(FreightAgent):
     name = "validator"
@@ -25,14 +37,25 @@ class ValidatorAgent(FreightAgent):
         from common.providers import mode
         if mode() == "live":
             from common.tool_loop import run_tool_loop
-            return await run_tool_loop(self, env, meta, task_id)
+            try:
+                return await run_tool_loop(self, env, meta, task_id)
+            except ProviderError as error:
+                # The verdict is the deterministic two-sided review's; the model only selects inspections and adds
+                # grounded commentary. A model loop that fails before the guarded workflow returns (cut short,
+                # budget, provider outage) therefore runs that workflow directly instead of failing the review.
+                # Its checkpoints and write IDs are the ones the tool would have used, so nothing is done twice.
+                log.warning("validator task %s: model tool loop failed (%s); running the deterministic review",
+                            task_id, error)
+                result = await self.run_workflow(env, meta, task_id, updater)
+                return result.model_copy(update={"findings": {
+                    **result.findings, "simulated": False, "tool_loop_unavailable": str(error)[:200]}})
         return await self.run_workflow(env, meta, task_id, updater)
 
     async def run_workflow(self, env: TaskEnvelope, meta: DelegationMeta, task_id: str, updater):
         if env.task_type not in {"review_output", "review_flag"}:
             raise ValueError("unsupported Settlement Quality Review skill")
         db = SpacetimeClient(actor=self.name)
-        bundle = await self.step(task_id, "review_evidence", lambda: load_review(env, db))
+        bundle = await review_bundle(self, env, task_id)
         target, flag = bundle["target"], bundle.get("flag")
         if not target.get("task_id"):
             if flag and flag.get("status") not in {"resolved", "rejected"}:
@@ -48,9 +71,19 @@ class ValidatorAgent(FreightAgent):
         review = deterministic_review(bundle)
         refs = bundle["artifact"].get("evidence_refs", []) if isinstance(bundle["artifact"], dict) else []
         review_env = env.model_copy(update={"evidence_refs": refs})
-        assessment = await self.step(task_id, "review_assessment", lambda: infer(
-            self.name, review_env, {"target": target, "checks": review.checks,
-                "source": bundle["source"], "history": bundle["history"], "flag": flag}, purpose="review"))
+        async def assess():
+            try:
+                return await infer(self.name, review_env, review_view(bundle, review.checks), purpose="review")
+            except ProviderError as error:
+                # The model pass only explains failures the checks found (grounded) or adds advisories, so the
+                # deterministic verdict stands without it; the outage is recorded, never a silent pass.
+                return {"assessment": {}, "model_used": None, "assessment_error": str(error)[:200]}
+        assessment = await self.step(task_id, "review_assessment", assess)
+        if assessment.get("assessment_error"):
+            review.checks.append({"name": "qualitative_review", "ok": False, "severity": "advisory",
+                                  "expected": "model commentary on the deterministic checks",
+                                  "actual": f"unavailable: {assessment['assessment_error']}",
+                                  "basis": "the deterministic verdict stands without model commentary"})
         issues = assessment.get("assessment", {}).get("issues", [])
         grounded, ungrounded = grounded_issues(issues, review.checks)
         if grounded:
@@ -102,6 +135,8 @@ class ValidatorAgent(FreightAgent):
             findings={"review": review.model_dump(), "target_task_id": target.get("task_id"),
                       "review_id": review_id, "receipts": receipts, "simulated": bundle["simulated"],
                       "assessment": assessment.get("assessment", {}),
+                      **({"assessment_error": assessment["assessment_error"]}
+                         if assessment.get("assessment_error") else {}),
                       "instruction_publication": "published" if any(
                           r.get("action") == "publish_instruction_version" and r.get("executed")
                           for r in receipts) else "superseded" if superseded

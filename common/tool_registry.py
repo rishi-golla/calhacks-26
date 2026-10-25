@@ -259,15 +259,20 @@ async def read_inbound_transcript(ctx: ToolContext, arguments: dict) -> dict:
         "transcript_redacted": redact_transcript(transcript), "financial_authorization": False})
 
 
+async def _review_bundle(ctx: ToolContext) -> dict:
+    from agents.validator.main import review_bundle
+    return await review_bundle(ctx.agent, ctx.env, ctx.task_id)
+
+
 async def inspect_review_target(ctx: ToolContext, arguments: dict) -> dict:
-    from agents.validator.tools import load_review
-    from common.spacetime_client import SpacetimeClient
-    return await load_review(ctx.env, SpacetimeClient(actor=ctx.agent.name))
+    # A bounded view: the raw bundle (artifact twice, every audit event) exceeded the tool result limit live.
+    from agents.validator.tools import REVIEW_TOOL_CHARS, review_view
+    return review_view(await _review_bundle(ctx), limit=REVIEW_TOOL_CHARS)
 
 
 async def check_review_quality(ctx: ToolContext, arguments: dict) -> dict:
     from agents.validator.tools import deterministic_review
-    bundle = await inspect_review_target(ctx, arguments)
+    bundle = await _review_bundle(ctx)
     return {"review": deterministic_review(bundle).model_dump(mode="json"),
             "target_task_id": bundle["target"].get("task_id"),
             "evidence_refs": bundle.get("artifact", {}).get("evidence_refs", [])}

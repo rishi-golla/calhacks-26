@@ -619,6 +619,112 @@ def deterministic_review(bundle: dict) -> ReviewOutput:
                         lessons=lessons, actions=["rerun_task"] if failures and role in FINANCIAL_AGENTS else ["none"])
 
 
+# What the model sees of a review bundle. complete() refuses evidence over 100,000 characters and the tool loop
+# refuses a tool result over 90,000 bytes; live bundles carry the target's artifact twice (artifact_json and the
+# parsed artifact) and every audit event with its hash chain and up to 4,096-character summary, and on Oct 25 they
+# were 104 to 126 KB. Every review then failed: inspect_review_target returned tool_result_exceeds_limit and the
+# guarded workflow's model pass raised "evidence exceeds inference input limit" on each attempt. The deterministic
+# checks still read the whole bundle; only the model's view is bounded, as tool audits are (MAX_AUDIT_SUMMARY_CHARS).
+REVIEW_EVIDENCE_CHARS = 60_000
+REVIEW_TOOL_CHARS = 30_000
+MAX_HISTORY_EVENTS = 40
+HISTORY_FIELDS = ("sequence", "ts", "kind", "reason_code", "model_used", "policy_ids", "evidence_refs")
+# Per-call model telemetry (ids, timings, token usage) says nothing about the decision under review.
+INTERNAL_FINDINGS = ("tool_loop",)
+
+
+def encoded_size(value) -> int:
+    return len(json.dumps(value, default=str, separators=(",", ":")))
+
+
+def clip(value, *, text: int, items: int, depth: int = 0, citations: bool = False):
+    """A bounded copy: strings cut to ``text`` characters, lists and objects to ``items`` entries, each cut marked.
+    An ``evidence_refs`` list is cut without a marker: every string in it is a citation the model may use."""
+    if depth >= 8:
+        return "[details omitted]"
+    if isinstance(value, dict):
+        keys = list(value)
+        clipped = {str(key)[:100]: clip(value[key], text=text, items=items, depth=depth + 1,
+                                        citations=key == "evidence_refs")
+                   for key in keys[:items]}
+        if len(keys) > items:
+            clipped["omitted_fields"] = len(keys) - items
+        return clipped
+    if isinstance(value, list):
+        if citations:
+            return [item for item in value[:items] if isinstance(item, str) and len(item) <= 500]
+        clipped = [clip(item, text=text, items=items, depth=depth + 1) for item in value[:items]]
+        if len(value) > items:
+            clipped.append(f"[{len(value) - items} more omitted]")
+        return clipped
+    if isinstance(value, str) and len(value) > text:
+        return value[:text] + "...[truncated]"
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)[:text]
+
+
+def history_view(history: list) -> list[dict]:
+    """Audit events without their hash chain; a tool event keeps only what ran and how it ended."""
+    events = []
+    for event in history[-MAX_HISTORY_EVENTS:] if isinstance(history, list) else []:
+        if not isinstance(event, dict):
+            continue
+        item = {key: event[key] for key in HISTORY_FIELDS if key in event}
+        summary = event.get("summary")
+        parsed = None
+        if event.get("kind") == "tool_call" and isinstance(summary, str):
+            try:
+                parsed = json.loads(summary)
+            except ValueError:
+                parsed = None
+        if isinstance(parsed, dict):
+            item["tool"] = {key: parsed[key] for key in ("tool_name", "status", "duration_ms") if key in parsed}
+            result = parsed.get("result")
+            if isinstance(result, dict) and result.get("error"):
+                item["tool"]["error"] = result["error"]
+        elif summary:
+            item["summary"] = str(summary)[:500]
+        events.append(item)
+    if isinstance(history, list) and len(history) > MAX_HISTORY_EVENTS:
+        events.insert(0, {"omitted_earlier_events": len(history) - MAX_HISTORY_EVENTS})
+    return events
+
+
+def review_view(bundle: dict, checks: list[dict] | None = None, *, limit: int = REVIEW_EVIDENCE_CHARS) -> dict:
+    """The review bundle as the model reads it, within ``limit`` encoded characters.
+
+    The target row loses artifact_json (the parsed artifact is beside it), the artifact loses per-call telemetry and
+    audit events lose their hash chain. If that is still too large, values are clipped progressively; the checks,
+    the target's identity and the cited evidence are what remain last."""
+    target = {key: value for key, value in (bundle.get("target") or {}).items() if key != "artifact_json"}
+    artifact = bundle.get("artifact") if isinstance(bundle.get("artifact"), dict) else {}
+    findings = artifact.get("findings")
+    if isinstance(findings, dict):
+        artifact = {**artifact, "findings": {key: value for key, value in findings.items()
+                                             if key not in INTERNAL_FINDINGS}}
+    view = {"target": target, "artifact": artifact, "source": bundle.get("source") or {},
+            "history": history_view(bundle.get("history") or []), "flag": bundle.get("flag"),
+            "simulated": bundle.get("simulated")}
+    if bundle.get("resolution"):
+        view["resolution"] = bundle["resolution"]
+    if checks is not None:
+        view = {"checks": checks, **view}
+    for text, items in ((100_000, 1000), (2000, 60), (600, 30), (200, 15), (80, 8)):
+        clipped = clip(view, text=text, items=items)
+        if encoded_size(clipped) <= limit:
+            return clipped
+    keep = ("task_id", "case_id", "agent", "skill", "a2a_state", "business_status", "outcome", "confidence")
+    minimal = {"target": {key: target.get(key) for key in keep},
+               "artifact": {key: artifact.get(key) for key in ("outcome", "confidence", "evidence_refs",
+                                                               "policy_ids")},
+               "details_omitted": True}
+    if checks is not None:
+        minimal = {"checks": [{key: item.get(key) for key in ("name", "ok", "severity")} for item in checks],
+                   **minimal}
+    return clip(minimal, text=80, items=60) if encoded_size(minimal) > limit else minimal
+
+
 def brief(value, limit: int = 80) -> str:
     """Compact, bounded rendering of a check value; long or nested values stay in the review row."""
     text = json.dumps(value, default=str, separators=(",", ":"))

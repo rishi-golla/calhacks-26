@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Database, FlaskConical, Home, ListTree, Network, RefreshCw, Table2, Zap } from "lucide-react";
+import { Activity, Bell, Database, FlaskConical, Home, ListTree, Network, Receipt, RefreshCw, Table2, Zap } from "lucide-react";
 import { useOps, type DataMode } from "../data-provider";
 import { fmtAgo } from "@/lib/ops";
 import { Mascot } from "../mascot";
@@ -10,6 +10,8 @@ import Intro from "./intro";
 
 const NAV = [
   { href: "/", label: "Finance", icon: Home, exact: true },
+  { href: "/invoices", label: "Invoices", icon: Receipt },
+  { href: "/operations", label: "Operations", icon: Activity },
   { href: "/agents", label: "Agents", icon: Network },
   { href: "/cases", label: "Cases", icon: ListTree },
 ];
@@ -21,7 +23,7 @@ export default function Shell({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const title = NAV.find((n) => (n.exact ? pathname === n.href : pathname.startsWith(n.href)))?.label ?? "FreightLine";
   return (
-    <div className={`fl ${pathname === "/" ? "theme-mono" : ""}`}>
+    <div className="fl theme-mono">
       <Intro onDone={() => setReady(true)} />
       <div className="fl-shell" style={{ opacity: ready ? 1 : 0, transition: "opacity 400ms var(--ease-out)" }}>
         <aside className="fl-rail">

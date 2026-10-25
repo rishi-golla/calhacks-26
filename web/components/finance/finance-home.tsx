@@ -13,13 +13,10 @@ import { useSearchParams } from "next/navigation";
 import { useOps } from "@/components/data-provider";
 import { AGENT_IDS } from "@/lib/agents";
 import { fmtAgo, fmtDuration } from "@/lib/ops";
-import { AgentCrew } from "./agent-crew";
 import { AttentionQueue } from "./attention-queue";
 import { ForecastBars, LineChart, MiniBars, Sparkline } from "./charts";
 import { CountUp } from "./count-up";
 import { change, count, dayLabel, emptyNote, signedShort, usd, usdShort } from "./format";
-import { InvoicesPanel } from "./invoices-table";
-import { LiveTicker } from "./live-ticker";
 import "./finance.css";
 import { DotWave } from "./dot-wave";
 
@@ -30,7 +27,7 @@ const reveal = (i: number) => ({ "--delay": `${i * 70}ms` }) as CSSProperties;
 
 export default function FinanceHome() {
   return (
-    <div className="fl-page fh">
+    <div className="fl-page fh fh-overview">
       <DotWave />
       <Header />
       <KpiTiles />
@@ -38,24 +35,12 @@ export default function FinanceHome() {
         <CashPanel />
         <AttentionQueue id="attention" />
       </div>
-      <div className="fl-reveal" style={reveal(3)}>
-        <OpsStrip />
-      </div>
-      <div className="fl-reveal" style={reveal(4)}>
-        <AgentCrew />
-      </div>
-      <div className="fh-row fh-row-bottom fl-reveal" style={reveal(5)}>
-        <InvoicesPanel />
-        <LiveTicker />
-      </div>
       <Suspense fallback={null}>
         <FocusFromQuery />
       </Suspense>
     </div>
   );
 }
-
-/* ------------------------------- header ------------------------------- */
 
 function Header() {
   const { source, simulated, ops, attention, now, lastUpdated } = useOps();
@@ -351,7 +336,7 @@ function CashPanel() {
 const BUCKET_MS = 600_000;
 const BUCKETS = 12;
 
-function OpsStrip() {
+export function OpsStrip() {
   const { ops, caseList, now } = useOps();
   const bucketEnd = (Math.floor(now / BUCKET_MS) + 1) * BUCKET_MS;
   const dayStart = new Date(now).setHours(0, 0, 0, 0);

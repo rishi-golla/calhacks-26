@@ -89,7 +89,14 @@ function AgentNodeImpl({ id, mood, bubble, doing, doingMore = 0, doingQuiet = fa
       <button
         type="button"
         className="au-hit"
-        aria-label={[meta.name, ...shown.map(([v, k]) => `${v} ${k}`)].join(", ")}
+        aria-label={[
+          meta.name,
+          // The pill is inside this button, whose label replaces its content, so the step is spoken here.
+          doing ? `${doing}${doingMore > 0 ? ` and ${doingMore} more task${doingMore === 1 ? "" : "s"}` : ""}` : "",
+          ...shown.map(([v, k]) => `${v} ${k}`),
+        ]
+          .filter(Boolean)
+          .join(", ")}
         onPointerEnter={() => onHover(id)}
         onPointerLeave={() => onHover(null)}
         onFocus={() => onHover(id)}
@@ -99,11 +106,11 @@ function AgentNodeImpl({ id, mood, bubble, doing, doingMore = 0, doingQuiet = fa
         <span className="au-fig" ref={bump}>
           {/* Keyed by its text so each new step replays the entrance. */}
           {doing && (
-            <span key={doing} className={`au-doing ${doingQuiet ? "quiet" : ""}`} role="status">
+            <span key={doing} className={`au-doing ${doingQuiet ? "quiet" : ""}`} aria-hidden>
               <i aria-hidden />
               <span className="au-doing-text">{doing}</span>
               {doingMore > 0 && (
-                <b className="au-doing-more" aria-label={`and ${doingMore} more task${doingMore === 1 ? "" : "s"}`}>
+                <b className="au-doing-more">
                   +{doingMore}
                 </b>
               )}

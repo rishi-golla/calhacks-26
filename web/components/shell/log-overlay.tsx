@@ -211,7 +211,11 @@ export function LogWindow({ onClose }: { onClose: () => void }) {
   const shown = events.filter(
     (e) =>
       (lane === "all" || laneOf(e) === lane) &&
-      (!q || `${e.caseId} ${e.agent} ${e.title} ${e.detail} ${e.policyIds.join(" ")} ${e.taskId}`.toLowerCase().includes(q)),
+      // Search what the row shows (actor name, title with spaces) plus the raw ids.
+      (!q ||
+        `${e.caseId} ${e.agent} ${actorName(e.agent)} ${e.title} ${e.title.replaceAll("_", " ")} ${e.detail} ${e.policyIds.join(" ")} ${e.taskId}`
+          .toLowerCase()
+          .includes(q)),
   );
 
   const reviewed = snapshot.review.length;

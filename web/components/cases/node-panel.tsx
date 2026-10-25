@@ -353,14 +353,22 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
       {(outgoing.length > 0 || approvals.length > 0 || calls.length > 0 || reviewsOf.length > 0 || ownReview) && (
       <Section title="Handoffs">
         <ul className="ct-list compact">
-          {handoffRows(outgoing, trace, cursor).map(({ e, child, s, n }) => (
+          {handoffRows(outgoing, trace, cursor).map(({ e, child, s, ids }) => (
             <li key={e.id} className="ct-line">
               <ArrowDownRight size={13} /> to{" "}
               <NodeLink trace={trace} id={e.to} onSelect={onSelect}>
                 {agentLabel(child.lane)}
               </NodeLink>
               {e.kind === "retry" ? <span className="fl-mute">retry</span> : e.kind !== "review" && <span className="fl-mute">{skillLabel(e.skill)}</span>}
-              {n > 1 && <span className="fl-mono fl-mute">×{n}</span>}
+              {/* Folded handoffs: one numbered link per task so each stays reachable. */}
+              {ids.length > 1 &&
+                ids.map((id, i) => (
+                  <NodeLink key={id} trace={trace} id={id} onSelect={onSelect}>
+                    <span className="fl-mono" title={`Open handoff ${i + 1} of ${ids.length}`}>
+                      {i + 1}
+                    </span>
+                  </NodeLink>
+                ))}
               {s && s !== "completed" && <span className={`fl-chip outline ${TONE[s]} ct-mini-chip`}>{s}</span>}
             </li>
           ))}
@@ -410,16 +418,16 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
   );
 }
 
-/** Outgoing edges, identical ones (same agent, kind, skill and status) folded into one row with a count. */
+/** Outgoing edges, identical ones (same agent, kind, skill and status) folded into one row that keeps every target task. */
 function handoffRows(edges: CaseTrace["edges"], trace: CaseTrace, cursor: number) {
-  const rows = new Map<string, { e: CaseTrace["edges"][number]; child: TraceNode; s: NodeStatus | null; n: number }>();
+  const rows = new Map<string, { e: CaseTrace["edges"][number]; child: TraceNode; s: NodeStatus | null; ids: string[] }>();
   for (const e of edges) {
     const child = trace.nodeById.get(e.to)!;
     const s = nodeStatus(child, cursor);
     const key = `${child.lane}|${e.kind}|${e.skill ?? ""}|${s}`;
     const row = rows.get(key);
-    if (row) row.n++;
-    else rows.set(key, { e, child, s, n: 1 });
+    if (row) row.ids.push(e.to);
+    else rows.set(key, { e, child, s, ids: [e.to] });
   }
   return [...rows.values()];
 }
@@ -610,8 +618,8 @@ function toolLogTitle(row: Row) {
 
 export function CaseLog({ trace, cursor, onSelect, onClose }: { trace: CaseTrace; cursor: number; onSelect: (id: string) => void; onClose: () => void }) {
   const edgeTasks = new Set(trace.edges.filter((e) => e.kind === "delegation").map((e) => e.to));
-  // A review's verdict shows on its task's completion row.
-  const reviewed = new Set(trace.timeline.filter((e) => e.kind === "task_completed").map((e) => e.taskId));
+  // A review's verdict shows on its task's completion row, once the cursor has reached it.
+  const reviewed = new Set(trace.timeline.filter((e) => e.kind === "task_completed" && e.at <= cursor).map((e) => e.taskId));
   const events = trace.timeline.filter((e) => {
     if (e.at > cursor) return false;
     if (e.kind === "delegation" && e.id.startsWith("audit:") && edgeTasks.has(e.taskId)) return false;

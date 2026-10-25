@@ -650,6 +650,10 @@
   padding: 7px 8px 7px 28px;
   font-size: 12px;
 }
+/* Room for the "12 / 340" count so a long query never runs under it. */
+.au-search:has(.au-search-count) input {
+  padding-right: 84px;
+}
 .au-search-count {
   position: absolute;
   right: 9px;
@@ -1126,10 +1130,6 @@
 }
 .au-node.has-doing .au-ticker {
   display: none;
-}
-.au-node.hidden .au-doing,
-.au-node.dim .au-doing {
-  opacity: 0.35;
 }
 @keyframes au-doing-in {
   from {

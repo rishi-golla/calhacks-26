@@ -139,10 +139,20 @@ function FileBody({ file }: { file: File }) {
         )}
       </Sec>
 
-      {(file.emails.length > 0 || file.otherRefs.length > 0) && (
+      {file.emails.length > 0 && (
         <Sec title="Emails" count={file.emails.length}>
           <div className="cf-chips">
-            {[...file.emails, ...file.otherRefs].map((r) => (
+            {file.emails.map((r) => (
+              <EvidenceChip key={r} evidenceRef={r} />
+            ))}
+          </div>
+        </Sec>
+      )}
+
+      {file.otherRefs.length > 0 && (
+        <Sec title="Other sources" count={file.otherRefs.length}>
+          <div className="cf-chips">
+            {file.otherRefs.map((r) => (
               <EvidenceChip key={r} evidenceRef={r} />
             ))}
           </div>

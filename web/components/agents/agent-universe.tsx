@@ -266,6 +266,30 @@ export default function AgentUniverse() {
   }, []);
   const onSelectNode = useCallback((id: NodeId) => setOpened((p) => (p === id ? null : id)), []);
   const onChip = useCallback((caseId: string) => setSelectedCase((c) => (c === caseId ? "" : caseId)), []);
+  // A hover preview remembers the selection it replaced and puts it back on leave, so sweeping across
+  // links leaves nothing selected by accident. The restore waits a beat: moving straight onto the next
+  // link fires leave and enter before a render, and the next preview must keep the original selection.
+  const selectedRef = useRef(selectedCase);
+  selectedRef.current = selectedCase;
+  const preview = useRef<{ saved: string; timer: number } | null>(null);
+  const endPreview = (restore: boolean) => {
+    const pv = preview.current;
+    if (!pv) return;
+    window.clearTimeout(pv.timer);
+    preview.current = null;
+    if (restore) setSelectedCase(pv.saved);
+  };
+  const onCasePreview = (caseId: string | null) => {
+    const pv = preview.current;
+    if (caseId) {
+      if (pv) window.clearTimeout(pv.timer);
+      else preview.current = { saved: selectedRef.current, timer: 0 };
+      setSelectedCase(caseId);
+    } else if (pv) {
+      pv.timer = window.setTimeout(() => endPreview(true), 80);
+    }
+  };
+  useEffect(() => () => window.clearTimeout(preview.current?.timer), []);
   useEffect(() => () => window.clearTimeout(hoverTimer.current), []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -273,6 +297,7 @@ export default function AgentUniverse() {
       setOpened(null);
       setHover(null);
       setSelectedCase("");
+      endPreview(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -443,10 +468,12 @@ export default function AgentUniverse() {
             cases={cases}
             now={now}
             onClose={() => {
+              endPreview(true);
               setOpened(null);
               setHover(null);
             }}
             onCase={onChip}
+            onCasePreview={onCasePreview}
           />
         )}
       </section>

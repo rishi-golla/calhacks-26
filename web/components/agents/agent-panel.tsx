@@ -27,6 +27,8 @@ type Props = {
   now: number;
   onClose: () => void;
   onCase: (caseId: string) => void;
+  /** Hovering a case link previews its path; null restores the selection from before the hover. */
+  onCasePreview: (caseId: string | null) => void;
 };
 
 /** Newest `n` rows by a timestamp field, without assuming table order. */
@@ -54,7 +56,7 @@ const EVENT_ACCENT: Partial<Record<TimelineEvent["kind"], string>> = {
 
 const STATUS_CHIP: Record<string, string> = { working: "ok", idle: "info", offline: "", stale: "warn", error: "bad" };
 
-export function AgentPanel({ id, mood, snapshot, workload, lessons, cases, now, onClose, onCase }: Props) {
+export function AgentPanel({ id, mood, snapshot, workload, lessons, cases, now, onClose, onCase, onCasePreview }: Props) {
   const meta = isAgentId(id) ? AGENT_META[id] : NODE_META[id as "intake" | "human"];
   // The human controller has no generated character, so it keeps the flat blob.
   const [portraitFailed, setPortraitFailed] = useState(false);
@@ -169,7 +171,8 @@ export function AgentPanel({ id, mood, snapshot, workload, lessons, cases, now, 
                   key={caseId}
                   href={`/cases/${encodeURIComponent(caseId)}`}
                   style={{ "--p": PRIORITY_COLOR[cases.get(caseId)?.priority ?? "P3"] } as CSSProperties}
-                  onMouseEnter={() => onCase(caseId)}
+                  onMouseEnter={() => onCasePreview(caseId)}
+                  onMouseLeave={() => onCasePreview(null)}
                   title={cases.get(caseId)?.title}
                 >
                   {shortCase(caseId)}

@@ -142,16 +142,20 @@ SIM_DATA_DIR=/tmp/w4-data WORLD_FILE=/tmp/w4-data/world.json .venv/bin/python -m
 `make verify-data` defaults to `data/` and writes `verify_report.json` there.
 
 `RAW_STREAM_MAXLEN` (default 200000) caps Redis `raw`. Redis trims past the cap whether or not ingest has read an
-entry, so the simulator logs a warning once the stream reaches 80% of it.
+entry, so the simulator warns when ingest's unread backlog (the `ingest` group's lag) reaches 80% of the cap, and
+when unread entries have already been trimmed.
 
 ### Evaluator (G6/T10)
 `make evaluator` joins `$SIM_DATA_DIR/answer_key.jsonl` to the agents' decisions in SpacetimeDB (cases, root tasks,
 holds, payment proposals, calls) and writes the scoreboard to `metric` with `set_metric`: `precision`, `recall`,
 `dollars_caught`, `false_holds`, `median_resolution_s` and `calls_placed` (the dashboard's scoreboard), plus
-coverage, false-hold rate and per-scenario and per-lane breakdowns. Only loads with no work in flight are scored, and
-unchanged figures are not rewritten. The answer key lives only where the simulator runs, so the evaluator runs on
-that machine (the ASUS) and only calls out to Maincloud; it needs `SPACETIME_DISABLED=0` and
-`SPACETIME_TOKEN_EVALUATOR`. `python -m evaluator.main --once --dry-run` prints the scoreboard without writing, and
+coverage, false-hold rate and per-scenario and per-lane breakdowns. A load is scored once nothing on it is in flight
+(a parked top-level task counts as an escalated hold), or once it has expired: the simulator's business clock is past
+its last scheduled step (`EVALUATOR_LIFECYCLE_DAYS`, default 9) and nothing changed for `EVALUATOR_GRACE_S` (default
+900); an error still undecided then counts as missed. Undefined ratios are written as -1, which the dashboard shows
+as "—", and unchanged figures are not rewritten. The answer key lives only where the simulator runs, so the
+evaluator runs on that machine (the ASUS), reads the business clock from its Redis, and only calls out to Maincloud;
+it needs `SPACETIME_DISABLED=0` and `SPACETIME_TOKEN_EVALUATOR`. `python -m evaluator.main --once --dry-run` prints the scoreboard without writing, and
 `--rows FILE` scores a saved table snapshot offline (`--dump-rows FILE` saves one). See `evaluator/main.py` for the
 definitions.
 

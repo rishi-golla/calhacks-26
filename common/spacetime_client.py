@@ -295,6 +295,19 @@ class SpacetimeClient:
             raise SpacetimePolicyError(table, policy.Decision("deny", reason="required stored row missing"))
         return rows[0]
 
+    async def _invoice_holds(self, hold: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Every hold ever placed on ``hold``'s invoice, released ones included (P-003 base)."""
+        invoice_id = hold.get("invoice_id")
+        if not isinstance(invoice_id, str) or not invoice_id:
+            raise SpacetimeProtocolError("SpacetimeDB returned a hold without an invoice")
+        rows = await self.query_rows(f'SELECT * FROM "hold" WHERE invoice_id = {_sql_string(invoice_id)}')
+        if any(row.get("invoice_id") != invoice_id for row in rows):
+            raise SpacetimeProtocolError("SpacetimeDB returned a hold for another invoice")
+        # The stored hold is on its own invoice even if a lagging read omits it.
+        if not any(row.get("id") == hold.get("id") for row in rows):
+            rows.append(dict(hold))
+        return rows
+
     async def _verified_approval(self, name: str, payload: Mapping[str, Any]) -> None:
         approval_id = payload.get("approval_id") or payload.get("human_approval_id")
         if not approval_id or not all(payload.get(field) for field in ("id", "case_id", "amount")):
@@ -353,13 +366,20 @@ class SpacetimeClient:
             checked.update(lines=journal_lines(stored.get("lines")), requested_by=stored.get("requested_by"))
         if name == "release_hold" and checked.get("id"):
             stored = await self._stored_row("hold", checked["id"])
+            invoice_holds = await self._invoice_holds(stored)
             try:
                 original_amount = Decimal(str(stored["amount"]))
                 remaining = float(original_amount - Decimal(str(stored["released_amount"])))
-                requires_stored_approval = original_amount > policy.APPROVAL_THRESHOLD_USD
+                checked.setdefault("amount", remaining)
+                # P-003 mirrors the reducer: the threshold is on every hold ever placed on
+                # the invoice, so split or sequential sub-threshold holds still need a human.
+                requires_stored_approval = policy.release_hold_needs_approval({
+                    "amount": checked["amount"],
+                    "hold_amount": original_amount,
+                    "invoice_hold_total": policy.invoice_hold_exposure(invoice_holds),
+                })
             except (KeyError, TypeError, ValueError, InvalidOperation):
                 raise SpacetimeProtocolError("SpacetimeDB returned an invalid hold balance") from None
-            checked.setdefault("amount", remaining)
             checked["case_id"] = stored["case_id"]
             checked["invoice_id"] = stored["invoice_id"]
         if name == "propose_payment" and checked.get("invoice_id"):

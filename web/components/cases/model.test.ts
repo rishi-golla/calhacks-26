@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { emptySnapshot, type Row, type Snapshot } from "@/lib/data";
+import { buildCases } from "@/lib/ops";
 import {
   buildCaseTrace,
+  caseKind,
+  dayClock,
+  shortDur,
   dispatchEventType,
   dispatchReason,
   eventLabel,
@@ -293,4 +297,38 @@ test("layoutTrace: a routed card after lifecycle milestones stays near the top w
   assert.ok(cardY < 100, `routed card too low: ${cardY}`);
   assert.ok(cardY >= LAYOUT.top);
   assert.equal(layout.gaps.length, 0);
+});
+
+
+test("an imported case has no trace graph, keeps its ledger and reads as a payable", () => {
+  const id = "HIST-LD-0915-3FA2C1";
+  const s = snap({
+    case: [{ case_id: id, load_id: "LD-0915-3FA2C1", title: "Mesa invoice on LD-0915-3FA2C1", status: "resolved", opened_at: at(-86_400), resolved_at: at(-3600) }],
+    ledger_entry: [
+      { id: "HIST-JE-LD-0915-3FA2C1-COST", case_id: id, posted_at: at(-3600), memo: "Carrier settlement: INV-1", lines: [{ account: "freight_expense", debit: 1700, credit: 0 }, { account: "accounts_payable", debit: 0, credit: 1700 }] },
+    ],
+  });
+  const trace = buildCaseTrace(s, id);
+  assert.equal(trace.nodes.length, 0);
+  assert.equal(trace.edges.length, 0);
+  assert.equal(trace.open, false);
+  assert.deepEqual(trace.sideEffects.map((e) => [e.kind, e.label, e.amount]), [["journal", "Carrier settlement: INV-1", 1700]]);
+  assert.equal(trace.first, ms(-86_400));
+  const layout = layoutTrace(trace, 0);
+  assert.equal(layout.lanes.length, 0);
+  const cases = buildCases(s);
+  assert.equal(caseKind(cases.get(id)!), "payable");
+  const ar = buildCases(snap({ case: [{ case_id: `${id}-AR`, status: "resolved", opened_at: at(-10) }] }));
+  assert.equal(caseKind(ar.get(`${id}-AR`)!), "receivable");
+  const live = buildCases(snap({ case: [{ case_id: "CASE-X", status: "open", opened_at: at(-10) }] }));
+  assert.equal(caseKind(live.get("CASE-X")!), "case");
+});
+
+test("long spans read in days, and an earlier day carries its date", () => {
+  assert.equal(shortDur(90 * 60_000), "1h 30m");
+  assert.equal(shortDur(47 * 3_600_000), "47h 00m");
+  assert.equal(shortDur((20 * 24 + 12) * 3_600_000 + 19 * 60_000), "20d 12h");
+  assert.ok(!dayClock(T0 - 60_000, T0).includes(","));
+  assert.match(dayClock(T0 - 5 * 86_400_000, T0), /^\w+ \d+, /);
+  assert.equal(dayClock(0, T0), "—");
 });

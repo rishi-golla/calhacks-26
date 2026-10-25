@@ -8,6 +8,7 @@
  */
 import { AGENT_IDS, AGENT_META, isAgentId, type AgentId } from "./agents";
 import { json, num, str, timestamp, type Row, type Snapshot } from "./data";
+import { isImportedId } from "./history";
 
 /* ------------------------------ tasks ------------------------------ */
 
@@ -116,6 +117,8 @@ export type CaseView = {
   /** The kinds in `attention` the agents are handling themselves. A case can have `input_required` in both. */
   agentsHandling: AttentionKind[];
   synthetic: boolean;
+  /** Imported history (lib/history): resolved before FreightLine ran, with no agent work on it. */
+  imported: boolean;
   scenario: string;
   row: Row;
 };
@@ -214,6 +217,7 @@ export function buildCases(snapshot: Snapshot): Map<string, CaseView> {
       needsYou: attention.filter((k) => audienceHas(k, "person")),
       agentsHandling: attention.filter((k) => audienceHas(k, "agents")),
       synthetic: isSyntheticCase(row),
+      imported: isImportedId(caseId),
       scenario: str(row.scenario, ""),
       row,
     });
@@ -580,9 +584,12 @@ export type OpsMetrics = {
 export function buildOpsMetrics(snapshot: Snapshot, cases: Map<string, CaseView>, now: number): OpsMetrics {
   const list = [...cases.values()];
   const resolved = list.filter((c) => c.status === "resolved");
+  // Imported history was resolved before FreightLine ran: it is a case, never agent throughput.
+  const work = list.filter((c) => !c.imported);
+  const worked = resolved.filter((c) => !c.imported);
   const dayStart = new Date(now).setHours(0, 0, 0, 0);
-  const durations = resolved.filter((c) => c.resolvedAt && c.openedAt).map((c) => (c.resolvedAt - c.openedAt) / 1000).sort((a, b) => a - b);
-  const lastHour = resolved.filter((c) => now - c.resolvedAt < 3_600_000).length;
+  const durations = worked.filter((c) => c.resolvedAt && c.openedAt).map((c) => (c.resolvedAt - c.openedAt) / 1000).sort((a, b) => a - b);
+  const lastHour = worked.filter((c) => now - c.resolvedAt < 3_600_000).length;
   // Count task states straight off the rows: no parsing needed here.
   let tasksActive = 0;
   let tasksCompleted = 0;
@@ -601,8 +608,8 @@ export function buildOpsMetrics(snapshot: Snapshot, cases: Map<string, CaseView>
   // freezing once hundreds of cases have accumulated. A case "needed a human"
   // when it raised an approval, a flag, or a task parked on human input.
   const windowStart = now - 20 * 60_000;
-  const recent = list.filter((c) => c.openedAt >= windowStart);
-  const sample = recent.length >= 20 ? recent : list;
+  const recent = work.filter((c) => c.openedAt >= windowStart);
+  const sample = recent.length >= 20 ? recent : work;
   const sampleIds = new Set(sample.map((c) => c.caseId));
   const touched = new Set<string>();
   for (const a of snapshot.approval) if (sampleIds.has(str(a.case_id))) touched.add(str(a.case_id));
@@ -613,7 +620,7 @@ export function buildOpsMetrics(snapshot: Snapshot, cases: Map<string, CaseView>
     casesTotal: list.length,
     casesActive: list.filter((c) => c.status !== "resolved").length,
     casesResolved: resolved.length,
-    casesResolvedToday: resolved.filter((c) => c.resolvedAt >= dayStart).length,
+    casesResolvedToday: worked.filter((c) => c.resolvedAt >= dayStart).length,
     casesNeedingYou: list.filter((c) => c.needsYou.length > 0 && c.status !== "resolved").length,
     tasksActive,
     tasksCompleted,
@@ -626,7 +633,7 @@ export function buildOpsMetrics(snapshot: Snapshot, cases: Map<string, CaseView>
     automationRate: sample.length ? 1 - touched.size / sample.length : 0,
     medianResolutionS: durations.length ? durations[Math.floor(durations.length / 2)] : 0,
     throughputPerHour: lastHour,
-    minutesSaved: resolved.length * 18,
+    minutesSaved: worked.length * 18,
     agentsOnline,
   };
 }
@@ -654,6 +661,15 @@ export type FinanceMetrics = {
   forecast: { period: string; inflow: number; outflow: number; net: number; confidence: number }[];
   /** Daily series over the last 30 days. */
   trends: { cash: TrendPoint[]; revenue: TrendPoint[]; ap: TrendPoint[]; ar: TrendPoint[] };
+  /** Lower bound of the 30-day and month-to-date totals (a "Start fresh" epoch), or null for the plain windows. */
+  since: number | null;
+};
+
+export type FinanceOptions = {
+  /** Total from this time instead of the plain 30-day / month-to-date windows (rows already scoped to it). */
+  since?: number;
+  /** Cash from the ledger rows given, ignoring the all-time `cash_position` metric. Defaults to `since` being set. */
+  ledgerCash?: boolean;
 };
 
 const ACCOUNT_ALIASES: Record<string, string> = {
@@ -668,10 +684,14 @@ const ACCOUNT_ALIASES: Record<string, string> = {
   freight_revenue: "revenue",
   revenue: "revenue",
   sales: "revenue",
+  // sim/world.py GL 4100 / 5000 / 5100, booked by imported history.
+  accessorial_revenue: "revenue",
   freight_expense: "expense",
   carrier_expense: "expense",
   expense: "expense",
   cost_of_revenue: "expense",
+  purchased_transportation: "expense",
+  accessorial_expense: "expense",
 };
 
 /**
@@ -688,7 +708,7 @@ function ledgerLines(raw: unknown): LedgerLine[] {
   );
 }
 
-export function buildFinance(snapshot: Snapshot, now: number, { since }: { since?: number } = {}): FinanceMetrics {
+export function buildFinance(snapshot: Snapshot, now: number, { since, ledgerCash = since !== undefined }: FinanceOptions = {}): FinanceMetrics {
   const day = 86_400_000;
   const entries = snapshot.ledger_entry
     .map((row) => ({ at: timestamp(row.posted_at), lines: ledgerLines(row.lines) }))
@@ -778,7 +798,7 @@ export function buildFinance(snapshot: Snapshot, now: number, { since }: { since
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([period, v]) => ({ period, inflow: v.inflow, outflow: v.outflow, net: v.inflow - v.outflow, confidence: v.conf.length ? v.conf.reduce((s, c) => s + c, 0) / v.conf.length : 0 }));
   const metric = (name: string) => snapshot.metric.find((m) => m.name === name);
-  const cashMetric = since !== undefined ? undefined : (metric("cash_position") ?? metric("cash_position_usd") ?? metric("cash_balance"));
+  const cashMetric = ledgerCash ? undefined : (metric("cash_position") ?? metric("cash_position_usd") ?? metric("cash_balance"));
   return {
     cash: cashMetric ? num(cashMetric.value) : bal.cash,
     ap: bal.ap,
@@ -793,6 +813,7 @@ export function buildFinance(snapshot: Snapshot, now: number, { since }: { since
     paymentsProposed: { count: proposals.length, amount: proposals.reduce((s, p) => s + num(p.amount), 0) },
     forecast,
     trends: { cash: series("cash"), revenue: revenueDaily, ap: series("ap"), ar: series("ar") },
+    since: since ?? null,
   };
 }
 
@@ -989,8 +1010,9 @@ export function diffSnapshots(prev: Snapshot | null, next: Snapshot): LiveEvent[
     }
     return out;
   };
+  // An imported case arriving is the import landing, not a new case.
   for (const { row: c, before } of delta("case", "case_id"))
-    if (!before) events.push({ type: "case_opened", at: timestamp(c.opened_at), caseId: str(c.case_id), agent: "intake" });
+    if (!before && !isImportedId(c.case_id)) events.push({ type: "case_opened", at: timestamp(c.opened_at), caseId: str(c.case_id), agent: "intake" });
   for (const { row: d, before } of delta("dispatch", "event_id"))
     if (!before) events.push({ type: "dispatch", at: timestamp(d.ts), caseId: str(d.case_id), taskId: str(d.task_id), to: str(d.agent), skill: str(d.skill) });
   for (const { row, before } of delta("task", "task_id")) {

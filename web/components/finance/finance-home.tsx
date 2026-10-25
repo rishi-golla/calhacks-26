@@ -67,9 +67,9 @@ function Delta({ change: c, good }: { change: { abs: number; pct: number | null 
 }
 
 function KpiTiles() {
-  const { finance, snapshot, source, viewEpoch, now } = useOps();
-  // After "Start fresh" the tiles total ledger activity since the epoch, not all-time balances.
-  const since = viewEpoch.active && viewEpoch.epoch ? fmtSince(viewEpoch.epoch.since, now) : "";
+  const { finance, snapshot, source, now } = useOps();
+  // After "Start fresh" (with no imported history) the tiles total ledger activity since the epoch, not balances.
+  const since = finance.since !== null ? fmtSince(finance.since, now) : "";
   const sinceDelta = since ? <span className="fh-delta flat">since {since}</span> : null;
   const hasLedger = snapshot.ledger_entry.length > 0;
   const series = useMemo(
@@ -167,7 +167,7 @@ function KpiTiles() {
 /* ---------------------------- cash position ---------------------------- */
 
 function CashPanel() {
-  const { finance, snapshot, source, viewEpoch, now } = useOps();
+  const { finance, snapshot, source, now } = useOps();
   const [range, setRange] = useState<7 | 30>(30);
   const [hover, setHover] = useState<number | null>(null);
   const points = useMemo(() => finance.trends.cash.slice(-(range + 1)), [finance.trends.cash, range]);
@@ -180,7 +180,7 @@ function CashPanel() {
     <section className="fl-panel fh-cash" aria-label="Cash position">
       <header className="fl-panel-head">
         <span className="fl-section">Cash</span>
-        {viewEpoch.active && viewEpoch.epoch && <span className="fl-micro">Net since {fmtSince(viewEpoch.epoch.since, now)}</span>}
+        {finance.since !== null && <span className="fl-micro">Net since {fmtSince(finance.since, now)}</span>}
         <span className="fh-head-meta">
           {hovered && (
             <span className="fh-cash-hover fl-num">

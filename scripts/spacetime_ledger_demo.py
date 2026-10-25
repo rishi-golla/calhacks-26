@@ -35,7 +35,15 @@ def seed(admin: LocalAdmin, server: str, database: str) -> None:
 
     today = datetime.now(UTC).replace(hour=15, minute=0, second=0, microsecond=0)
     start = today - timedelta(days=DAYS)
+    # Only create months that do not exist yet; never reopen a closed period.
+    known = requests.post(sql_url, headers=headers, timeout=10, data="SELECT period, status FROM period")
+    known.raise_for_status()
+    existing = {row[0]: row[1] for row in known.json()[0]["rows"]}
     for month in sorted({(start + timedelta(days=i)).strftime("%Y-%m") for i in range(DAYS + 1)}):
+        if month in existing:
+            if existing[month] != "open":
+                raise SystemExit(f"period {month} is {existing[month]}; refusing to reopen it for demo data")
+            continue
         write("admin", "set_period", f"period-{month}", period=month, status="open")
 
     write("ingest", "open_case", "case", case_id=CASE, load_id="LOAD-W2-LEDGER", priority="P3",

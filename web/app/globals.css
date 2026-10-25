@@ -2518,6 +2518,231 @@ button.ev-chip:focus-visible {
   color: var(--ev-mute);
   overflow-wrap: anywhere;
 }
+.wk-sym::before {
+  content: "ƒ ";
+  opacity: 0.7;
+}
+.wk-num {
+  color: var(--ev-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ev-chip.wk-src {
+  padding: 0 5px;
+  font-size: 9.5px;
+  line-height: 15px;
+  letter-spacing: 0.04em;
+}
+
+/* tally: operator margin | input | amount | source */
+.wk-tally {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) max-content max-content;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ev-dim);
+}
+.wk-line {
+  display: contents;
+}
+.wk-op {
+  grid-column: 1;
+  color: var(--ev-mute);
+  text-align: center;
+}
+.wk-in {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wk-tally .wk-num {
+  text-align: right;
+}
+.wk-rule {
+  grid-column: 2 / 4;
+  height: 0;
+  margin: 2px 0 1px;
+  border-top: 1px solid var(--ev-line-strong);
+}
+.wk-line.total .wk-op {
+  color: var(--ev-strong);
+  font-weight: 700;
+}
+.wk-reason {
+  grid-column: 2 / -1;
+  font-size: 11px;
+  color: var(--ev-warn);
+}
+.wk-reason::before {
+  content: "↳ ";
+  color: var(--ev-mute);
+}
+
+/* compare: left  op  right  verdict */
+.wk-cmp {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+.wk-side {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.wk-side-k {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ev-mute);
+}
+.wk-side-v {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.wk-cmp-op {
+  font-size: 15px;
+  line-height: 1.2;
+  color: var(--ev-mute);
+}
+.wk-verdict {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-left: auto;
+  font-weight: 700;
+}
+.wk-verdict.yes {
+  color: var(--ev-ok);
+}
+.wk-verdict.no {
+  color: var(--ev-bad);
+}
+.wk-gap {
+  font-weight: 500;
+  font-size: 11px;
+}
+
+/* per-line sums */
+.wk-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.wk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ev-fg);
+}
+/* Reset the global light-theme table styles. */
+.wk-table th,
+.wk-table td {
+  padding: 2px 0 2px 10px;
+  text-align: right;
+  white-space: nowrap;
+  font-size: inherit;
+  font-weight: 400;
+  text-transform: none;
+  color: inherit;
+  background: transparent;
+  border-bottom: 0;
+  max-width: none;
+}
+.wk-table tbody tr:hover {
+  background: transparent;
+}
+.wk-table th:first-child {
+  padding-left: 0;
+  text-align: left;
+  color: var(--ev-dim);
+}
+.wk-table thead th {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ev-mute);
+  border-bottom: 1px solid var(--ev-line);
+}
+.wk-table tfoot th,
+.wk-table tfoot td {
+  border-top: 1px solid var(--ev-line-strong);
+  color: var(--ev-strong);
+  font-weight: 600;
+}
+.wk-net {
+  color: var(--ev-strong);
+}
+
+/* required vs received documents */
+.wk-set {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 11.5px;
+}
+.wk-docs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.wk-doc {
+  padding: 0 6px;
+  border: 1px solid var(--ev-line);
+  border-radius: var(--ev-radius);
+  line-height: 18px;
+}
+.wk-doc.yes {
+  color: var(--ev-ok);
+}
+.wk-doc.no {
+  color: var(--ev-bad);
+  border-color: color-mix(in srgb, var(--ev-bad) 45%, transparent);
+}
+.wk-set-out {
+  margin-left: auto;
+}
+
+/* inputs before a general equation */
+.wk-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: 1px 12px;
+  margin: 0;
+  font-size: 11.5px;
+}
+.wk-inputs > div {
+  display: contents;
+}
+.wk-inputs dt {
+  color: var(--ev-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wk-inputs dd {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+/* object results as facts, never JSON */
+.wk-facts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+.wk-fact-k {
+  font-size: 10px;
+  color: var(--ev-mute);
+}
 .wk-refs {
   display: flex;
   flex-wrap: wrap;

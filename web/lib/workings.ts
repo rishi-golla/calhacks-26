@@ -129,6 +129,7 @@ export function formatValue(value: unknown, unit: WorkingUnit = "text"): string 
   }
   if (typeof value === "number") return grouped(value, 4);
   if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.length ? value.slice(0, 12).map((v) => (typeof v === "string" ? inputLabel(v) : formatValue(v, unit))).join(", ") : "none";
   try {
     const s = JSON.stringify(value);
     return s.length > 80 ? `${s.slice(0, 80)}…` : s;
@@ -156,6 +157,14 @@ export function inputUnit(key: string, value: unknown, resultUnit: WorkingUnit):
   return ["usd", "min", "h", "mi", "count"].includes(resultUnit) ? resultUnit : "ratio";
 }
 
+/** One input formatted for display: a fractional `tolerance`/`*_pct` reads as a percent (0.02 -> 2%). */
+export function formatInput(key: string, value: unknown, resultUnit: WorkingUnit): string {
+  const unit = inputUnit(key, value, resultUnit);
+  const n = toNumber(value);
+  if (unit === "ratio" && n !== null && Math.abs(n) < 1 && /(^|_)(tolerance|pct|percent)$/.test(key.toLowerCase())) return `${grouped(n * 100, 2)}%`;
+  return formatValue(value, unit);
+}
+
 export type FormulaPart = { kind: "value" | "ident" | "text"; text: string; key?: string };
 
 const IDENT = /[A-Za-z_][A-Za-z0-9_.]*/g;
@@ -168,7 +177,7 @@ export function substituteFormula(w: Pick<Working, "formula" | "inputs" | "unit"
     const name = match[0];
     const at = match.index ?? 0;
     if (at > last) parts.push({ kind: "text", text: w.formula.slice(last, at) });
-    if (Object.hasOwn(w.inputs, name)) parts.push({ kind: "value", text: formatValue(w.inputs[name], inputUnit(name, w.inputs[name], w.unit)), key: name });
+    if (Object.hasOwn(w.inputs, name)) parts.push({ kind: "value", text: formatInput(name, w.inputs[name], w.unit), key: name });
     else parts.push({ kind: "ident", text: name });
     last = at + name.length;
   }
@@ -367,28 +376,340 @@ export function evaluateFormula(formula: string, inputs: Record<string, unknown>
 
 export type Recheck = { status: "match" | "mismatch" | "unchecked"; computed?: Value };
 
+const asBool = (value: unknown): boolean | undefined =>
+  typeof value === "boolean" ? value : value === "true" ? true : value === "false" ? false : undefined;
+
+// Agents publish results rounded to display precision (cents, 0.01 h); a stated value that
+// matches the recomputation once rounded the same way is a match, not an accusation.
+const sameNumber = (stated: number, computed: number, unit: WorkingUnit) =>
+  Math.abs(stated - computed) <=
+  (unit === "usd" || unit === "h" || unit === "min" || unit === "mi" || unit === "ratio" ? 0.005 : Math.max(1e-6, Math.abs(stated) * 1e-6));
+
 /**
  * Recompute the formula and compare with the stated result. Money compares to
  * the cent, other numbers to 1e-6 relative; anything unparseable is "unchecked".
+ * Per-line `sum(...)` formulas over nested inputs are recomputed from the line table.
  */
 export function recheckWorking(w: Pick<Working, "formula" | "inputs" | "result" | "unit">): Recheck {
   if (!w.formula) return { status: "unchecked" };
   const computed = evaluateFormula(w.formula, w.inputs);
-  if (computed === undefined) return { status: "unchecked" };
+  if (computed === undefined) return recheckTable(w);
   const stated = w.result;
   if (typeof computed === "boolean") {
-    const s = typeof stated === "boolean" ? stated : stated === "true" ? true : stated === "false" ? false : undefined;
+    const s = asBool(stated);
     if (s === undefined) return { status: "unchecked" };
     return { status: s === computed ? "match" : "mismatch", computed };
   }
   const s = toNumber(stated);
   if (s === null) return { status: "unchecked" };
-  // Agents publish results rounded to display precision (cents, 0.01 h); a stated value that
-  // matches the recomputation once rounded the same way is a match, not an accusation.
-  const tol = w.unit === "usd" || w.unit === "h" || w.unit === "min" || w.unit === "mi" || w.unit === "ratio"
-    ? 0.005
-    : Math.max(1e-6, Math.abs(s) * 1e-6);
-  return { status: Math.abs(s - computed) <= tol ? "match" : "mismatch", computed };
+  return { status: sameNumber(s, computed, w.unit) ? "match" : "mismatch", computed };
+}
+
+/* -------------------------------- layout -------------------------------- */
+
+/*
+ * How a working reads on the page. Agents publish a formula string; the
+ * dashboard lays the common shapes out the way a person would work them on
+ * paper, and falls back to the substituted equation for everything else:
+ *   tally       a - b + c: one line per input, operator in the margin, a rule, the result
+ *   compare     a <= b: both sides with their labels, the verdict and the gap
+ *   table       sum(...) over per-line inputs (receivables, journal lines): rows, columns, totals
+ *   set         required - received documents: each one ticked or missing
+ *   note        a single amount with a reason: `lumper (no receipt attached)`
+ *   expression  anything else: the inputs listed, then the substituted equation
+ */
+
+export type Operand = { key: string; label: string; value: string; source?: string };
+export type TallyLine = Operand & { op: "" | "+" | "−" };
+export type Fact = { key: string; label: string; value: string; tone?: "yes" | "no" };
+export type TableColumn = { key: string; label: string; unit: WorkingUnit };
+export type TableRow = { key: string; label: string; cells: string[]; net?: string };
+export type TableComparison = { left: Operand; op: string; right: Operand; holds: boolean };
+
+export type WorkingLayout =
+  | { kind: "tally"; lines: TallyLine[] }
+  | { kind: "compare"; left: Operand; op: string; right: Operand; holds: boolean | undefined; gap?: string }
+  | {
+      kind: "table";
+      columns: TableColumn[];
+      rows: TableRow[];
+      totals: string[];
+      net?: { label: string; total: string };
+      comparison?: TableComparison;
+    }
+  | { kind: "set"; items: { name: string; label: string; present: boolean }[]; title: string }
+  | { kind: "note"; line: Operand; reason: string }
+  | { kind: "expression"; inputs: Operand[]; parts: FormulaPart[] };
+
+const LABELS: Record<string, string> = {
+  invoice_amount: "Carrier invoice",
+  contract_rate: "Contract rate",
+  contract_amount: "Contract rate",
+  tolerance: "Tolerance",
+  ceiling: "Tolerance ceiling",
+  tolerance_limit: "Tolerance ceiling",
+  line_items_total: "Invoice lines",
+  stated_total: "Stated total",
+  paid_amount: "Already paid",
+  shipper_invoice_amount: "Shipper invoice",
+  matched_amount: "Cash matched",
+  gps_dwell_min: "GPS dwell",
+  free_time_min: "Free time",
+  detention_hours_claimed: "Detention claimed",
+  supportable_hours: "GPS supports",
+  bank_change: "Bank change requested",
+  unsupported: "Unsupported charges",
+  revenue: "Revenue",
+  invoiced_carrier_cost: "Carrier cost as invoiced",
+  contracted_carrier_cost: "Carrier cost at contract",
+  expected_collections: "Expected collections",
+  outstanding_carrier_cost: "Outstanding carrier cost",
+  required_documents: "Required",
+  received_documents: "Received",
+  hold_amount: "Hold",
+  delta: "Invoice delta",
+};
+const ACRONYMS = new Set(["gps", "fsc", "pod", "ap", "ar", "id", "rc", "ach", "bol", "eta"]);
+const UNIT_TAILS = new Set(["min", "mins", "minutes", "h", "hr", "hrs", "usd"]);
+
+/** `gps_dwell_min` -> "GPS dwell", `deposit_2` -> "Deposit 2"; the unit shows on the value instead. */
+export function inputLabel(key: string): string {
+  if (Object.hasOwn(LABELS, key)) return LABELS[key];
+  const words = key.split(/[_\s]+/).filter(Boolean);
+  if (words.length > 1 && UNIT_TAILS.has(words[words.length - 1].toLowerCase())) words.pop();
+  const s = words.map((w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w.toLowerCase())).join(" ");
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : key;
+}
+
+// Which document answers for an input (mirrors common/workings.py DOCUMENT_KIND_FOR_INPUT),
+// as the evidence-ref prefix that document carries.
+const SOURCE_PREFIX: Record<string, string> = {
+  contract_rate: "doc:RC-",
+  contract_amount: "doc:RC-",
+  linehaul: "doc:RC-",
+  fsc: "doc:RC-",
+  free_time_min: "doc:RC-",
+  detention_rate_hr: "doc:RC-",
+  invoice_amount: "doc:INV-",
+  line_items_total: "doc:INV-",
+  paid_amount: "doc:INV-",
+  stated_total: "doc:INV-",
+  detention_hours_claimed: "doc:INV-",
+  shipper_invoice_amount: "doc:SINV-",
+  gps_dwell_min: "doc:POD-",
+  pod_signed: "doc:POD-",
+};
+
+/** The cited document an input was read from, when the working cites it. */
+export function inputSource(key: string, refs: readonly string[]): string | undefined {
+  const prefix = SOURCE_PREFIX[key];
+  return prefix ? refs.find((r) => r.startsWith(prefix)) : undefined;
+}
+
+/** Formula operators as they are written by hand: `*` -> ×, `<=` -> ≤, `-` -> −. */
+export function prettyOperators(s: string): string {
+  return s
+    .replaceAll("**", "^")
+    .replaceAll("<=", "≤")
+    .replaceAll(">=", "≥")
+    .replaceAll("!=", "≠")
+    .replaceAll("==", "=")
+    .replaceAll("*", "×")
+    .replaceAll("/", "÷")
+    .replaceAll("-", "−");
+}
+
+const PRETTY_COMPARE: Record<string, string> = { "<=": "≤", ">=": "≥", "<": "<", ">": ">", "==": "=", "!=": "≠" };
+
+const operand = (w: Pick<Working, "inputs" | "unit" | "evidence_refs">, key: string): Operand => {
+  const value = w.inputs[key];
+  const source = inputSource(key, w.evidence_refs);
+  return { key, label: inputLabel(key), value: formatInput(key, value, w.unit), ...(source ? { source } : {}) };
+};
+
+/** A value of a result or nested input as label/value facts, so objects never render as JSON. */
+export function resultFacts(value: unknown, unit: WorkingUnit): Fact[] | null {
+  if (!isRecord(value)) return null;
+  return Object.entries(value)
+    .slice(0, 8)
+    .map(([key, v]) => {
+      const tone = typeof v === "boolean" ? (v ? "yes" : "no") : undefined;
+      return { key, label: inputLabel(key), value: formatValue(v, inputUnit(key, v, unit)), ...(tone ? { tone } : {}) } as Fact;
+    });
+}
+
+/** Lay a working out for reading. Pure; unrecognized shapes become an `expression`. */
+export function layoutWorking(w: Pick<Working, "formula" | "inputs" | "result" | "unit" | "evidence_refs">): WorkingLayout {
+  const f = w.formula.trim();
+  const numeric = (key: string) => Object.hasOwn(w.inputs, key) && toNumber(w.inputs[key]) !== null;
+
+  const table = lineTable(w);
+  if (table) return table;
+
+  // required_documents - received_documents, both lists.
+  const set = /^([A-Za-z_]\w*)\s*-\s*([A-Za-z_]\w*)$/.exec(f);
+  if (set && Array.isArray(w.inputs[set[1]]) && Array.isArray(w.inputs[set[2]])) {
+    const have = new Set((w.inputs[set[2]] as unknown[]).map(String));
+    const names = [...new Set((w.inputs[set[1]] as unknown[]).map(String))].slice(0, 20);
+    return { kind: "set", title: inputLabel(set[1]), items: names.map((name) => ({ name, label: inputLabel(name), present: have.has(name) })) };
+  }
+
+  // lumper (no receipt attached)
+  const note = /^([A-Za-z_]\w*)\s*\((.+)\)$/.exec(f);
+  if (note && !Object.hasOwn(FUNCS, note[1]) && numeric(note[1])) return { kind: "note", line: operand(w, note[1]), reason: note[2].trim() };
+
+  // a - b + c
+  const tokens = tokenize(f);
+  // A bare identifier (`detention`, `deposit_1`) is a one-line tally, not "$250 = $250".
+  if (tokens && tokens.length % 2 === 1) {
+    const isTerm = (t: Token) => t.t === "id" && numeric(t.v);
+    const isSign = (t: Token) => t.t === "op" && (t.v === "+" || t.v === "-");
+    if (tokens.every((t, i) => (i % 2 === 0 ? isTerm(t) : isSign(t))))
+      return {
+        kind: "tally",
+        lines: tokens
+          .filter((_, i) => i % 2 === 0)
+          .map((t, n) => ({ ...operand(w, String(t.v)), op: n === 0 ? "" : tokens[2 * n - 1].v === "+" ? "+" : "−" })),
+      };
+  }
+
+  // a <= b
+  if (tokens && tokens.length === 3 && tokens[0].t === "id" && tokens[2].t === "id" && tokens[1].t === "op" && Object.hasOwn(PRETTY_COMPARE, tokens[1].v)) {
+    const [l, o, r] = [tokens[0].v, tokens[1].v, tokens[2].v];
+    if (numeric(l) && numeric(r)) {
+      const a = toNumber(w.inputs[l]) as number;
+      const b = toNumber(w.inputs[r]) as number;
+      const holds = evaluateFormula(f, w.inputs);
+      const diff = Math.abs(a - b);
+      const unit = inputUnit(l, w.inputs[l], w.unit);
+      const word = holds ? (o === "==" ? "" : "headroom") : o === "<=" || o === "<" ? "over" : o === ">=" || o === ">" ? "short" : "off";
+      return {
+        kind: "compare",
+        left: operand(w, l),
+        op: PRETTY_COMPARE[o],
+        right: operand(w, r),
+        holds: typeof holds === "boolean" ? holds : undefined,
+        ...(diff > 1e-9 && word ? { gap: `${formatValue(diff, unit)} ${word}` } : {}),
+      };
+    }
+  }
+
+  // A constant (`0` when nothing was unsupported) has nothing to show but its result.
+  const parts = f && !/^-?[\d.]+$/.test(f) ? substituteFormula(w) : [];
+  const used = parts.filter((p) => p.kind === "value").map((p) => p.key as string);
+  return { kind: "expression", inputs: [...new Set(used)].map((k) => operand(w, k)), parts };
+}
+
+/* Per-line inputs: `{receivable_1: {amount, collected}, ...}` with `sum(receivable amount - collected)`,
+ * or journal lines `{cash_1: {debit, credit}, ...}` with `sum(debits) == sum(credits)`. */
+
+const singular = (s: string) => (s.endsWith("s") ? s.slice(0, -1) : s);
+
+type LineModel = {
+  rows: { key: string; fields: Record<string, unknown> }[];
+  columns: string[];
+  totals: number[];
+  inner?: { expr: string; values: (number | undefined)[]; total: number | undefined };
+  sides?: { left: string; op: string; right: string; holds: boolean };
+};
+
+function lineModel(w: Pick<Working, "formula" | "inputs">): LineModel | null {
+  const entries = Object.entries(w.inputs);
+  if (!entries.length || !entries.every(([, v]) => isRecord(v))) return null;
+  const rows = entries.map(([key, v]) => ({ key, fields: v as Record<string, unknown> }));
+  const columns: string[] = [];
+  for (const r of rows)
+    for (const [k, v] of Object.entries(r.fields)) if (toNumber(v) !== null && !columns.includes(k) && columns.length < 4) columns.push(k);
+  if (!columns.length) return null;
+  // Journal lines read debit before credit, whichever account came first.
+  const [debit, credit] = [columns.indexOf("debit"), columns.indexOf("credit")];
+  if (debit >= 0 && credit >= 0 && credit < debit) [columns[credit], columns[debit]] = ["debit", "credit"];
+  const totals = columns.map((c) => rows.reduce((s, r) => s + (toNumber(r.fields[c]) ?? 0), 0));
+  const model: LineModel = { rows, columns, totals };
+  const f = w.formula.trim();
+  const column = (name: string) => columns.find((c) => c === name || c === singular(name) || singular(c) === singular(name));
+
+  const sides = /^sum\(\s*(\w+)\s*\)\s*(<=|>=|==|!=|<|>)\s*sum\(\s*(\w+)\s*\)$/.exec(f);
+  if (sides) {
+    const left = column(sides[1]);
+    const right = column(sides[3]);
+    if (left && right) {
+      const holds = evaluateFormula(`a ${sides[2]} b`, { a: totals[columns.indexOf(left)], b: totals[columns.indexOf(right)] });
+      if (typeof holds === "boolean") model.sides = { left, op: sides[2], right, holds };
+    }
+    return model;
+  }
+  const inner = /^sum\((.+)\)$/.exec(f);
+  if (inner) {
+    // "receivable amount - collected": a word naming the line, not a field, is dropped.
+    const tokens = tokenize(inner[1]) ?? [];
+    const kept = tokens.filter((t, i) => !(t.t === "id" && !columns.includes(t.v) && tokens[i + 1]?.t === "id"));
+    const expr = kept.map((t) => (t.t === "num" ? String(t.v) : t.v)).join(" ");
+    const values = rows.map((r) => {
+      const v = evaluateFormula(expr, Object.fromEntries(columns.map((c) => [c, toNumber(r.fields[c]) ?? 0])));
+      return typeof v === "number" ? v : undefined;
+    });
+    const total = values.every((v) => v !== undefined) ? values.reduce<number>((s, v) => s + (v as number), 0) : undefined;
+    if (total !== undefined) model.inner = { expr, values, total };
+  }
+  return model;
+}
+
+function lineTable(w: Pick<Working, "formula" | "inputs" | "result" | "unit">): WorkingLayout | null {
+  const m = lineModel(w);
+  if (!m) return null;
+  const units = m.columns.map((c) => inputUnit(c, m.rows.find((r) => r.fields[c] !== undefined)?.fields[c], w.unit));
+  const columns = m.columns.map((key, i) => ({ key, label: inputLabel(key), unit: units[i] }));
+  const netUnit: WorkingUnit = w.unit === "text" ? "usd" : w.unit;
+  const layout: WorkingLayout = {
+    kind: "table",
+    columns,
+    rows: m.rows.map((r, i) => ({
+      key: r.key,
+      label: inputLabel(r.key),
+      cells: m.columns.map((c, j) => (r.fields[c] === undefined ? "—" : formatValue(r.fields[c], units[j]))),
+      ...(m.inner ? { net: formatValue(m.inner.values[i], netUnit) } : {}),
+    })),
+    totals: m.totals.map((t, j) => formatValue(t, units[j])),
+  };
+  if (m.inner) layout.net = { label: prettyOperators(m.inner.expr.split(" ").map((t) => (m.columns.includes(t) ? inputLabel(t).toLowerCase() : t)).join(" ")), total: formatValue(m.inner.total, netUnit) };
+  if (m.sides) {
+    const side = (c: string) => ({ key: c, label: `${inputLabel(c)}s`, value: layout.totals[m.columns.indexOf(c)] });
+    layout.comparison = { left: side(m.sides.left), op: PRETTY_COMPARE[m.sides.op], right: side(m.sides.right), holds: m.sides.holds };
+  }
+  return layout;
+}
+
+function recheckTable(w: Pick<Working, "formula" | "inputs" | "result" | "unit">): Recheck {
+  const m = lineModel(w);
+  if (m?.inner?.total !== undefined) {
+    const s = toNumber(w.result);
+    if (s === null) return { status: "unchecked" };
+    return { status: sameNumber(s, m.inner.total, w.unit === "text" ? "usd" : w.unit) ? "match" : "mismatch", computed: m.inner.total };
+  }
+  if (m?.sides) {
+    // The Controller states {debits, credits, balanced}; a bare boolean is accepted too.
+    const stated = w.result;
+    const flag = asBool(stated) ?? (isRecord(stated) ? Object.values(stated).map(asBool).find((v) => v !== undefined) : undefined);
+    if (flag === undefined) return { status: "unchecked" };
+    const statedTotals = isRecord(stated)
+      ? [m.sides.left, m.sides.right].every((c) => {
+          const v = toNumber(stated[`${c}s`] ?? stated[c]);
+          return v === null || sameNumber(v, m.totals[m.columns.indexOf(c)], "usd");
+        })
+      : true;
+    return { status: flag === m.sides.holds && statedTotals ? "match" : "mismatch", computed: m.sides.holds };
+  }
+  // required_documents - received_documents: the stated missing list is the set difference.
+  const set = /^([A-Za-z_]\w*)\s*-\s*([A-Za-z_]\w*)$/.exec(w.formula.trim());
+  if (set && Array.isArray(w.inputs[set[1]]) && Array.isArray(w.inputs[set[2]]) && Array.isArray(w.result)) {
+    const have = new Set((w.inputs[set[2]] as unknown[]).map(String));
+    const missing = new Set((w.inputs[set[1]] as unknown[]).map(String).filter((d) => !have.has(d)));
+    const stated = new Set((w.result as unknown[]).map(String));
+    const same = missing.size === stated.size && [...missing].every((d) => stated.has(d));
+    return { status: same ? "match" : "mismatch" };
+  }
+  return { status: "unchecked" };
 }
 
 /** `hold_matches_delta` -> "Hold matches delta". */

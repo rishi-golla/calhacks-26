@@ -24,14 +24,15 @@ import { compactValue, documentKindLabel, evidenceUrl, extractedFields, parseEvi
 /** Nearest themed ancestor; the trace drawer first so the agent accent carries into the viewer. */
 const THEMED_ROOT = ".ct-details, .fl, .agent-inbox";
 
-export function EvidenceChip({ evidenceRef, className = "" }: { evidenceRef: string; className?: string }) {
+/** `label` replaces the ref as the chip text (the ref moves to the tooltip), for chips inside dense rows. */
+export function EvidenceChip({ evidenceRef, className = "", label }: { evidenceRef: string; className?: string; label?: string }) {
   const parsed = parseEvidenceRef(evidenceRef);
   const [host, setHost] = useState<Element | null>(null);
   const button = useRef<HTMLButtonElement>(null);
   if (!parsed.previewable)
     return (
-      <span className={`ev-chip static ${className}`} title="no preview for this source">
-        {evidenceRef}
+      <span className={`ev-chip static ${className}`} title={label ? `${evidenceRef} (no preview)` : "no preview for this source"}>
+        {label ?? evidenceRef}
       </span>
     );
   const Icon = parsed.kind === "mail" ? Mail : FileText;
@@ -42,7 +43,7 @@ export function EvidenceChip({ evidenceRef, className = "" }: { evidenceRef: str
         type="button"
         className={`ev-chip ${className}`}
         aria-haspopup="dialog"
-        title={parsed.kind === "mail" ? "Open the source email" : "Open the source document"}
+        title={`${label ? `${evidenceRef}: ` : ""}${parsed.kind === "mail" ? "Open the source email" : "Open the source document"}`}
         onClick={(e) => {
           // Chips live inside clickable rows; the chip owns this click.
           e.stopPropagation();
@@ -50,7 +51,7 @@ export function EvidenceChip({ evidenceRef, className = "" }: { evidenceRef: str
         }}
       >
         <Icon size={11} aria-hidden />
-        {evidenceRef}
+        {label ?? evidenceRef}
       </button>
       {host && (
         <EvidenceViewer

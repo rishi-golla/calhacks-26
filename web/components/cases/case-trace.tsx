@@ -9,13 +9,17 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowLeft, ListOrdered, Network, Pause, Play, Radio, Rewind } from "lucide-react";
 import { useLiveEvents, useOps } from "@/components/data-provider";
+import { useSourceRecords } from "@/components/live-provider";
+import { ShowWork } from "@/components/show-work";
 import Backdrop from "@/components/fx/backdrop";
 import { Mascot } from "@/components/mascot";
 import { agentColor } from "@/lib/agents";
 import { isImportedId } from "@/lib/history";
 import { fmtMoney } from "@/lib/ops";
+import { exposureWorkings } from "@/lib/show-work";
 import { PriorityChip, StatusChip } from "./case-explorer";
 import { CaseFile } from "./case-file";
+import { buildCaseFile } from "./case-file-model";
 import { CaseLog, NodeDetails } from "./node-panel";
 import { TraceGraph } from "./trace-graph";
 import { buildCaseTrace, caseKind, clock, dayClock, KIND_LABEL, layoutTrace, nodeStatus, shortDur, sideEffectAt, timer, type CaseTrace as Trace, type NodeStatus } from "./model";
@@ -31,6 +35,13 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
   const { fullSnapshot: snapshot, allCases: cases, now, simulated, source } = useOps();
   const c = cases.get(caseId);
   const trace = useMemo(() => buildCaseTrace(snapshot, caseId), [snapshot, caseId]);
+  // Exposure's derivation reads the case's source record (the case file shares this watch).
+  const records = useSourceRecords(simulated ? "" : caseId);
+  const exposure = c?.exposureUsd ?? 0;
+  const exposureWork = useMemo(() => {
+    const file = buildCaseFile(records.rows, caseId);
+    return file.state === "ready" && exposure ? exposureWorkings(caseId, file.file.record, exposure, file.file.documents) : [];
+  }, [records.rows, caseId, exposure]);
 
   /* -------- replay state -------- */
   const [replayAt, setReplayAt] = useState<number | null>(null);
@@ -247,7 +258,14 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
                 {agents} agent{agents === 1 ? "" : "s"}
               </span>
             )}
-            {c?.exposureUsd ? <span>Exposure {fmtMoney(c.exposureUsd)}</span> : null}
+            {exposure ? (
+              <span>
+                Exposure{" "}
+                <ShowWork workings={exposureWork} title="Exposure">
+                  {fmtMoney(exposure)}
+                </ShowWork>
+              </span>
+            ) : null}
           </div>
         </div>
         <div className="ct-head-actions">

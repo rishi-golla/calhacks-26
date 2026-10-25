@@ -9,7 +9,8 @@
  * Pure: no React, no DOM.
  */
 
-export const WORKING_UNITS = ["usd", "min", "h", "mi", "ratio", "bool", "count", "text"] as const;
+// `pct` is the dashboard's own (finance tiles); agents publish the units in common/workings.py.
+export const WORKING_UNITS = ["usd", "min", "h", "mi", "ratio", "pct", "bool", "count", "text"] as const;
 export type WorkingUnit = (typeof WORKING_UNITS)[number];
 
 export type Working = {
@@ -123,6 +124,8 @@ export function formatValue(value: unknown, unit: WorkingUnit = "text"): string 
         return `${grouped(n, 1)} mi`;
       case "count":
         return grouped(n, 0);
+      case "pct":
+        return `${grouped(n, 1)}%`;
       default:
         return grouped(n, 4);
     }
@@ -153,7 +156,7 @@ export function inputUnit(key: string, value: unknown, resultUnit: WorkingUnit):
   if (/(^|_)(h|hr|hrs|hours)($|_)/.test(k)) return /rate/.test(k) ? "usd" : "h";
   if (/(^|_)(mi|miles)($|_)/.test(k)) return "mi";
   if (/(^|_)(count|n|days|pallets|pings)$/.test(k)) return "count";
-  if (/(amount|usd|total|price|cost|fee|balance|delta|charge|paid|debit|credit|linehaul|fsc|rate|revenue|margin|limit|ceiling|hold|unsupported|collections)/.test(k)) return "usd";
+  if (/(amount|usd|total|price|cost|fee|balance|delta|charge|paid|debit|credit|linehaul|fsc|rate|revenue|expense|profit|deposit|margin|limit|ceiling|hold|unsupported|collections)/.test(k)) return "usd";
   return ["usd", "min", "h", "mi", "count"].includes(resultUnit) ? resultUnit : "ratio";
 }
 
@@ -383,7 +386,7 @@ const asBool = (value: unknown): boolean | undefined =>
 // matches the recomputation once rounded the same way is a match, not an accusation.
 const sameNumber = (stated: number, computed: number, unit: WorkingUnit) =>
   Math.abs(stated - computed) <=
-  (unit === "usd" || unit === "h" || unit === "min" || unit === "mi" || unit === "ratio" ? 0.005 : Math.max(1e-6, Math.abs(stated) * 1e-6));
+  (unit === "usd" || unit === "h" || unit === "min" || unit === "mi" || unit === "ratio" || unit === "pct" ? 0.005 : Math.max(1e-6, Math.abs(stated) * 1e-6));
 
 /**
  * Recompute the formula and compare with the stated result. Money compares to
@@ -460,6 +463,14 @@ const LABELS: Record<string, string> = {
   bank_change: "Bank change requested",
   unsupported: "Unsupported charges",
   revenue: "Revenue",
+  revenue_30d: "Revenue, last 30 days",
+  expense_30d: "Expenses, last 30 days",
+  expense: "Expenses",
+  gross_profit: "Gross profit",
+  ar_balance: "AR balance",
+  days: "Days",
+  next_payment_amount: "Next payment",
+  billed: "Billed to shipper",
   invoiced_carrier_cost: "Carrier cost as invoiced",
   contracted_carrier_cost: "Carrier cost at contract",
   expected_collections: "Expected collections",

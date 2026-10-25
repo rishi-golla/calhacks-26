@@ -11,9 +11,11 @@
 import { useEffect, useId, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { EvidenceChip } from "@/components/evidence";
+import { ShowWork } from "@/components/show-work";
 import { useSourceRecords } from "@/components/live-provider";
 import { date, timestamp } from "@/lib/data";
 import { fmtMoney } from "@/lib/ops";
+import { detentionWorkings, rateDeltaWorkings, shortPayWorkings } from "@/lib/show-work";
 import { buildCaseFile, caseFileSummary, type CaseFile as File } from "./case-file-model";
 import { Json } from "./node-panel";
 
@@ -181,7 +183,11 @@ function FileBody({ file }: { file: File }) {
         {file.billed !== null && (
           <p className="cf-total">
             Billed <span className="fl-num">{fmtMoney(file.billed)}</span> · received <span className="fl-num">{fmtMoney(file.deposited)}</span>
-            {short !== null && short > 0 && <span className="fl-chip outline bad ct-mini-chip">short {fmtMoney(short)}</span>}
+            {short !== null && short > 0 && (
+              <ShowWork workings={shortPayWorkings(file, short)} title="Short pay">
+                <span className="fl-chip outline bad ct-mini-chip">short {fmtMoney(short)}</span>
+              </ShowWork>
+            )}
           </p>
         )}
       </Sec>
@@ -239,10 +245,12 @@ function Facts({ file }: { file: File }) {
         <span className="fl-num">{money(contract)}</span> <span className="fl-mute">contract</span> · <span className="fl-num">{money(invoice)}</span>{" "}
         <span className="fl-mute">invoiced</span>
         {delta !== null && delta !== 0 && (
-          <span className={`fl-chip outline ${delta > 0 ? "bad" : "info"} ct-mini-chip`}>
-            {delta > 0 ? "+" : "−"}
-            {fmtMoney(Math.abs(delta))}
-          </span>
+          <ShowWork workings={rateDeltaWorkings(file)} title="Rate delta">
+            <span className={`fl-chip outline ${delta > 0 ? "bad" : "info"} ct-mini-chip`}>
+              {delta > 0 ? "+" : "−"}
+              {fmtMoney(Math.abs(delta))}
+            </span>
+          </ShowWork>
         )}
       </span>,
     ]);
@@ -257,7 +265,11 @@ function Facts({ file }: { file: File }) {
           {" "}
           · GPS dwell {dwellMin ?? "—"} min, {freeTimeMin ?? "—"} free
         </span>
-        {overClaimed && <span className="fl-chip outline bad ct-mini-chip">GPS supports {hours(billableHours ?? 0)}</span>}
+        {overClaimed && (
+          <ShowWork workings={detentionWorkings(file)} title="Detention">
+            <span className="fl-chip outline bad ct-mini-chip">GPS supports {hours(billableHours ?? 0)}</span>
+          </ShowWork>
+        )}
       </span>,
     ]);
   }

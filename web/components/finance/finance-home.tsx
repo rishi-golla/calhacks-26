@@ -10,6 +10,8 @@
 import { Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useOps } from "@/components/data-provider";
+import { ShowWork } from "@/components/show-work";
+import { dsoWorkings, marginWorkings } from "@/lib/show-work";
 import { fmtSince } from "@/lib/view-epoch";
 import { AttentionQueue } from "./attention-queue";
 import { ForecastBars, LineChart, Sparkline } from "./charts";
@@ -121,7 +123,9 @@ function KpiTiles() {
       // Days of sales outstanding needs a 30-day revenue base, which an epoch does not give.
       foot: dso && !since ? (
         <>
-          DSO <b className="fl-num">{Math.round(dso)}</b> days
+          <ShowWork workings={dsoWorkings(finance)} title="Days sales outstanding">
+            DSO <b className="fl-num">{Math.round(dso)}</b> days
+          </ShowWork>
         </>
       ) : undefined,
     },
@@ -136,7 +140,10 @@ function KpiTiles() {
       delta: sinceDelta ?? <span className="fh-delta flat">30d {usdShort(finance.revenue30d)}</span>,
       foot: (
         <>
-          Margin <b className="fl-num">{pct1(finance.grossMarginPct)}</b> · {since ? `since ${since}` : "30 days"}
+          <ShowWork workings={marginWorkings(finance, since ? `since ${since}` : "last 30 days")} title="Gross margin">
+            Margin <b className="fl-num">{pct1(finance.grossMarginPct)}</b>
+          </ShowWork>{" "}
+          · {since ? `since ${since}` : "30 days"}
         </>
       ),
     },

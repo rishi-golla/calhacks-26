@@ -71,12 +71,12 @@ type EventScope = { unscoped?: boolean };
 /**
  * `ready`: Start fresh works here. `pending`: the live module is still being
  * asked. `absent`: the module (or these bindings) predate `view_epoch`.
- * `read-only`: not on a live connection. `observer`: this browser's identity
- * has no human or admin role, so `set_view_epoch` would be refused.
+ * `read-only`: not on a live connection. `observer`: this browser has no
+ * identity yet, or its principal was deactivated, so `set_view_epoch` would be refused.
  */
 export type ViewEpochSupport = "ready" | "pending" | "absent" | "read-only" | "observer";
 
-export const OBSERVER_HINT = "Only the controller's dashboard can start fresh.";
+export const OBSERVER_HINT = "This dashboard's identity is not allowed to start fresh.";
 
 export type ViewEpochControl = {
   /** The shared epoch (the simulation keeps its own), or null. */
@@ -262,11 +262,9 @@ function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?:
     previousScoped.current = scope ? next : null;
     return next;
   }, [fullSnapshot, scope]);
-  // `set_view_epoch` accepts the human and admin roles (as the legacy dashboard checks for flags).
+  // `set_view_epoch` is open to any connected identity; only a deactivated principal is refused.
   const canWrite = useMemo(
-    () =>
-      Boolean(live.identity) &&
-      fullSnapshot.principal.some((row) => row.identity === live.identity && (row.role === "human" || row.role === "admin") && row.active !== false),
+    () => Boolean(live.identity) && !fullSnapshot.principal.some((row) => row.identity === live.identity && row.active === false),
     [fullSnapshot.principal, live.identity],
   );
   const support: ViewEpochSupport = simulated

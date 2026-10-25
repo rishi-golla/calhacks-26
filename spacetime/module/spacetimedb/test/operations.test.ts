@@ -1147,8 +1147,7 @@ test('settle_cases resolves duplicate cases recorded before the rule, once', () 
 
 test('set_view_epoch upserts and clears the audited Start fresh boundary', () => {
   const h = new Harness();
-  const epoch = (actor: string, payload: Payload) => h.run(actor, 'set_view_epoch', ['human', 'admin'], op.setViewEpoch, payload);
-  for (const actor of ['controller', 'validator', 'stranger']) assert.throws(() => epoch(actor, {}), /role|provisioned/);
+  const epoch = (actor: string, payload: Payload) => h.run(actor, 'set_view_epoch', op.ANYONE, op.setViewEpoch, payload);
   const count = h.rows('change_set').length;
   epoch('human', {});
   const first = h.row('view_epoch', 'current');
@@ -1171,6 +1170,25 @@ test('set_view_epoch upserts and clears the audited Start fresh boundary', () =>
   // Clearing nothing records only the receipt; other data is untouched throughout.
   epoch('human', { clear: true });
   assert.equal(h.rows('change_set').length, count + 3);
+});
+
+test('set_view_epoch is open to any active or unprovisioned identity', () => {
+  const h = new Harness();
+  const epoch = (actor: string, payload: Payload) => h.run(actor, 'set_view_epoch', op.ANYONE, op.setViewEpoch, payload);
+  epoch('stranger', {});
+  assert.equal(h.row('view_epoch', 'current').set_by, `visitor:${identities.stranger.slice(0, 12)}`);
+  const visitorChange = h.rows('change_set').at(-1) as Row;
+  assert.equal(visitorChange.agent, `visitor:${identities.stranger.slice(0, 12)}`);
+  assert.equal(visitorChange.actor_identity, identities.stranger);
+  assert.equal(h.rows('principal').some(x => x.identity === identities.stranger), false, 'a visitor is not provisioned by the call');
+  epoch('controller', { since: '2026-10-24T09:30:00Z' });
+  assert.equal(h.row('view_epoch', 'current').set_by, 'controller');
+  epoch('stranger', { clear: true });
+  assert.equal(h.rows('view_epoch').length, 0);
+  h.run('admin', 'grant_role', ['admin'], op.grantRole, { identity: identities.validator, role: 'validator', active: false });
+  assert.throws(() => epoch('validator', {}), /may not perform/);
+  // Other reducers still refuse an unprovisioned identity.
+  assert.throws(() => h.run('stranger', 'set_period', ['admin', 'human'], op.setPeriod, { period: '2026-10', status: 'closed' }), /provisioned/);
 });
 
 const RT = { agent: 'carrier_ap', skill: 'process_carrier_invoice', queue_ms: 0, policy_version: 'w1-route-v1' };

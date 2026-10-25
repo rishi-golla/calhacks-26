@@ -294,3 +294,10 @@ async def test_cli_refuses_disabled_spacetime_and_missing_token(tmp_path, monkey
     assert "SPACETIME_TOKEN_EVALUATOR" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         evaluator.parse_args(["--loop", "0"])
+
+
+def test_bank_screen_on_the_payable_case_still_decides_the_risk_lane():
+    # Ingest falls back to the sim's case hint (CASE-<load>) when it cannot resolve the bank change's load.
+    rows = {"case": [case("CASE-L6", "L6")], "task": [task("bk", "CASE-L6", BANK, "suspicious")]}
+    [load] = evaluator.score([answer("L6", "bank_change")], rows)
+    assert load.status == "scored" and load.caught and load.flagged_lanes == {"risk"}

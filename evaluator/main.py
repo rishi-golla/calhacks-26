@@ -22,7 +22,7 @@ carrier settlement (lane `carrier_ap`), `-AR` the shipper receivable (`shipper_a
 (`risk`). The lanes a load needs are the agent keys of its answer-key `expected` entry (`risk` alone only when no
 `carrier_ap` decision is expected; otherwise Accessorial Audit runs as a child of Carrier Settlement).
 
-A lane's decision is the latest terminal root task of that lane's first-hop skill. A load is scored only when every
+A lane's decision is the latest terminal root task with that lane's first-hop skill, on any of the load's cases. A load is scored only when every
 required lane has a decision and no task on any of its cases is still in flight (working, parked for a call or a
 human, ...). Loads with no case in SpacetimeDB yet are "unseen"; the rest are "pending".
 
@@ -84,6 +84,7 @@ LANE_SKILLS = {
     "shipper_ar": frozenset({"reconcile_customer_payment", "chase_overdue"}),
     "risk": frozenset({"screen_bank_change", "screen_counterparty"}),
 }
+SKILL_LANES = {skill: lane for lane, skills in LANE_SKILLS.items() for skill in skills}
 CASE_SUFFIXES = {"-AR": "shipper_ar", "-BANK": "risk", "-R": "carrier_ap"}
 FLAG_OUTCOMES = frozenset({"hold", "reject", "suspicious", "partial"})
 TERMINAL_STATES = frozenset({"completed", "failed", "canceled", "cancelled", "rejected"})
@@ -257,21 +258,20 @@ def score_load(answer: Mapping, cases: list[dict], tasks_by_case: Mapping[str, l
     if any(_text(t.get("a2a_state")) not in TERMINAL_STATES for t in tasks):
         return result  # something on this load is still in flight
     lanes = required_lanes(answer)
-    for case_id in case_ids:
-        lane = lane_of(case_id)
-        roots = [t for t in tasks_by_case.get(case_id, [])
-                 if not _text(t.get("parent_task_id")) and _text(t.get("skill")) in LANE_SKILLS[lane]]
-        for task in roots:
-            flagged = classify_decision(task)
-            if flagged is None:
-                continue
-            at = _text(task.get("updated_at")) or _text(task.get("started_at"))
-            current = result.decisions.get(lane)
-            if current is None or (at, _text(task.get("task_id"))) > (current.at, current.task_id):
-                result.decisions[lane] = Decision(lane, _text(task.get("task_id")), _text(task.get("outcome")),
-                                                  flagged, at)
-        if holds_by_case.get(case_id):
-            result.flagged_lanes.add(lane)
+    for task in tasks:
+        # The skill names the lane: a bank change whose load ingest could not resolve lands on CASE-<load>.
+        lane = SKILL_LANES.get(_text(task.get("skill")))
+        if lane is None or _text(task.get("parent_task_id")):
+            continue
+        flagged = classify_decision(task)
+        if flagged is None:
+            continue
+        at = _text(task.get("updated_at")) or _text(task.get("started_at"))
+        current = result.decisions.get(lane)
+        if current is None or (at, _text(task.get("task_id"))) > (current.at, current.task_id):
+            result.decisions[lane] = Decision(lane, _text(task.get("task_id")), _text(task.get("outcome")),
+                                              flagged, at)
+    result.flagged_lanes.update(lane_of(case_id) for case_id in case_ids if holds_by_case.get(case_id))
     if not lanes <= result.decisions.keys():
         return result
     result.status = "scored"

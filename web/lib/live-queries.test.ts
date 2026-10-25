@@ -70,7 +70,7 @@ test("app plan: aggregate tables full, history windowed, legacy-only tables skip
     assert.equal(tablePolicy("app", table).kind, "none");
   }
   // Every table is either subscribed once or deliberately skipped.
-  assert.equal(plan.base.length + plan.windowed.length, plan.tables.length);
+  assert.equal(plan.base.length + plan.windowed.length + plan.optional.length, plan.tables.length);
   assert.equal(new Set(plan.tables).size, plan.tables.length);
 });
 
@@ -152,4 +152,13 @@ test("snapshot rebuilds touch only dirty tables and keep unchanged rows", () => 
   assert.notEqual(third.task[0], second.task[0], "a replaced SDK row is normalized again");
   assert.equal(third.task[0].a2a_state, "completed");
   assert.equal(third.task[1], second.task[1]);
+});
+
+test("view_epoch is an optional table in the app and ops plans", () => {
+  for (const profile of ["app", "ops"] as const) {
+    const plan = subscriptionPlan(profile, CUTOFF);
+    assert.ok(plan.optional.some((q) => q.table === "view_epoch"), `${profile} optional`);
+    assert.ok(!plan.base.some((q) => q.table === "view_epoch"), `${profile} base`);
+    assert.ok(!plan.windowed.some((q) => q.table === "view_epoch"), `${profile} windowed`);
+  }
 });

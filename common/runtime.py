@@ -39,6 +39,14 @@ TERMINAL_STATES = {TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_FAILED,
                    TaskState.TASK_STATE_CANCELED, TaskState.TASK_STATE_REJECTED}
 WAIT_STATES = {TaskState.TASK_STATE_INPUT_REQUIRED, TaskState.TASK_STATE_AUTH_REQUIRED}
 _execution: ContextVar[tuple[str, str, int] | None] = ContextVar("freight_execution", default=None)
+# The time.monotonic() at which the executor's asyncio.timeout(env.deadline_s) ends the running handler.
+_deadline: ContextVar[float | None] = ContextVar("freight_deadline", default=None)
+
+
+def task_deadline() -> float | None:
+    """The executor's absolute deadline (time.monotonic()) for the handler running in this context, or None
+    outside an executor run. Retries and optional model calls budget against it, not a clock of their own."""
+    return _deadline.get()
 
 
 TERMINAL_NAMES = frozenset({"completed", "failed", "canceled", "rejected"})
@@ -279,8 +287,12 @@ class FreightAgent(AgentExecutor):
                 await self._project(task_id, env, meta, "working", "investigating")
                 cached = await self.store.get_step(task_id, "__result")
                 if cached is None:
-                    async with asyncio.timeout(env.deadline_s):
-                        result = await self.handle(env, meta, task_id, updater)
+                    deadline = _deadline.set(time.monotonic() + env.deadline_s)
+                    try:
+                        async with asyncio.timeout(env.deadline_s):
+                            result = await self.handle(env, meta, task_id, updater)
+                    finally:
+                        _deadline.reset(deadline)
                     result = ResultArtifact.model_validate(result)
                     if result.outcome == "not_implemented":
                         raise ValueError("unimplemented skills cannot complete successfully")

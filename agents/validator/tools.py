@@ -722,14 +722,33 @@ def capped_refs(refs, chars: int) -> list[str]:
 
 
 def bounded_checks(checks: list[dict], limit: int) -> list[dict]:
-    """The authoritative checks whole, with only each check's ``expected``/``actual`` (and shown ``work``) values
-    bounded; values shrink until the list fits in ``limit``, and only then do checks lose those values."""
+    """The authoritative checks within ``limit`` encoded characters.
+
+    First every check is kept with only its ``expected``/``actual`` (and shown ``work``) values bounded. If the list
+    is still too long (a payment with hundreds of matched deposits has a check per deposit), checks keep only name,
+    result, severity and basis; failed checks come first, then passes as the budget allows, with a marker counting
+    the passes left out. A failed check is never dropped while a passed one is kept."""
     for text, items in ((600, 20), (200, 10), (80, 5)):
         bounded = [{**item, **{key: clip(item[key], text=text, items=items)
                                for key in ("expected", "actual", "work") if key in item}} for item in checks]
         if encoded_size(bounded) <= limit:
             return bounded
-    return [{key: item.get(key) for key in ("name", "ok", "severity", "basis")} for item in checks]
+    bare = [{key: item.get(key) for key in ("name", "ok", "severity", "basis")} for item in checks]
+    failed = [item for item in bare if not item["ok"]]
+    passed = [item for item in bare if item["ok"]]
+    kept, used = [], 2
+    for group, label in ((failed, "failed"), (passed, "passed")):
+        for index, item in enumerate(group):
+            # Room is left for the marker that counts what this and any later group lose.
+            if used + encoded_size(item) + 1 + 60 > limit:
+                omitted = len(group) - index + (len(passed) if group is failed else 0)
+                left_out = f"{len(group) - index} more {label} checks omitted"
+                if group is failed and passed:
+                    left_out += f"; {len(passed)} passed checks omitted"
+                return [*kept, {"omitted_checks": omitted, "note": left_out}]
+            kept.append(item)
+            used += encoded_size(item) + 1
+    return kept
 
 
 def review_view(bundle: dict, checks: list[dict] | None = None, *, limit: int = REVIEW_EVIDENCE_CHARS) -> dict:

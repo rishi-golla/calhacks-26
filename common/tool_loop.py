@@ -14,7 +14,7 @@ from common.config import AGENTS
 from common.envelope import ResultArtifact
 from common.learning import reconstruct_instructions, task_memory_scope
 from common.providers import ProviderConfigurationError, ProviderError, configuration, mode
-from common.runtime import TaskParked
+from common.runtime import TaskParked, task_deadline
 from common.runtime_store import LeaseLost
 from common.spacetime_client import SpacetimeClient
 from common.tool_model import model_turn
@@ -183,8 +183,9 @@ def _finish(artifact: ResultArtifact, assessment: dict | None, calls: list[dict]
 async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
     from common.tool_registry import ToolContext, registry_for
 
-    # The executor ends the task at env.deadline_s; a retry that could not finish before then only hides the reason.
-    deadline_at = time.monotonic() + env.deadline_s
+    # The executor ends the task at its deadline; a retry that could not finish before then only hides the reason.
+    # Outside an executor run (direct calls, tests) the loop's own start stands in for the executor's.
+    deadline_at = task_deadline() or time.monotonic() + env.deadline_s
     settings = await agent.step(task_id, "tool_loop:settings", lambda: _settings(agent, env))
     config = configuration(agent.name, f"{settings['provider']}/{settings['model']}")
     model = f"{config.provider}/{config.model}"

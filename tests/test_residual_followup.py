@@ -198,3 +198,110 @@ async def test_the_fallback_after_a_mid_workflow_failure_never_writes_a_review_t
     assert len({write_id for _, write_id in world["writes"]}) == len(world["writes"]), "no write sent twice"
     assert "upsert_memory" in operations, "the fallback finished the write that failed"
     assert isinstance(ResultArtifact.model_validate(result.model_dump()), ResultArtifact)
+
+
+# Devin on #46: optional model calls and retries budget against the executor's own deadline.
+
+def test_hundreds_of_checks_keep_every_failure_and_count_the_passes_left_out():
+    bundle = live_bundle()
+    bundle["source"]["notes"] = ["z" * 5000 for _ in range(100)]
+    checks = [{"name": f"receivable_journal_requested_{i}", "ok": True, "severity": "issue",
+               "expected": "journal", "actual": "journal", "basis": "every matched deposit is journaled"}
+              for i in range(450)]
+    failures = [{"name": f"unique_deposits_{i}", "ok": False, "severity": "issue", "expected": "unique",
+                 "actual": "duplicate", "basis": "a deposit counts once"} for i in range(5)]
+    checks[200:200] = failures
+    for limit in (REVIEW_TOOL_CHARS * 2, REVIEW_TOOL_CHARS):
+        view = review_view(bundle, checks, limit=limit)
+        assert encoded_size(view) <= limit
+        kept = [c for c in view["checks"] if "name" in c]
+        assert [c["name"] for c in kept[:5]] == [c["name"] for c in failures], "failures first, all of them"
+        marker = view["checks"][-1]
+        assert marker["omitted_checks"] == len(checks) - len(kept)
+        assert marker["note"] == f"{len(checks) - len(kept)} more passed checks omitted"
+
+
+async def test_the_executor_publishes_its_deadline_to_the_handler(tmp_path, monkeypatch):
+    import time
+
+    from common.runtime import FreightAgent, task_deadline
+    from tests.test_stuck_delegations import serving
+
+    monkeypatch.setenv("FREIGHTOPS_MODE", "fixture")
+    monkeypatch.setenv("SPACETIME_DISABLED", "1")
+    seen = {}
+
+    class Timed(FreightAgent):
+        name = "voice_desk"
+
+        async def handle(self, env, meta, task_id, updater):
+            seen["left"] = task_deadline() - time.monotonic()
+            return ResultArtifact(outcome="unverified")
+
+    from a2a.helpers import new_data_message
+    from a2a.server.context import ServerCallContext
+    from a2a.types import Role, SendMessageRequest
+    async with serving(tmp_path, Timed) as (handler, _agent):
+        message = new_data_message({"task_type": "place_call", "case_id": "case-d", "deadline_s": 300},
+                                   context_id="case-d", role=Role.ROLE_USER)
+        message.metadata.update({"case_id": "case-d", "from_agent": "router", "idempotency_key": "timed"})
+        await handler.on_message_send(SendMessageRequest(message=message), ServerCallContext())
+    assert 290 < seen["left"] <= 300
+    assert task_deadline() is None, "reset once the handler returns"
+
+
+async def test_turn_retries_budget_against_the_executor_deadline(loop, monkeypatch):  # noqa: F811
+    import time
+
+    from common import runtime
+    agent, _, meta = loop
+    env = TaskEnvelope(task_type="answer_payment_status", case_id="case", deadline_s=600)  # its own clock: 600 s
+    attempts = 0
+
+    async def slow_failure(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        await asyncio.sleep(0.8)
+        raise ProviderError("provider transport or protocol failure")
+
+    monkeypatch.setattr(tool_loop, "model_turn", slow_failure)
+    token = runtime._deadline.set(time.monotonic() + 1.5)  # but the executor ends the task in 1.5 s
+    try:
+        with pytest.raises(ProviderError, match="transport"):
+            await tool_loop.run_tool_loop(agent, env, meta, "task")
+    finally:
+        runtime._deadline.reset(token)
+    assert attempts == 1
+
+
+@pytest.mark.parametrize("case", ["slow", "late_retry"])
+async def test_the_verdict_is_saved_before_the_executor_deadline(world, monkeypatch, case):
+    import time
+
+    from common import runtime
+    calls = []
+
+    async def infer(agent, env, evidence, *, purpose="assessment"):
+        calls.append(purpose)
+        if case == "slow":
+            await asyncio.sleep(30)  # would run past the deadline
+        await asyncio.sleep(0.8)
+        raise ProviderError("provider HTTP 503")
+
+    monkeypatch.setattr(validator_main, "infer", infer)
+    world["bundle"]["artifact"]["findings"]["net_cash"] = 123  # an issue: the lesson draft is a model call too
+    world["bundle"]["target"]["artifact_json"] = json.dumps(world["bundle"]["artifact"])
+    token = runtime._deadline.set(time.monotonic() + validator_main.REVIEW_PERSIST_RESERVE_S + 1.5)
+    started = time.monotonic()
+    try:
+        result = await world["agent"].run_workflow(world["env"], world["meta"], f"review-{case}", None)
+    finally:
+        runtime._deadline.reset(token)
+        await world["store"].close()
+    assert time.monotonic() - started < 2.5, "the reserve for saving the verdict was kept"
+    assert result.outcome == "issue" and [op for op, _ in world["writes"]].count("add_review") == 1
+    if case == "slow":
+        assert result.findings["assessment_error"] == "model commentary ran out of time before the task deadline"
+    else:
+        assert result.findings["assessment_error"] == "provider HTTP 503"
+        assert calls.count("review") == 1, "a retry as long as the first attempt would not fit"

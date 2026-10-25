@@ -119,6 +119,26 @@ def failure_reason(results: list) -> str:
     return ""
 
 
+def failure_details(error: Exception, deadline_s: float) -> dict:
+    """The safe error and detail a task failure records. Every failure carries both: the dashboard and the
+    Validator read ``findings.error`` and ``findings.detail`` to say why a task ended without a result."""
+    from common.providers import ProviderError
+    failure = {"error": type(error).__name__}
+    if isinstance(error, ProviderError):  # its message is safe: no response, key or prompt
+        detail = str(error)
+    elif getattr(error, "reason", ""):  # a refused reducer's, a child's or the guarded workflow's bounded text
+        detail = str(error.reason)
+    elif isinstance(error, TimeoutError):
+        detail = f"task deadline of {deadline_s}s exceeded"
+    elif isinstance(error, (ChildFailed, DelegationRefused)):
+        detail = str(error)  # code-authored: "child task failed", "max delegation depth", ...
+    else:
+        # Other messages may carry source data or credentials; name the failure's kind only.
+        detail = f"{type(error).__name__} raised while executing the task"
+    failure["detail"] = detail[:200]
+    return failure
+
+
 def failure_artifact(error: str, detail: str = "", **extra) -> dict:
     """The artifact_json of a task that ended without a result, so the dashboard can show why."""
     findings = {"error": error[:200], **({"detail": detail[:300]} if detail else {}), **extra}
@@ -293,21 +313,14 @@ class FreightAgent(AgentExecutor):
             except LeaseLost:
                 final_status = "queued"
             except Exception as error:  # noqa: BLE001 -- executor boundary records a safe failure artifact
-                from common.providers import ProviderError
                 replay = isinstance(error, RecordedFailure)
                 if replay:
                     failure = error.failure
                     log.info("%s task %s: recording its earlier failure in the A2A store", self.name, task_id)
                 else:
-                    failure = {"error": type(error).__name__}
-                    if isinstance(error, ProviderError):  # its message is safe: no response, key or prompt
-                        failure["detail"] = str(error)[:200]
-                    elif getattr(error, "reason", ""):  # a refused reducer's or a child's bounded text
-                        failure["detail"] = str(error.reason)[:200]
-                    elif isinstance(error, TimeoutError):
-                        failure["detail"] = f"task deadline of {env.deadline_s}s exceeded"
-                    log.warning("%s task %s failed: %s%s", self.name, task_id, type(error).__name__,
-                                f" ({failure['detail']})" if "detail" in failure else "")
+                    failure = failure_details(error, env.deadline_s)
+                    log.warning("%s task %s failed: %s (%s)", self.name, task_id, failure["error"],
+                                failure["detail"])
                 # Record the failure durably and queue the dashboard's terminal row before any SDK call that could
                 # raise, so a failure the SDK does not record still never leaves the SpacetimeDB task `working`.
                 # Only the current lease holder may declare the task failed.
@@ -521,10 +534,12 @@ class FreightAgent(AgentExecutor):
                 payload.update(outcome=result.outcome, confidence=result.confidence,
                                model_used=result.model_used or "", artifact_json=result.model_dump(),
                                evidence_refs=result.evidence_refs, policy_ids=result.policy_ids)
-            failure = await self.store.get_step(task_id, "__failure") if execution["status"] == "failed" else None
-            if failure is not None:
-                payload["artifact_json"] = failure_artifact(str(failure.get("error", "failed")),
-                                                            str(failure.get("detail", "")))
+            if execution["status"] == "failed":
+                # A failure recorded only in the A2A store (the executor never wrote `__failure`) still says so.
+                failure = await self.store.get_step(task_id, "__failure") or {
+                    "error": "failed", "detail": "the task failed without a recorded reason"}
+                payload["artifact_json"] = failure_artifact(str(failure.get("error") or "failed"),
+                                                            str(failure.get("detail") or ""))
             payload["write_id"] = stable_id("projection-sweep", task_id, execution["status"])
             if await self.store.projection_exists(payload["write_id"], target):
                 continue  # already repaired once; a second refusal was logged by delivery

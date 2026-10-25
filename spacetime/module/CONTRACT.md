@@ -185,8 +185,13 @@ affected case inside the same transaction:
   `duplicate: <the latest duplicate row's reason>` unless the caller supplied its own. A P-007
   duplicate of an accepted event carries the original case's task and still counts as nothing
   delivered here; the task is another case's when its mirror is, or, before the mirror arrives,
-  when another case's dispatch row carries it. If new work (a first hop) is later routed to such a case while it is resolved,
-  it goes back to `open`, awaiting its first task; a task reopens it as usual.
+  when another case's `accepted` dispatch row carries it. A re-observed original turns its own
+  row into a duplicate that keeps its task, so a duplicate row elsewhere does not count. If new
+  work is later routed to such a case while it is resolved, it goes back to `open`, awaiting its
+  first task: a first hop through the outbox, or a newly recorded `queued`/`accepted` dispatch row
+  with direct A2A first hops. A re-observation of an existing row is not new work. A task reopens
+  it as usual. Known gap: if a P-007 duplicate is recorded before the original's `accepted` row and
+  the task mirror, the duplicate case is not re-settled when they arrive; `settle_cases` resolves it.
 - **Active** (`in_progress`): a task is non-terminal (`submitted`, `working`, `input-required`,
   `auth-required`), a `routing_outbox` row for the case is not `done`, an approval is `pending`
   and unexpired, or a flag is `open` or `reviewing`.

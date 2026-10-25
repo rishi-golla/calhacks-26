@@ -729,10 +729,10 @@ function cashFlowByMonth(entries: { at: number; lines: LedgerLine[] }[], forecas
   const current = monthKey(now);
   const first = monthKey(now, -PAST_MONTHS);
   const last = monthKey(now, AHEAD_MONTHS);
-  const months = new Map<string, { inflow: number; outflow: number; fcAmount: number; fcWeighted: number }>();
+  const months = new Map<string, { inflow: number; outflow: number; fcRows: number; fcAmount: number; fcWeighted: number }>();
   const slot = (key: string) => {
     let s = months.get(key);
-    if (!s) months.set(key, (s = { inflow: 0, outflow: 0, fcAmount: 0, fcWeighted: 0 }));
+    if (!s) months.set(key, (s = { inflow: 0, outflow: 0, fcRows: 0, fcAmount: 0, fcWeighted: 0 }));
     return s;
   };
   for (const e of entries) {
@@ -748,12 +748,16 @@ function cashFlowByMonth(entries: { at: number; lines: LedgerLine[] }[], forecas
   }
   for (const f of forecasts) {
     // Periods are months ("2026-10") or ISO week starts ("2026-10-26").
-    const key = str(f.period, "").slice(0, 7);
+    const period = str(f.period, "");
+    const key = period.slice(0, 7);
     if (!/^\d{4}-\d{2}$/.test(key) || key < current || key > last) continue;
+    // A week that has already ended is covered by posted cash, not still expected.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(period) && Date.parse(`${period}T00:00:00Z`) + 7 * 86_400_000 <= now) continue;
     const s = slot(key);
     const amt = num(f.amount);
     if (amt >= 0) s.inflow += amt;
     else s.outflow -= amt;
+    s.fcRows += 1;
     s.fcAmount += Math.abs(amt);
     s.fcWeighted += Math.abs(amt) * Math.max(0, Math.min(1, num(f.confidence)));
   }
@@ -766,7 +770,7 @@ function cashFlowByMonth(entries: { at: number; lines: LedgerLine[] }[], forecas
     const s = months.get(key);
     // Months after this one only appear when an agent forecast something for them.
     if (key > current && !s) continue;
-    const v = s ?? { inflow: 0, outflow: 0, fcAmount: 0, fcWeighted: 0 };
+    const v = s ?? { inflow: 0, outflow: 0, fcRows: 0, fcAmount: 0, fcWeighted: 0 };
     const total = v.inflow + v.outflow;
     out.push({
       period: key,
@@ -774,7 +778,7 @@ function cashFlowByMonth(entries: { at: number; lines: LedgerLine[] }[], forecas
       outflow: v.outflow,
       net: v.inflow - v.outflow,
       confidence: total ? (total - v.fcAmount + v.fcWeighted) / total : 1,
-      projected: v.fcAmount > 0,
+      projected: v.fcRows > 0,
     });
   }
   return out;

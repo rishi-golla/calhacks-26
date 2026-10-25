@@ -522,6 +522,8 @@ test("buildFinance cash flow covers past months and drops forecasts outside the 
     cash_forecast: [
       { id: "F1", period: "2027-07", amount: -39_500, confidence: 0.8 },
       { id: "F2", period: "2026-09", amount: 70, confidence: 0.8 }, // stale: before this month
+      { id: "F3", period: "2026-10-05", amount: 1_000, confidence: 0.8 }, // that week has ended
+      { id: "F4", period: "2026-11", amount: 0, confidence: 0.8 }, // nothing outstanding, still a forecast
     ],
   });
   const f = buildFinance(s, NOW);
@@ -531,6 +533,7 @@ test("buildFinance cash flow covers past months and drops forecasts outside the 
       ["2026-08", 300, 120, false],
       ["2026-09", 0, 0, false],
       ["2026-10", 0, 50, false],
+      ["2026-11", 0, 0, true],
     ],
   );
   assert.ok(f.forecast.every((p) => p.confidence === 1));

@@ -1,0 +1,310 @@
+/* Mascot moods: transform/opacity-only animations, pausable via reduced motion. */
+.mascot {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  --mascot-color: #9aa3b2;
+}
+.mascot-body {
+  position: absolute;
+  inset: 0;
+  display: block;
+  transform-origin: 50% 100%;
+  animation: mascot-breathe 3.2s ease-in-out infinite;
+  will-change: transform;
+}
+.mascot-body img,
+.mascot-body svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.45));
+}
+.mascot-shadow {
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: -2%;
+  height: 7%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.55), transparent 70%);
+  animation: mascot-shadow 3.2s ease-in-out infinite;
+}
+@keyframes mascot-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+  50% {
+    transform: translateY(-3%) scale(0.985, 1.015);
+  }
+}
+@keyframes mascot-shadow {
+  0%,
+  100% {
+    transform: scaleX(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scaleX(0.92);
+    opacity: 0.7;
+  }
+}
+
+/* working: quicker, with a little squash-and-stretch */
+.mascot.mood-working .mascot-body {
+  animation: mascot-work 0.9s cubic-bezier(0.36, 0.07, 0.19, 0.97) infinite;
+}
+@keyframes mascot-work {
+  0% {
+    transform: translateY(0) scale(1, 1);
+  }
+  30% {
+    transform: translateY(-9%) scale(0.96, 1.05) rotate(-2deg);
+  }
+  55% {
+    transform: translateY(0) scale(1.05, 0.95);
+  }
+  75% {
+    transform: translateY(-3%) scale(0.99, 1.01) rotate(2deg);
+  }
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+}
+.mascot-sparkles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.mascot-sparkles i {
+  position: absolute;
+  width: 8%;
+  height: 8%;
+  background: #fff;
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  opacity: 0;
+  animation: mascot-sparkle 1.4s ease-in-out infinite;
+}
+.mascot-sparkles i:nth-child(1) {
+  top: 6%;
+  right: 10%;
+}
+.mascot-sparkles i:nth-child(2) {
+  top: 28%;
+  right: -4%;
+  animation-delay: 0.45s;
+}
+.mascot-sparkles i:nth-child(3) {
+  top: 2%;
+  left: 14%;
+  animation-delay: 0.9s;
+}
+@keyframes mascot-sparkle {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4) rotate(0deg);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1) rotate(45deg);
+  }
+}
+
+/* talking: wobble */
+.mascot.mood-talking .mascot-body {
+  animation: mascot-talk 0.6s ease-in-out infinite;
+}
+@keyframes mascot-talk {
+  0%,
+  100% {
+    transform: rotate(0deg) translateY(0);
+  }
+  25% {
+    transform: rotate(-4deg) translateY(-2%);
+  }
+  75% {
+    transform: rotate(4deg) translateY(-2%);
+  }
+}
+
+/* alert: one shake, then a nervous hover */
+.mascot.mood-alert .mascot-body {
+  animation:
+    mascot-shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) 1,
+    mascot-nervous 1.1s ease-in-out 0.5s infinite;
+}
+@keyframes mascot-shake {
+  10%,
+  90% {
+    transform: translateX(-3%);
+  }
+  20%,
+  80% {
+    transform: translateX(4%);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-6%);
+  }
+  40%,
+  60% {
+    transform: translateX(6%);
+  }
+}
+@keyframes mascot-nervous {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1.5deg);
+  }
+  50% {
+    transform: translateY(-4%) rotate(1.5deg);
+  }
+}
+.mascot-drop {
+  position: absolute;
+  top: 12%;
+  right: 4%;
+  width: 11%;
+  height: 15%;
+  background: #56a9d9;
+  border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+  clip-path: polygon(50% 0, 100% 60%, 85% 100%, 15% 100%, 0 60%);
+  animation: mascot-drop 1.2s ease-in infinite;
+}
+@keyframes mascot-drop {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(60%);
+    opacity: 0;
+  }
+}
+
+/* success: a hop and an expanding ring */
+.mascot.mood-success .mascot-body {
+  animation: mascot-hop 0.7s cubic-bezier(0.23, 1, 0.32, 1) 2;
+}
+@keyframes mascot-hop {
+  0% {
+    transform: translateY(0) scale(1, 1);
+  }
+  20% {
+    transform: translateY(2%) scale(1.08, 0.9);
+  }
+  55% {
+    transform: translateY(-22%) scale(0.94, 1.08);
+  }
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+}
+.mascot-ring {
+  position: absolute;
+  inset: -8%;
+  border: 2px solid var(--mascot-color);
+  border-radius: 50%;
+  opacity: 0;
+  animation: mascot-ring 1.2s cubic-bezier(0.23, 1, 0.32, 1) 1;
+}
+@keyframes mascot-ring {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+/* sleeping */
+.mascot.mood-sleeping .mascot-body {
+  animation: mascot-breathe 5s ease-in-out infinite;
+  filter: saturate(0.5) brightness(0.7);
+}
+.mascot-zzz {
+  position: absolute;
+  top: -10%;
+  right: 0;
+  font-family: var(--font-mono, monospace);
+  font-weight: 700;
+  font-size: 0.26em;
+  color: #cbd0d8;
+  line-height: 1;
+}
+.mascot-zzz i {
+  font-style: normal;
+  display: inline-block;
+  animation: mascot-zzz 2.4s ease-in-out infinite;
+}
+.mascot-zzz i:nth-child(2) {
+  animation-delay: 0.8s;
+  font-size: 1.3em;
+}
+@keyframes mascot-zzz {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(40%, -120%);
+  }
+}
+
+/* speech bubble */
+.mascot-bubble {
+  position: absolute;
+  left: 70%;
+  bottom: 88%;
+  max-width: 220px;
+  min-width: 60px;
+  padding: 6px 9px;
+  background: #fff;
+  color: #111;
+  font-family: var(--font-body, system-ui);
+  font-size: 11px;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+  border-radius: 10px 10px 10px 2px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  white-space: normal;
+  animation: mascot-bubble 300ms cubic-bezier(0.23, 1, 0.32, 1) both;
+  z-index: 2;
+  pointer-events: none;
+}
+@keyframes mascot-bubble {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.9);
+    transform-origin: 0 100%;
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mascot-body,
+  .mascot-shadow,
+  .mascot-sparkles i,
+  .mascot-drop,
+  .mascot-ring,
+  .mascot-zzz i {
+    animation: none !important;
+  }
+}

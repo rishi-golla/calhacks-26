@@ -322,7 +322,14 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
     steps: list[Step] = []
 
     def add(at: datetime, name: str, fn: Callable[[], list[dict]]) -> None:
-        steps.append(Step(at, name, fn))
+        # Each step draws from its own seed, so a step run on its own after a resume (its predecessors were not
+        # run in this process) draws exactly what it drew the first time: same amounts, names and speeds.
+        seed = f"{lid}:{len(steps)}:{name}"
+
+        def make() -> list[dict]:
+            rnd.seed(seed)
+            return fn()
+        steps.append(Step(at, name, make))
 
     def tender() -> list[dict]:
         refs["rc"] = docs.write(f"RC-{lid}", "rate_confirmation", {

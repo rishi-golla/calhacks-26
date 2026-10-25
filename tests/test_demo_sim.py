@@ -475,12 +475,18 @@ class Killed(BaseException):
     """A process stopping mid-step: not an error any best-effort handler swallows."""
 
 
-def test_a_replayed_step_reuses_its_ids_and_posts_the_bank_credit_once(world, frozen):
+@pytest.mark.parametrize("pinned", [True, False])
+def test_a_replayed_step_reuses_its_ids_and_posts_the_bank_credit_once(world, frozen, pinned):
     """A stream that dies after `paid` posted its bank credit but before its progress was saved runs `paid` again
-    on resume. The replay must mint the same event, mail and transaction IDs, and the bank must not credit twice."""
+    on resume. The replay must mint the same event, mail and transaction IDs and draw the same short-pay amount
+    (unpinned, it is random), and the bank must not credit twice."""
     from sim import bank
-    p = demo.PRESETS["short_pay"]  # the trigger is the load's last step, `paid`
-    load, scenario = demo_load(world, "short_pay")
+    if pinned:
+        p = demo.PRESETS["short_pay"]  # the trigger is the load's last step, `paid`
+        load, scenario = demo_load(world, "short_pay")
+        trigger, pins = p.trigger_step, p.pins
+    else:
+        load, scenario, trigger, pins = generator.new_load(world, random.Random(11)), "shipper_short_pay", "paid", None
     r = LeasingRedis()
     hset = r.hset
 
@@ -495,7 +501,7 @@ def test_a_replayed_step_reuses_its_ids_and_posts_the_bank_credit_once(world, fr
     async def first_run():
         with pytest.raises(Killed):
             await generator.stream_load(r, load, scenario, random.Random(), source="demo",
-                                        fast_forward_to=p.trigger_step, pins=p.pins)
+                                        fast_forward_to=trigger, pins=pins)
     asyncio.run(first_run())
     r.hset = hset
     first = [ev for ev in r.raw if ev["type"] in {"bank.event", "email.received"}][-2:]
@@ -507,7 +513,7 @@ def test_a_replayed_step_reuses_its_ids_and_posts_the_bank_credit_once(world, fr
     asyncio.run(resume())
     replayed = [ev for ev in r.raw if ev["type"] in {"bank.event", "email.received"}][-2:]
     assert [ev["event_id"] for ev in replayed] == [ev["event_id"] for ev in first]
-    assert replayed[1]["payload"]["record"] == first[1]["payload"]["record"]
+    assert [ev["payload"] for ev in replayed] == [ev["payload"] for ev in first]
     txn = first[1]["payload"]["record"].split(",")[4]
     bank_file = bank.bank_dir() / first[1]["payload"]["file"]
     assert bank_file.read_text().count(f",{txn},") == 1

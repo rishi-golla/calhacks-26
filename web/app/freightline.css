@@ -589,7 +589,9 @@
   display: grid;
   grid-template-columns: var(--rail) 1fr;
   grid-template-rows: var(--topbar) 1fr;
-  min-height: 100dvh;
+  /* A fixed app frame: only .fl-main scrolls, so the rail and topbar never move. */
+  height: 100dvh;
+  overflow: hidden;
   position: relative;
 }
 .fl-rail {
@@ -725,6 +727,9 @@
 .fl .fl-main {
   grid-column: 2;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   position: relative;
   /* Page z-indexes stay inside <main>, so no page layer can rise above the topbar or its popovers. */
   isolation: isolate;

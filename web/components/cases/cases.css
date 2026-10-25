@@ -283,8 +283,7 @@
   min-width: 0;
   overflow: hidden;
 }
-.fl .cx-agents .mascot.mood-idle .mascot-body,
-.fl .cx-agents .mascot.mood-idle .mascot-shadow {
+.fl .cx-agents .mascot.mood-idle .mascot-body {
   animation: none;
 }
 .fl .cx-row:hover .cx-agents .mascot.mood-idle .mascot-body {

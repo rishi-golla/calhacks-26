@@ -30,8 +30,8 @@ export default function Shell({ children }: { children: ReactNode }) {
       <div className="fl fl-intro-host">
         <Intro onDone={() => setReady(true)} />
       </div>
-      <div className="fl theme-mono theme-glass">
-        <div className="fl-shell" style={{ opacity: ready ? 1 : 0, transition: "opacity 400ms var(--ease-out)" }}>
+      <div className={`fl theme-mono theme-glass ${ready ? "" : "is-holding"}`}>
+        <div className="fl-shell">
           <aside className="fl-rail">
             <Link href="/" className="fl-brand" aria-label="FreightLine home">
               <span className="fl-brand-name">FreightLine</span>

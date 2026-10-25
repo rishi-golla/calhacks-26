@@ -93,6 +93,18 @@
 .fl.theme-glass .fl-shell {
   background: transparent;
 }
+/* Until the intro starts lifting, hold every entry animation at its first frame
+   so the choreography plays in view. Not an opacity fade: opacity < 1 on the
+   shell would cut the panels' backdrop-filter off the background, and the blur
+   would pop in when the fade ended. */
+.fl.theme-glass.is-holding .fl-shell {
+  visibility: hidden;
+}
+.fl.theme-glass.is-holding .fl-shell *,
+.fl.theme-glass.is-holding .fl-shell *::before,
+.fl.theme-glass.is-holding .fl-shell *::after {
+  animation-play-state: paused !important;
+}
 .fl.theme-glass .fl-rail {
   margin: 14px 0 14px 16px;
   height: calc(100vh - 28px);
@@ -115,28 +127,6 @@
   border-bottom: 0;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-}
-/* Clear at rest; frosts in once the page scrolls so content passing under the crumb stays legible.
-   The frost lives on a pseudo-element so the bar itself never becomes a containing block. */
-.fl.theme-glass .fl-topbar::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: rgba(4, 18, 27, 0.55);
-  -webkit-backdrop-filter: blur(18px) saturate(115%);
-  backdrop-filter: blur(18px) saturate(115%);
-  -webkit-mask-image: linear-gradient(180deg, #000 72%, transparent);
-  mask-image: linear-gradient(180deg, #000 72%, transparent);
-  animation: glass-bar-in linear both;
-  animation-timeline: scroll(root);
-  animation-range: 0 48px;
-}
-@keyframes glass-bar-in {
-  from {
-    opacity: 0;
-  }
 }
 .fl.theme-glass .fl-popover {
   background: rgba(9, 30, 42, 0.96);
@@ -185,28 +175,7 @@
 .fl.theme-glass .fh-kpi {
   border-radius: 24px;
 }
-.fl.theme-glass :is(.fl-panel, .fh-kpi)::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 38%;
-  pointer-events: none;
-  background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, 0.17) 50%, transparent 100%);
-  transform: translate3d(-150%, 0, 0) skewX(-18deg);
-  animation: sheen 1.15s var(--e-soft) 2.55s 1 both;
-}
-@keyframes sheen {
-  from {
-    transform: translate3d(-150%, 0, 0) skewX(-18deg);
-  }
-  to {
-    transform: translate3d(260%, 0, 0) skewX(-18deg);
-  }
-}
-.fl.theme-glass .fl-panel .fl-panel,
-.fl.theme-glass .fl-panel .fl-panel::after {
+.fl.theme-glass .fl-panel .fl-panel {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   animation: none;
@@ -531,9 +500,6 @@
 }
 .fl.theme-glass .fh svg path[fill^="url("] {
   animation-delay: 1.2s;
-}
-.fl.theme-glass :is(.fl-panel, .fh-kpi)::after {
-  animation-delay: 1.9s;
 }
 
 /* ------------------------------ agents + cases: same type, glass surfaces ------------------------------ */

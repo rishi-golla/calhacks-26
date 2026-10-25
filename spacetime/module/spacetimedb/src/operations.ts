@@ -636,6 +636,19 @@ export const upsertTask: Handler = m => {
   // A task that did not exist before is new work and may reopen a resolved case; progress on a task
   // that was already running (including the one that explicitly resolved the case) may not.
   settleCase(m, case_id, !previous);
+  // A P-007 duplicate recorded before this task was mirrored could not tell whose task it carries.
+  // Now that the task names its own case, re-settle those duplicate cases, each in its own change set.
+  if (!previous) {
+    for (const d of [...ctx.db.dispatch.iter()]) {
+      if (d.task_id !== task_id || d.status !== 'duplicate' || !d.case_id || d.case_id === case_id) continue;
+      const inner = new Mutation(ctx, {
+        write_id: `settle_duplicate:${hash(canonical([task_id, d.case_id])).slice(0, 40)}`, case_id: d.case_id,
+      }, actor, 'settle_cases');
+      if (!settleCase(inner, d.case_id)) continue;
+      if (inner.p.summary === undefined) inner.p.summary = 'Settle a duplicate case once the task it carries names its case';
+      inner.finish();
+    }
+  }
 };
 
 export const recordDelegation: Handler = m => {

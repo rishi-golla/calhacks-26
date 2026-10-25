@@ -1201,3 +1201,23 @@ test('re-observing a delivered event does not reopen a resolved duplicate case',
   dispatch(h, { event_id: 'TRI', case_id: 'CASE-R', status: 'triage', reason: 'needs a human', queue_ms: 0, policy_version: 'v1' });
   assert.equal(status(h, 'CASE-R'), 'resolved');
 });
+
+test('a duplicate case carrying an unmirrored task settles once that task names its own case', () => {
+  // Devin's ordering: the original is re-observed before the P-007 duplicate, so no accepted row remains.
+  const h = new Harness(); h.open('CASE-1'); h.open('CASE-1-R');
+  dispatch(h, { ...RT, event_id: 'ORIG', case_id: 'CASE-1', task_id: 'T1', status: 'accepted', reason: 'ok' });
+  dispatch(h, { ...RT, event_id: 'ORIG', case_id: 'CASE-1', task_id: 'T1', status: 'duplicate', reason: 're-delivered event' });
+  dispatch(h, { ...RT, event_id: 'DUP', case_id: 'CASE-1-R', task_id: 'T1', status: 'duplicate', reason: 'P-007 dup' });
+  assert.equal(status(h, 'CASE-1-R'), 'open');
+  task(h, 'carrier_ap', 'T1', 'process_carrier_invoice', 'working', 'CASE-1');
+  assert.equal(status(h, 'CASE-1-R'), 'resolved');
+  assert.notEqual(status(h, 'CASE-1'), 'resolved');
+});
+
+test('a P-007 duplicate recorded before the original settles when the task mirror arrives', () => {
+  const h = new Harness(); h.open('CASE-1'); h.open('CASE-1-R');
+  dispatch(h, { ...RT, event_id: 'DUP', case_id: 'CASE-1-R', task_id: 'T1', status: 'duplicate', reason: 'P-007 dup' });
+  dispatch(h, { ...RT, event_id: 'ORIG', case_id: 'CASE-1', task_id: 'T1', status: 'accepted', reason: 'ok' });
+  task(h, 'carrier_ap', 'T1', 'process_carrier_invoice', 'working', 'CASE-1');
+  assert.equal(status(h, 'CASE-1-R'), 'resolved');
+});

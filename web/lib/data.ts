@@ -30,6 +30,7 @@ export const TABLES = [
   "routing_outbox",
   "memory_revision",
   "accounting_period",
+  // Newer modules only; see `optional` in lib/live-queries.
   "view_epoch",
 ] as const;
 export type TableName = (typeof TABLES)[number];

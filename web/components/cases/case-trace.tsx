@@ -24,7 +24,8 @@ const SPEEDS: Speed[] = [1, 4, 16];
 const IDLE_SKIP_MS = 8_000;
 
 export default function CaseTrace({ caseId }: { caseId: string }) {
-  const { snapshot, cases, now, simulated, source } = useOps();
+  // Unscoped: a direct link to a case from before a "Start fresh" epoch still opens.
+  const { fullSnapshot: snapshot, allCases: cases, now, simulated, source } = useOps();
   const c = cases.get(caseId);
   const trace = useMemo(() => buildCaseTrace(snapshot, caseId), [snapshot, caseId]);
 
@@ -165,7 +166,7 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
         });
       }, 900),
     );
-  });
+  }, { unscoped: true });
 
   /* -------- scrolling: follow the replay head, stick to the bottom while live -------- */
   const scrollRef = useRef<HTMLDivElement>(null);

@@ -11,6 +11,8 @@ import { Mascot } from "@/components/mascot";
 import { AGENT_IDS, AGENT_META, skillLabel, type AgentId } from "@/lib/agents";
 import { str } from "@/lib/data";
 import { fmtDuration, fmtMoney, type AttentionKind, type CaseView } from "@/lib/ops";
+import { fmtSince } from "@/lib/view-epoch";
+import { EpochNote } from "@/components/shell/view-epoch";
 import { caseDuration, caseKind, KIND_LABEL, shortDur, type CaseKind } from "./model";
 import "./cases.css";
 
@@ -109,7 +111,7 @@ const toggle = <T,>(list: T[], value: T) => (list.includes(value) ? list.filter(
 /* ------------------------------ explorer ------------------------------ */
 
 export default function CaseExplorer() {
-  const { caseList, snapshot, now, ops, simulated, source } = useOps();
+  const { caseList, snapshot, now, ops, simulated, source, viewEpoch } = useOps();
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const hydrated = useRef(false);
   useEffect(() => {
@@ -343,7 +345,13 @@ export default function CaseExplorer() {
               {caseList.length === 0 ? (
                 <>
                   <Mascot id="intake" size={64} mood="sleeping" />
-                  <span>{source === "connecting" ? "Connecting…" : "No cases yet."}</span>
+                  <span>
+                    {source === "connecting"
+                      ? "Connecting…"
+                      : viewEpoch.active && viewEpoch.epoch
+                        ? `No cases since ${fmtSince(viewEpoch.epoch.since, now)} yet.`
+                        : "No cases yet."}
+                  </span>
                 </>
               ) : (
                 <>
@@ -364,6 +372,7 @@ export default function CaseExplorer() {
           )}
         </div>
       </div>
+      <EpochNote style={{ display: "block", padding: "10px 0 12px" }} />
     </div>
   );
 }

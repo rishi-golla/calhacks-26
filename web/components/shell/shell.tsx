@@ -9,6 +9,7 @@ import { fmtAgo, fmtMoney, type AttentionItem } from "@/lib/ops";
 import { Mascot } from "../mascot";
 import BurstControl from "./burst-control";
 import Intro from "./intro";
+import { StartFresh } from "./view-epoch";
 
 const NAV = [
   { href: "/", label: "Finance", icon: Home, exact: true },
@@ -55,6 +56,7 @@ export default function Shell({ children }: { children: ReactNode }) {
             </span>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <Notifications />
+              {pathname.startsWith("/demo") && <StartFresh />}
               <BurstControl />
               <SourcePill />
             </div>

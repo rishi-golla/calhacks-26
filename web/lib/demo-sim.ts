@@ -333,6 +333,21 @@ export class DemoSim {
     const ctx = this.openCase(scenario, this.simNow);
     return ctx.caseId;
   }
+  /**
+   * The local twin of the `set_view_epoch` reducer: `{ since }` sets the
+   * "Start fresh" epoch (now when omitted), `{ clear: true }` removes it.
+   */
+  setViewEpoch(change: { since?: number; clear?: boolean } = {}) {
+    if (change.clear) {
+      this.tables.view_epoch = [];
+      this.index.get("view_epoch")!.clear();
+      this.dirty.add("view_epoch");
+    } else {
+      const at = iso(this.simNow);
+      this.upsert("view_epoch", { id: "current", since: change.since === undefined ? at : iso(change.since), set_by: "simulation", set_at: at });
+    }
+    this.snapshotCache = this.buildSnapshot();
+  }
 
   /* -------- scheduling -------- */
 

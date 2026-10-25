@@ -430,11 +430,21 @@ export const TASK_ABANDON_MS = 15 * 60_000;
  * Status comes from the agent's own heartbeat, not from task rows: a row can
  * be left `working` forever when a worker dies, while the heartbeat reports
  * whether the service holds a live task lease right now.
+ *
+ * With `since` (a "Start fresh" epoch), done and error counts come from tasks
+ * that finished at or after it, not from the heartbeat's all-time totals.
  */
-export function buildWorkloads(snapshot: Snapshot, now: number): Record<AgentId, AgentWorkload> {
+export function buildWorkloads(snapshot: Snapshot, now: number, { since }: { since?: number } = {}): Record<AgentId, AgentWorkload> {
   const byAgent = new Map<string, TaskView[]>();
+  const doneSince = new Map<string, number>();
+  const failedSince = new Map<string, number>();
   for (const row of snapshot.task) {
     const t = taskView(row);
+    if (since !== undefined && t.terminal && t.endedAt >= since) {
+      if (t.state === "completed") doneSince.set(t.agent, (doneSince.get(t.agent) ?? 0) + 1);
+      // The heartbeat counts rejected tasks as errors too.
+      else if (t.state === "failed" || t.state === "rejected") failedSince.set(t.agent, (failedSince.get(t.agent) ?? 0) + 1);
+    }
     if (t.terminal) continue;
     const list = byAgent.get(t.agent);
     if (list) list.push(t);
@@ -470,8 +480,13 @@ export function buildWorkloads(snapshot: Snapshot, now: number): Record<AgentId,
       active: Math.max(activeTasks.length, busy ? 1 : 0),
       queued: queuedTasks.length || (record ? num(record.queued) : 0),
       stalled: workingTasks.length - activeTasks.length,
-      done: record ? num(record.done) : snapshot.task.filter((r) => r.agent === id && r.a2a_state === "completed").length,
-      errors: record ? num(record.errors) : 0,
+      done:
+        since !== undefined
+          ? (doneSince.get(id) ?? 0)
+          : record
+            ? num(record.done)
+            : snapshot.task.filter((r) => r.agent === id && r.a2a_state === "completed").length,
+      errors: since !== undefined ? (failedSince.get(id) ?? 0) : record ? num(record.errors) : 0,
       p50Ms: record ? num(record.p50_ms) : 0,
       lastSeen,
       activeCases: [...new Set(activeTasks.map((t) => t.caseId))],
@@ -614,7 +629,13 @@ const ACCOUNT_ALIASES: Record<string, string> = {
   cost_of_revenue: "expense",
 };
 
-export function buildFinance(snapshot: Snapshot, now: number): FinanceMetrics {
+/**
+ * `since` (a "Start fresh" epoch, with rows already scoped to it): cash comes
+ * from the ledger rows given, not the all-time `cash_position` metric; the
+ * 30-day totals run from `since` instead, and month-to-date from the later of
+ * the month start and `since`, matching the "since" labels on Home.
+ */
+export function buildFinance(snapshot: Snapshot, now: number, { since }: { since?: number } = {}): FinanceMetrics {
   const day = 86_400_000;
   const entries = snapshot.ledger_entry
     .map((row) => ({ at: timestamp(row.posted_at), lines: (Array.isArray(row.lines) ? row.lines : json<LedgerLine[]>(row.lines, [])) as LedgerLine[] }))
@@ -630,18 +651,19 @@ export function buildFinance(snapshot: Snapshot, now: number): FinanceMetrics {
   };
   const bal = { cash: 0, ar: 0, ap: 0, revenue: 0, expense: 0 };
   const start = now - 30 * day;
+  const totalsFrom = since ?? start;
   const buckets = new Map<number, typeof bal>();
   let revenue30d = 0;
   let expense30d = 0;
   let revenueMtd = 0;
-  const monthStart = new Date(now).setDate(1);
+  const monthStart = Math.max(since ?? 0, new Date(now).setDate(1));
   for (const e of entries) {
     for (const line of e.lines) {
       const d = delta(line);
       if (!d) continue;
       bal[d.acct as keyof typeof bal] += d.amount;
-      if (d.acct === "revenue" && e.at >= start) revenue30d += d.amount;
-      if (d.acct === "expense" && e.at >= start) expense30d += d.amount;
+      if (d.acct === "revenue" && e.at >= totalsFrom) revenue30d += d.amount;
+      if (d.acct === "expense" && e.at >= totalsFrom) expense30d += d.amount;
       if (d.acct === "revenue" && e.at >= monthStart) revenueMtd += d.amount;
     }
     if (e.at >= start) {
@@ -703,7 +725,7 @@ export function buildFinance(snapshot: Snapshot, now: number): FinanceMetrics {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([period, v]) => ({ period, inflow: v.inflow, outflow: v.outflow, net: v.inflow - v.outflow, confidence: v.conf.length ? v.conf.reduce((s, c) => s + c, 0) / v.conf.length : 0 }));
   const metric = (name: string) => snapshot.metric.find((m) => m.name === name);
-  const cashMetric = metric("cash_position") ?? metric("cash_position_usd") ?? metric("cash_balance");
+  const cashMetric = since !== undefined ? undefined : (metric("cash_position") ?? metric("cash_position_usd") ?? metric("cash_balance"));
   return {
     cash: cashMetric ? num(cashMetric.value) : bal.cash,
     ap: bal.ap,

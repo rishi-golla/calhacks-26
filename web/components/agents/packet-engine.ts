@@ -14,7 +14,7 @@
 import { agentColor, skillLabel, type NodeId } from "@/lib/agents";
 import { curveAngle, curveAt, edgeCurve, edgeKey, type Curve } from "./layout";
 
-export type PacketKind = "doc" | "invoice" | "phone" | "check" | "case" | "stamp";
+export type PacketKind = "doc" | "invoice" | "phone" | "check" | "case" | "stamp" | "lesson";
 
 export type PacketSpec = {
   from: NodeId | "entry";
@@ -24,6 +24,8 @@ export type PacketSpec = {
   /** Tag text override (defaults to the skill label). */
   label?: string;
   kind?: PacketKind;
+  /** Ticker text for the target node when the packet lands. */
+  landing?: string;
 };
 
 export type Visibility = "show" | "dim" | "hide";
@@ -50,6 +52,8 @@ type Packet = {
   arrivedAt: number;
   dim: boolean;
   caseIds: Set<string>;
+  /** Ticker text the target shows when this packet lands. */
+  landing: string;
 };
 
 const quintOut = (t: number) => 1 - Math.pow(1 - t, 5);
@@ -65,6 +69,9 @@ const ICON: Record<PacketKind, string> = {
     '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 2.5h2.1l1 3-1.4 1a7.2 7.2 0 0 0 3.6 3.6l1-1.4 3 1v2.1a1 1 0 0 1-1 1A10.8 10.8 0 0 1 3.2 3.5a1 1 0 0 1 1-1z"/></svg>',
   check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.4l3 3 6-7"/></svg>',
   stamp: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5h4l-.8 5h2.8v2.5H4V7.5h2.8zM3.5 12.5h9"/></svg>',
+  // A Validator lesson: a light bulb.
+  lesson:
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8a4.2 4.2 0 0 0-2.4 7.6c.5.4.8.9.8 1.5v.6h3.2v-.6c0-.6.3-1.1.8-1.5A4.2 4.2 0 0 0 8 1.8zM6.4 13.2h3.2M7 14.6h2"/></svg>',
 };
 
 export function packetKindForSkill(skill: string): PacketKind {
@@ -146,6 +153,7 @@ export class PacketEngine {
     this.flash(id, strong);
   }
 
+
   emit(specs: PacketSpec[]) {
     if (!specs.length) return;
     const animate = Boolean(this.layer) && !this.reduced && !(typeof document !== "undefined" && document.hidden);
@@ -154,7 +162,10 @@ export class PacketEngine {
     for (const s of specs) {
       const vis = this.visibility(s.caseId);
       if (vis === "hide" || !animate) {
-        if (!animate && vis !== "hide") this.flash(s.to, false);
+        if (!animate && vis !== "hide") {
+          this.flash(s.to, false);
+          if (s.landing) this.ticker(s.to, s.landing);
+        }
         continue;
       }
       const key = `${edgeKey(s.from, s.to)}|${s.kind ?? packetKindForSkill(s.skill)}`;
@@ -204,6 +215,7 @@ export class PacketEngine {
       p.arrivedAt = 0;
       p.dim = g.vis !== "show";
       p.caseIds = g.cases;
+      p.landing = s.landing ?? "";
       if (p.kind !== kind) {
         p.kind = kind;
         p.card.className = `au-pk-card k-${kind}`;
@@ -242,7 +254,7 @@ export class PacketEngine {
     badge.className = "au-pk-n";
     el.append(card, tag, badge);
     this.layer.append(el);
-    return { el, card, tag, badge, kind: "", curve: edgeCurve("intake", "carrier_ap"), edge: "", to: "intake", start: 0, dur: 1, count: 1, arrived: false, arrivedAt: 0, dim: false, caseIds: new Set() };
+    return { el, card, tag, badge, kind: "", curve: edgeCurve("intake", "carrier_ap"), edge: "", to: "intake", start: 0, dur: 1, count: 1, arrived: false, arrivedAt: 0, dim: false, caseIds: new Set(), landing: "" };
   }
 
   private release(p: Packet) {
@@ -256,6 +268,7 @@ export class PacketEngine {
     p.arrived = true;
     p.arrivedAt = now;
     if (!p.dim) this.flash(p.to, p.count > 1);
+    if (!p.dim && p.landing) this.ticker(p.to, p.landing);
   }
 
   private flash(id: NodeId, strong: boolean) {

@@ -18,17 +18,21 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ExternalLink, FileText, Mail, X } from "lucide-react";
+import { ApifyRunLink } from "@/components/apify";
 import { DecryptBlock } from "@/components/decrypt-block";
+import { apifyRunId } from "@/lib/apify";
 import { compactValue, documentKindLabel, evidenceUrl, extractedFields, parseEvidenceRef } from "@/lib/evidence";
 
 /** Nearest themed ancestor; the trace drawer first so the agent accent carries into the viewer. */
 const THEMED_ROOT = ".ct-details, .fl, .agent-inbox";
 
-/** `label` replaces the ref as the chip text (the ref moves to the tooltip), for chips inside dense rows. */
-export function EvidenceChip({ evidenceRef, className = "", label }: { evidenceRef: string; className?: string; label?: string }) {
+/** `label` replaces the visible ref (the ref moves to the tooltip); otherwise the ref shows without its doc:/mail: prefix, which the icon carries. */
+export function EvidenceChip({ evidenceRef, label, className = "" }: { evidenceRef: string; label?: string; className?: string }) {
   const parsed = parseEvidenceRef(evidenceRef);
   const [host, setHost] = useState<Element | null>(null);
   const button = useRef<HTMLButtonElement>(null);
+  const apifyRun = apifyRunId(evidenceRef);
+  if (apifyRun) return <ApifyRunLink runId={apifyRun} className={`ev-chip ${className}`} />;
   if (!parsed.previewable)
     return (
       <span className={`ev-chip static ${className}`} title={label ? `${evidenceRef} (no preview)` : "no preview for this source"} aria-label={label ? `${label}: ${evidenceRef}` : undefined}>
@@ -43,8 +47,9 @@ export function EvidenceChip({ evidenceRef, className = "", label }: { evidenceR
         type="button"
         className={`ev-chip ${className}`}
         aria-haspopup="dialog"
+        // A short label ("RC") names the button; screen readers get the full ref too.
         aria-label={label ? `${label}: ${evidenceRef}` : undefined}
-        title={`${label ? `${evidenceRef}: ` : ""}${parsed.kind === "mail" ? "Open the source email" : "Open the source document"}`}
+        title={label ? evidenceRef : parsed.kind === "mail" ? "Open email" : "Open document"}
         onClick={(e) => {
           // Chips live inside clickable rows; the chip owns this click.
           e.stopPropagation();
@@ -52,7 +57,7 @@ export function EvidenceChip({ evidenceRef, className = "", label }: { evidenceR
         }}
       >
         <Icon size={11} aria-hidden />
-        {label ?? evidenceRef}
+        {label ?? evidenceRef.replace(/^(doc|mail):/, "")}
       </button>
       {host && (
         <EvidenceViewer
@@ -163,7 +168,7 @@ export function EvidenceViewer({ evidenceRef, onClose, container }: { evidenceRe
   return container ? createPortal(node, container) : node;
 }
 
-const NOT_HERE = "Document not available on this dashboard host.";
+const NOT_HERE = "Not available on this host.";
 
 function DocBody({
   record,
@@ -187,9 +192,6 @@ function DocBody({
     return (
       <p className="ev-note">
         {pdf.state === "missing" && record.state === "missing" ? NOT_HERE : "The source could not be loaded right now."}
-        <span className="ev-note-sub">
-          The agent cited <code>{id}</code>; its PDF and extracted fields live in the documents folder of the host that ran the agents.
-        </span>
       </p>
     );
   return (
@@ -205,12 +207,12 @@ function DocBody({
             Raw JSON <ExternalLink size={11} aria-hidden />
           </a>
         )}
-        {page ? <span className="ev-page">cited page {page}</span> : null}
+        {page ? <span className="ev-page">p{page}</span> : null}
       </div>
       {pdf.state === "ready" ? (
         <iframe className="ev-pdf" src={page ? `${pdfUrl}#page=${page}` : pdfUrl} title={`PDF ${id}`} />
       ) : (
-        <p className="ev-note">{pdf.state === "missing" ? "PDF not available on this dashboard host; extracted fields below." : "The PDF could not be loaded."}</p>
+        <p className="ev-note">{pdf.state === "missing" ? "No PDF on this host." : "The PDF could not be loaded."}</p>
       )}
       {record.state === "ready" ? (
         <details className="ev-fields" open={pdf.state !== "ready"}>
@@ -245,7 +247,6 @@ function MailBody({ mail, url }: { mail: Load<string>; url: string }) {
     return (
       <p className="ev-note">
         {mail.state === "missing" ? NOT_HERE : "The message could not be loaded right now."}
-        <span className="ev-note-sub">Raw email lives in the mail folder of the host that received it.</span>
       </p>
     );
   const long = mail.value.length > MAIL_LIMIT;

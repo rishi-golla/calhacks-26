@@ -2,11 +2,15 @@
 /**
  * Handoff edges: faint dashed hairlines that appear the first time an edge is
  * used and thicken with the log of traffic over the last five minutes. The
- * focused agent's edges brighten and show their counts; a selected case draws
+ * focused agent's edges brighten and show their non-zero counts; a selected case draws
  * its own path solid and dims the rest.
+ *
+ * Lesson lines are separate and on demand: focusing Settlement Quality Review
+ * or an agent it has taught draws a dashed line between them in the
+ * Validator's color, with the agent's lesson count at the midpoint.
  */
 import { memo, type CSSProperties } from "react";
-import { agentColor, type NodeId } from "@/lib/agents";
+import { agentColor, type AgentId, type NodeId } from "@/lib/agents";
 import { STAGE_W, edgeCurve, stageHeight } from "./layout";
 import { edgeWidth, type EdgeStat } from "./model";
 
@@ -17,9 +21,13 @@ type Props = {
   hideHuman: boolean;
   /** Layout stretch; curves are recomputed when it changes. */
   stretch: number;
+  /** Agents the Validator has taught, with their active lesson counts. */
+  lessons: LessonEdge[];
 };
 
-function EdgesImpl({ stats, focus, path, hideHuman, stretch }: Props) {
+export type LessonEdge = { agent: AgentId; count: number };
+
+function EdgesImpl({ stats, focus, path, hideHuman, stretch, lessons }: Props) {
   const visible = stats.filter((s) => !(hideHuman && (s.from === "human" || s.to === "human")));
   return (
     <svg className={`au-edges ${path ? "dimmed" : ""}`} viewBox={`0 0 ${STAGE_W} ${stageHeight()}`} width={STAGE_W} height={stageHeight()} data-stretch={stretch} aria-hidden>
@@ -37,10 +45,21 @@ function EdgesImpl({ stats, focus, path, hideHuman, stretch }: Props) {
           />
         );
       })}
+      {!path && lessons.filter(({ agent }) => focus === "validator" || focus === agent).map(({ agent, count }) => {
+        const c = edgeCurve("validator", agent);
+        return (
+          <g key={`lesson:${agent}`} className="au-lesson" style={{ "--c": agentColor("validator") } as CSSProperties}>
+            <path d={c.d} className="au-lesson-edge" />
+            <text className="au-lesson-count" x={c.mid.x} y={c.mid.y}>
+              {count} {count === 1 ? "lesson" : "lessons"}
+            </text>
+          </g>
+        );
+      })}
       {!path &&
         focus &&
         visible
-          .filter((s) => s.from === focus || s.to === focus)
+          .filter((s) => (s.from === focus || s.to === focus) && s.recent > 0)
           .map((s) => {
             const c = edgeCurve(s.from, s.to);
             return (

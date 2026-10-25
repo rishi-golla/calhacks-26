@@ -9,7 +9,7 @@
  * no-repeated-ancestor rule from `common/config.py`.
  */
 import { AGENT_IDS, AGENT_META, type AgentId } from "./agents";
-import { emptySnapshot, str, type Row, type Snapshot, type TableName } from "./data";
+import { emptySnapshot, json, str, type Row, type Snapshot, type TableName } from "./data";
 
 /* ----------------------------- utilities ----------------------------- */
 
@@ -768,6 +768,8 @@ export class DemoSim {
       evidence_refs: [],
       artifact_json: "",
       policy_ids: [],
+      // Set on the new row, not at completion: task rows are updated in place, so only inserts are reliably seen as news.
+      memory_ids: this.recall(ctx, t),
       depth: t.depth,
     });
     // Post-resolution quality review does not reopen the case.
@@ -917,6 +919,22 @@ export class DemoSim {
       });
       this.audit({ case_id: ctx.caseId, task_id: t.taskId, agent: "voice_desk", kind: "upsert_call", reason_code: reached ? "CALL_COMPLETED" : "CALL_NO_ANSWER", summary: reached ? "Call completed; dispatcher will send the receipt" : "No answer; will retry within calling window" });
     });
+  }
+
+  /**
+   * Lessons this task loads: the agent's active Validator lessons whose every
+   * scope dimension matches the case, as the live runtime selects them (one
+   * carrier's lesson is never shown for another).
+   */
+  private recall(ctx: CaseCtx, t: TaskCtx): string[] {
+    const out: string[] = [];
+    const task: Record<string, string> = { carrier_id: ctx.carrierId, claim_type: ctx.scenario.key, skill: t.skill };
+    for (const m of this.tables.agent_memory) {
+      if (m.agent !== t.agent || m.active === false || m.source !== "validator") continue;
+      const scope = json<Record<string, unknown>>(m.scope, {});
+      if (Object.entries(scope).every(([key, value]) => task[key] === value)) out.push(String(m.id));
+    }
+    return out.slice(-3);
   }
 
   private completeTask(ctx: CaseCtx, t: TaskCtx, evidence: string[]) {

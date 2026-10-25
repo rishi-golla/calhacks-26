@@ -7,6 +7,7 @@
  * scenario can produce different graphs, exactly as in production.
  */
 import { emptySnapshot, json, num, str, timestamp, type Row, type Snapshot } from "@/lib/data";
+import { caseMemory } from "@/lib/lessons";
 import {
   buildTimeline,
   buildToolCalls,
@@ -37,6 +38,10 @@ export const shortDur = (ms: number) => {
   if (s < 2 * 86_400) return `${Math.floor(s / 3_600)}h ${String(Math.round((s % 3_600) / 60)).padStart(2, "0")}m`;
   return `${Math.floor(s / 86_400)}d ${Math.floor((s % 86_400) / 3_600)}h`;
 };
+
+/** A tool call's name in plain words: "read_load_record" → "Read load record". */
+const TOOL_LABEL: Record<string, string> = { execute_current_skill: "Run workflow" };
+export const toolLabel = (name: string) => TOOL_LABEL[name] ?? name.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
 
 /** mm:ss (or h:mm:ss) for running timers and the scrubber readout. */
 export const timer = (ms: number) => {
@@ -147,6 +152,8 @@ export function sliceCase(snapshot: Snapshot, caseId: string): Snapshot {
       const ts = timestamp(r.ts) || docAudits.get(taskId)?.[k] || timestamp(tasks.get(taskId)?.started_at) || 0;
       return { ...r, case_id: caseId, ts: ts ? new Date(ts).toISOString() : "" };
     });
+  // Memory has no case: keep what this case's tasks loaded and what its reviews taught.
+  Object.assign(out, caseMemory(snapshot, out.task, out.review));
   return out;
 }
 
@@ -218,6 +225,8 @@ export type SideEffect = {
   changedAt: number;
   label: string;
   amount: number;
+  /** Amount from `changedAt` on, when the change moved it (a partial hold release); else `amount` throughout. */
+  changedAmount?: number;
   status: string;
   /** Status before `changedAt`. */
   initialStatus: string;
@@ -294,6 +303,12 @@ export function dispatchReason(reason: string): string {
   for (const [type, label] of Object.entries(EVENT_LABEL)) out = out.replaceAll(type, label.toLowerCase());
   return out.trim();
 }
+
+/** The routing reason worth showing: the router's delivery receipt says nothing, so it reads as no reason. */
+export const routingReason = (reason: string) => {
+  const out = dispatchReason(reason);
+  return /^delivered by dispatch worker$/i.test(out) ? "" : out;
+};
 
 /** A `not_routed` dispatch is a logged lifecycle event, not a routing decision. */
 export const isMilestone = (d: Row) => str(d.status, "") === "not_routed";
@@ -503,6 +518,12 @@ function buildSideEffects(slice: Snapshot): SideEffect[] {
   const out: SideEffect[] = [];
   for (const h of slice.hold) {
     const released = timestamp(h.released_at);
+    const status = str(h.status, "active");
+    // A partial release leaves the hold active on the remainder (spacetime release_hold);
+    // released_at is the latest release, so several partial releases read as one change.
+    // A full release keeps the amount that was held, beside its "released" status.
+    const remaining = Math.max(0, num(h.amount) - num(h.released_amount));
+    const partial = status !== "released" && num(h.released_amount) > 0;
     out.push({
       id: `hold:${str(h.id)}`,
       kind: "hold",
@@ -510,7 +531,8 @@ function buildSideEffects(slice: Snapshot): SideEffect[] {
       changedAt: released,
       label: `Hold · ${str(h.invoice_id, "invoice")}`,
       amount: num(h.amount),
-      status: str(h.status, "active"),
+      ...(partial ? { changedAmount: remaining } : {}),
+      status,
       initialStatus: "active",
       taskId: str(h.id).startsWith("HOLD-") ? str(h.id).slice(5) : "",
       row: h,
@@ -613,6 +635,11 @@ export function sideEffectAt(s: SideEffect, cursor: number): string | null {
   if (s.at > cursor) return null;
   if (s.changedAt && s.changedAt > cursor) return s.initialStatus;
   return s.status;
+}
+
+/** A side effect's amount at the cursor: what was held before a partial release, the remainder after. */
+export function sideEffectAmountAt(s: SideEffect, cursor: number): number {
+  return s.changedAmount !== undefined && s.changedAt && s.changedAt <= cursor ? s.changedAmount : s.amount;
 }
 
 /* ------------------------------ layout ------------------------------ */

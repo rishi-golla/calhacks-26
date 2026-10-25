@@ -25,10 +25,7 @@ export function Empty({
     <div className="empty">
       <Inbox size={28} strokeWidth={1.4} />
       <strong>{title}</strong>
-      <p>
-        {children ??
-          "New records will appear here as agents publish updates to SpacetimeDB."}
-      </p>
+      {children && <p>{children}</p>}
     </div>
   );
 }

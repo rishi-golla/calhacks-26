@@ -31,6 +31,7 @@ const MIN_W = 360;
 const MIN_H = 320;
 
 type Rect = { x: number; y: number; w: number; h: number };
+const UUIDISH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Check = { name: string; ok: boolean; detail?: string };
 
 const isHuman = (e: TimelineEvent) => {
@@ -151,9 +152,16 @@ export function LogWindow({ onClose }: { onClose: () => void }) {
 
   const events = useMemo(() => {
     // Verdicts come from the `review` table itself (it carries the checks); the `add_review` audit rows would duplicate them.
+    // The validator's own "pass"/"issue" task completion says the same as its review row, so a case with review rows shows only those.
     // Importing or removing history is bookkeeping, not live activity.
+    const reviewed = new Set(snapshot.review.map((r) => str(r.case_id, "")));
     const list = buildTimeline(snapshot).filter(
-      (e) => e.kind !== "doc_read" && e.kind !== "dispatch" && str(e.row.kind, "") !== "add_review" && !isHistoryAudit(e.row),
+      (e) =>
+        e.kind !== "doc_read" &&
+        e.kind !== "dispatch" &&
+        str(e.row.kind, "") !== "add_review" &&
+        !isHistoryAudit(e.row) &&
+        !(e.agent === "validator" && e.kind === "task_completed" && reviewed.has(e.caseId)),
     );
     for (const r of snapshot.review) {
       const caseId = str(r.case_id, "");
@@ -165,7 +173,7 @@ export function LogWindow({ onClose }: { onClose: () => void }) {
         taskId: str(r.target_task_id, ""),
         agent: "validator",
         kind: "review",
-        title: verdict === "issue" ? "Review found an issue" : "Review passed",
+        title: verdict === "issue" ? "found an issue" : "passed",
         detail: "",
         policyIds: [],
         evidenceRefs: [],
@@ -222,10 +230,9 @@ export function LogWindow({ onClose }: { onClose: () => void }) {
       onPointerCancel={endDrag}
     >
       <header className="fl-log-head" onPointerDown={startDrag("move")}>
-        <span className="fl-log-title">Live log</span>
-        <span className="fl-log-meta">
-          {source === "live" ? "streaming" : source === "simulation" ? "simulation" : "snapshot"} · {events.length} events
-        </span>
+        <span className="fl-log-title">Log</span>
+        {/* Live is the default; only say so when it is not. The span also pushes the close button right. */}
+        <span className="fl-log-meta">{source === "live" ? "" : source === "simulation" ? "simulation" : "snapshot"}</span>
         <button className="fl-log-x" onClick={onClose} onPointerDown={(e) => e.stopPropagation()} aria-label="Close log">
           <X size={13} />
         </button>
@@ -238,19 +245,23 @@ export function LogWindow({ onClose }: { onClose: () => void }) {
           </button>
         ))}
       </div>
-      <input className="fl-log-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter by case, agent, rule… e.g. P-005" aria-label="Filter log" />
+      <input className="fl-log-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter: case, agent, rule (P-005)…" aria-label="Filter log" />
       <ol className="fl-log-rows">
-        {shown.length === 0 && <li className="fl-log-empty">Nothing here yet.</li>}
+        {shown.length === 0 && <li className="fl-log-empty">{q ? "No matches" : "Nothing yet"}</li>}
         {shown.map((e) => (
           <LogRow key={e.id} e={e} now={now} open={selected === e.id} onToggle={() => setSelected((s) => (s === e.id ? "" : e.id))} reviews={reviewsByCase.get(e.caseId)} />
         ))}
       </ol>
-      <footer className="fl-log-foot">
-        <span>
-          Validator: {reviewed} reviewed · {issues} {issues === 1 ? "issue" : "issues"} · {reviewed - issues} passed
-        </span>
-        <span>Human decisions: {humans}</span>
-      </footer>
+      {(reviewed > 0 || humans > 0) && (
+        <footer className="fl-log-foot">
+          {reviewed > 0 && (
+            <span title={`Validator: ${reviewed} reviewed`}>
+              {reviewed - issues}/{reviewed} reviews passed
+            </span>
+          )}
+          {humans > 0 && <span>{humans} human {humans === 1 ? "decision" : "decisions"}</span>}
+        </footer>
+      )}
       <span className="fl-log-resize" onPointerDown={startDrag("resize")} aria-hidden />
     </section>
   );
@@ -268,49 +279,53 @@ function LogRow({ e, now, open, onToggle, reviews }: { e: TimelineEvent; now: nu
   const t = tone(e);
   const review = open ? reviewChecks(e, reviews) : null;
   const failed = review?.checks.filter((c) => !c.ok) ?? [];
+  const passed = review?.checks.filter((c) => c.ok) ?? [];
+  // Raw ids (task UUIDs) say nothing at a glance; they stay searchable via the filter.
+  const detail = UUIDISH.test(e.detail) ? "" : e.detail;
+  const sub = [e.caseId, detail].filter(Boolean).join(" · ");
   return (
     <li className={`fl-log-row ${open ? "open" : ""}`}>
       <button className="fl-log-row-main" onClick={onToggle} aria-expanded={open}>
         <span className="fl-log-time">{fmtAgo(e.at, now)}</span>
         <i className="fl-log-dot" style={{ background: agentColor(e.agent) }} />
         <span className="fl-log-text">
-          <b>{actorName(e.agent)}</b> {e.title}
+          <b>{actorName(e.agent)}</b> {e.title.replaceAll("_", " ")}
           {e.policyIds.map((p) => (
             <span key={p} className={`fl-log-tag ${t}`}>
               {p}
             </span>
           ))}
-          {!e.policyIds.length && t && <span className={`fl-log-tag ${t}`}>{t === "ok" ? "ok" : t === "bad" ? "denied" : "attention"}</span>}
-          <small>
-            {e.caseId || "—"}
-            {e.detail && ` · ${e.detail}`}
-          </small>
+          {sub && <small>{sub}</small>}
         </span>
       </button>
-      {open && (
+      {open && (review || e.evidenceRefs.length > 0 || str(e.row.reason_code, "") || e.caseId) && (
         <div className="fl-log-detail">
           {review && (
             <>
-              <div>
-                {review.checks.length} checks · {failed.length} failed · verdict <b>{review.verdict}</b>
-              </div>
-              {review.checks.slice(0, 14).map((c) => (
-                <div key={c.name} className={c.ok ? "ok" : "bad"}>
-                  {c.ok ? "✓" : "✕"} {c.name}
+              {/* Failures carry their detail; passes collapse to one line, names in the tooltip. */}
+              {failed.slice(0, 14).map((c) => (
+                <div key={c.name} className="bad">
+                  ✕ {c.name}
                   {c.detail && ` · ${c.detail}`}
                 </div>
               ))}
-              {review.checks.length > 14 && <div>+{review.checks.length - 14} more</div>}
-              {review.actions.length > 0 && review.actions[0] !== "none" && <div>Action: {review.actions.join(", ")}</div>}
+              {passed.length > 0 && (
+                <div className="ok" title={passed.map((c) => (c.detail ? `${c.name}: ${c.detail}` : c.name)).join("\n")}>
+                  ✓ {passed.length} {passed.length === 1 ? "check" : "checks"} passed
+                </div>
+              )}
+              {review.actions.length > 0 && review.actions[0] !== "none" && <div>{review.actions.join(", ")}</div>}
             </>
           )}
           {!review && e.evidenceRefs.length > 0 && <div>Evidence: {e.evidenceRefs.slice(0, 4).join(", ")}</div>}
           {!review && str(e.row.reason_code, "") && <div>Reason: {str(e.row.reason_code)}</div>}
-          {!review && str(e.row.actor_identity, "") && <div className="fl-log-mono">actor {str(e.row.actor_identity).slice(0, 16)}…</div>}
-          <div className="fl-log-links">
-            {e.caseId && <Link href={`/cases/${encodeURIComponent(e.caseId)}`}>Open case</Link>}
-            {str(e.row.id, "") && <span className="fl-log-mono">{str(e.row.id).slice(0, 30)}</span>}
-          </div>
+          {e.caseId && (
+            <div className="fl-log-links">
+              <Link href={`/cases/${encodeURIComponent(e.caseId)}`} title={[str(e.row.id, ""), str(e.row.actor_identity, "") && `actor ${str(e.row.actor_identity)}`].filter(Boolean).join(" · ") || undefined}>
+                Open case
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </li>

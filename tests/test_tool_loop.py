@@ -471,3 +471,72 @@ def test_compact_reasoning_keeps_only_the_latest_reasoning_item():
     assert tool_loop.compact_reasoning(history) == 0
     assert tool_loop.compact_reasoning(history, keep_last=False) == 1
     assert all(item.get("type") != "reasoning" for item in history)
+
+
+@pytest.mark.parametrize("skill", ["process_carrier_invoice", "propose_payment"])
+async def test_settlement_checks_the_carrier_registration_before_anything_else(setup, monkeypatch, skill):
+    """Carrier Settlement's first call is the Apify FMCSA check: a real, audited tool call, offered alone."""
+    agent, _env, meta, events = setup
+    env = TaskEnvelope(task_type=skill, case_id="case")
+    offered = []
+
+    async def lookup(ctx, args):
+        return {"available": False, "provider": "apify", "error": "no_matching_source_records",
+                "evidence_refs": ["apify://runs/RUN12345"]}
+
+    async def read(ctx, args):
+        return {"evidence_refs": ["source:1"]}
+
+    async def execute(ctx, args):
+        return {"artifact": ResultArtifact(outcome="approve", evidence_refs=["source:1"]).model_dump()}
+
+    monkeypatch.setattr(tool_registry, "registry_for", lambda _: {
+        "match_carrier_invoice": ToolSpec("match_carrier_invoice", "Match", EMPTY_PARAMETERS, read),
+        "lookup_carrier_authority": ToolSpec("lookup_carrier_authority", "Lookup", EMPTY_PARAMETERS, lookup),
+        "execute_current_skill": ToolSpec("execute_current_skill", "Execute", EMPTY_PARAMETERS, execute)})
+    turns = iter([response("lookup_carrier_authority", "call_1"), response("match_carrier_invoice", "call_2"),
+                  response("execute_current_skill", "call_3"), final()])
+
+    async def model(config, system, history, tools, **kwargs):
+        offered.append(sorted(tool["name"] for tool in tools))
+        return next(turns)
+
+    monkeypatch.setattr(tool_loop, "model_turn", model)
+    result = await tool_loop.run_tool_loop(agent, env, meta, "task")
+    assert result.outcome == "approve", "an unanswered registration check never blocks settlement"
+    assert offered[0] == ["lookup_carrier_authority"]
+    assert offered[1] == ["execute_current_skill", "lookup_carrier_authority", "match_carrier_invoice"]
+    assert [(e["tool_name"], e["status"]) for e in events][:2] == [
+        ("lookup_carrier_authority", "started"), ("lookup_carrier_authority", "completed")]
+
+    # A resumed task reads the checkpointed turns and makes the same offer instead of asking for the check again.
+    replayed = []
+
+    async def again(config, system, history, tools, **kwargs):
+        replayed.append(sorted(tool["name"] for tool in tools))
+        raise AssertionError("checkpointed turns are not re-asked")
+
+    monkeypatch.setattr(tool_loop, "model_turn", again)
+    assert (await tool_loop.run_tool_loop(agent, env, meta, "task")).outcome == "approve"
+    assert replayed == []
+
+
+async def test_other_skills_are_offered_every_tool_from_the_start(setup, monkeypatch):
+    agent, env, meta, _events = setup  # answer_payment_status
+    offered = []
+
+    async def execute(ctx, args):
+        return {"artifact": ResultArtifact(outcome="verified", evidence_refs=["source:1"]).model_dump()}
+
+    monkeypatch.setattr(tool_registry, "registry_for", lambda _: {
+        "lookup_carrier_authority": ToolSpec("lookup_carrier_authority", "Lookup", EMPTY_PARAMETERS, execute),
+        "execute_current_skill": ToolSpec("execute_current_skill", "Execute", EMPTY_PARAMETERS, execute)})
+    turns = iter([response("execute_current_skill", "call_1"), final()])
+
+    async def model(config, system, history, tools, **kwargs):
+        offered.append(sorted(tool["name"] for tool in tools))
+        return next(turns)
+
+    monkeypatch.setattr(tool_loop, "model_turn", model)
+    await tool_loop.run_tool_loop(agent, env, meta, "task")
+    assert offered[0] == ["execute_current_skill", "lookup_carrier_authority"]

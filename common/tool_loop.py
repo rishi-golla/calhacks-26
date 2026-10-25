@@ -16,6 +16,7 @@ from common.learning import reconstruct_instructions, task_memory_scope
 from common.providers import ProviderConfigurationError, ProviderError, configuration, mode
 from common.runtime import TaskParked, task_deadline
 from common.runtime_store import LeaseLost
+from common.source_repository import SourceUnavailable
 from common.spacetime_client import SpacetimeClient
 from common.tool_model import model_turn
 
@@ -181,7 +182,7 @@ def _finish(artifact: ResultArtifact, assessment: dict | None, calls: list[dict]
 
 
 async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
-    from common.tool_registry import ToolContext, registry_for
+    from common.tool_registry import ToolContext, first_calls, registry_for
 
     # The executor ends the task at its deadline; a retry that could not finish before then only hides the reason.
     # Outside an executor run (direct calls, tests) the loop's own start stands in for the executor's.
@@ -225,6 +226,7 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
             return error
         return GuardedSkillFailed(f"{skill_failed[:150]}; then {error}")
     final_only = [tool for tool in tools if tool["name"] == "execute_current_skill"]
+    required_first = first_calls(ctx, registry)
 
     def offered(artifact, turn_index: int) -> list[dict]:
         if artifact is not None:
@@ -233,6 +235,11 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
         # model may only execute the assigned skill instead of exhausting the loop on inspections.
         if len(records) >= MAX_TOOL_CALLS - 1 or turn_index >= MAX_TURNS - 2:
             return final_only
+        # A skill's mandatory checks come first, one per turn, whatever they return. `records` is rebuilt from
+        # checkpoints on replay, so a resumed task offers the same tools it did before.
+        pending = [name for name in required_first if not any(item["name"] == name for item in records)]
+        if pending:
+            return [tool for tool in tools if tool["name"] == pending[0]]
         return tools
 
     for turn_index in range(MAX_TURNS):
@@ -341,9 +348,13 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
                             if getattr(exc, "reason", ""):
                                 # A refused reducer's or a delegated child's bounded, service-authored reason.
                                 result["refusal"] = exc.reason
-                            elif isinstance(exc, ProviderError):  # its message names no data, key or prompt
+                            elif isinstance(exc, (ProviderError, SourceUnavailable)):
+                                # Both carry code-authored text that names no data, key or prompt. Without it a
+                                # source failure read only "SourceUnavailable" in the task, audit and logs (Oct 25).
                                 result["detail"] = str(exc)[:200]
                             status = "failed"
+                            log.warning("%s task %s tool %s failed: %s", agent.name, task_id, call["name"],
+                                        skill_failure(result))
                 return {"result": result, "artifact": canonical_artifact, "status": status,
                         "duration_ms": int((time.monotonic() - started) * 1000)}
 

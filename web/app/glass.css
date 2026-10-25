@@ -860,7 +860,7 @@
 .fl.theme-glass .ct-track-tick {
   border-radius: 2px;
 }
-.fl.theme-glass .ct-lane-name > span,
+.fl.theme-glass .ct-lane-name > span:first-child,
 .fl.theme-glass .ct-lane-name .fl-micro {
   font-family: var(--font-body);
   letter-spacing: 0;

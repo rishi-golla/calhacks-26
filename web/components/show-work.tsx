@@ -26,9 +26,10 @@ export function ShowWork({ workings, title, children, className = "" }: { workin
     const el = pop.current;
     const button = trigger.current;
     if (!el || !button) return;
-    // Scrolling the page moves the figure away; scrolling inside the popover does not.
+    // Close when a scroll moves the figure (the page or a container of it), not when an
+    // unrelated panel scrolls (the live trace auto-scrolls) or the popover itself does.
     const hide = (e: Event) => {
-      if (e.type === "scroll" && e.target instanceof Node && el.contains(e.target)) return;
+      if (e.type === "scroll" && e.target !== document && !(e.target instanceof Node && e.target.contains(button))) return;
       el.hidePopover();
     };
     // Below the figure, or above it when there is no room; inside the viewport either way.
@@ -69,12 +70,13 @@ export function ShowWork({ workings, title, children, className = "" }: { workin
         popoverTarget={id}
         aria-haspopup="dialog"
         title={`How ${title.toLowerCase()} is calculated`}
-        // Figures sit inside clickable rows and cards; the figure owns this click.
+        // A figure inside a clickable row or card owns this click.
         onClick={(e) => e.stopPropagation()}
       >
         {children}
       </button>
-      <div ref={pop} id={id} popover="auto" role="dialog" aria-label={`${title}: shown work`} className="sw-pop">
+      {/* The panel sits in the DOM under the figure: its clicks stay out of the row or card around it. */}
+      <div ref={pop} id={id} popover="auto" role="dialog" aria-label={`${title}: shown work`} className="sw-pop" onClick={(e) => e.stopPropagation()}>
         <div className="sw-head">
           <span className="sw-title">{title}</span>
           <button type="button" className="sw-close" popoverTarget={id} popoverTargetAction="hide" aria-label="Close">

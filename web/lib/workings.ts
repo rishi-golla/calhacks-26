@@ -21,6 +21,8 @@ export type Working = {
   unit: WorkingUnit;
   evidence_refs: string[];
   basis: string;
+  /** "dashboard" when the page computed the figure itself (lib/show-work); agents never set it. */
+  origin?: "dashboard";
 };
 
 export type Check = {
@@ -59,7 +61,16 @@ export function parseWorking(value: unknown): Working | null {
   const refs = Array.isArray(raw.evidence_refs)
     ? [...new Set(raw.evidence_refs.filter((r): r is string => typeof r === "string" && !!r.trim()).map((r) => r.trim().slice(0, 240)))].slice(0, 20)
     : [];
-  return { label: label || formula, formula, inputs, result: raw.result, unit, evidence_refs: refs, basis: text(raw.basis, 160) };
+  return {
+    label: label || formula,
+    formula,
+    inputs,
+    result: raw.result,
+    unit,
+    evidence_refs: refs,
+    basis: text(raw.basis, 160),
+    ...(raw.origin === "dashboard" ? { origin: "dashboard" as const } : {}),
+  };
 }
 
 /** `findings.workings` (array or JSON string) -> valid Working rows. */

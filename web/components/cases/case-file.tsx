@@ -181,14 +181,14 @@ function FileBody({ file }: { file: File }) {
           <p className="cf-none">No deposits yet.</p>
         )}
         {file.billed !== null && (
-          <p className="cf-total">
+          <div className="cf-total">
             Billed <span className="fl-num">{fmtMoney(file.billed)}</span> · received <span className="fl-num">{fmtMoney(file.deposited)}</span>
             {short !== null && short > 0 && (
               <ShowWork workings={shortPayWorkings(file, short)} title="Short pay">
                 <span className="fl-chip outline bad ct-mini-chip">short {fmtMoney(short)}</span>
               </ShowWork>
             )}
-          </p>
+          </div>
         )}
       </Sec>
 

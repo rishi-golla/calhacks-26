@@ -2,10 +2,11 @@
  * Shown work for figures the dashboard derives itself: case exposure, the
  * case file's short pay, rate delta and detention chips, and the finance DSO
  * and margin tiles. Each builder returns Working rows in the agents' shape so
- * <Workings> lays them out (tally, comparison, inputs then equation) and
- * rechecks them. The stated result is always the figure the page shows; when
- * it was computed elsewhere (exposure, by ingest) a disagreement surfaces as
- * a recheck mismatch rather than being papered over. Pure: no React.
+ * <Workings> lays them out (tally, comparison, inputs then equation). The
+ * stated result is always the figure the page shows. Figures the dashboard
+ * computes itself are marked `origin: "dashboard"` (their recheck repeats the
+ * same arithmetic, so it proves nothing); exposure was computed by ingest, so
+ * its recheck is a real comparison. Pure: no React.
  */
 import type { Working } from "./workings";
 
@@ -17,12 +18,14 @@ const num = (value: unknown): number | null => {
   return null;
 };
 const isRecord = (value: unknown): value is Row => !!value && typeof value === "object" && !Array.isArray(value);
+/** Python truthiness, for replaying ingest's `x or y` and `if x:`. */
+const truthy = (value: unknown) =>
+  !(value === undefined || value === null || value === false || value === 0 || value === "" || (Array.isArray(value) && !value.length) || (isRecord(value) && !Object.keys(value).length));
 
-const work = (w: Omit<Working, "evidence_refs" | "basis"> & Partial<Pick<Working, "evidence_refs" | "basis">>): Working => ({
-  evidence_refs: [],
-  basis: "",
-  ...w,
-});
+type Draft = Omit<Working, "evidence_refs" | "basis"> & Partial<Pick<Working, "evidence_refs" | "basis">>;
+const work = (w: Draft): Working => ({ evidence_refs: [], basis: "", ...w });
+/** A figure the dashboard computed itself, from these inputs. */
+const derived = (w: Draft): Working => work({ ...w, origin: "dashboard" });
 
 export type CaseDocument = { ref: string; kind: string };
 
@@ -39,25 +42,30 @@ function floored(label: string, a: [string, number], b: [string, number], result
 /* ------------------------------- exposure ------------------------------- */
 
 /**
- * How ingest derived a case's exposure (ingest/mirror.py `exposure`), from
- * the case's source record. `stated` is the case row's exposure_usd.
+ * Ingest's exposure derivation (ingest/mirror.py `_kind` and `exposure`),
+ * replayed on the case's source record. `stated` is the case row's
+ * exposure_usd, set when the case opened; the record keeps syncing after
+ * that, so a later deposit or resubmitted invoice can make them differ, and
+ * the recheck then says so.
  */
+const AT_OPEN = "set when the case opened; checked against the current record";
+
 export function exposureWorkings(caseId: string, record: Row, stated: number, documents: readonly CaseDocument[]): Working[] {
-  const bank = record.bank_change_requested === true || caseId.endsWith("-BANK");
-  if (bank) {
-    const invoice = num(record.invoice_amount);
-    const next = isRecord(record.bank_change) ? num(record.bank_change.next_payment_amount) : null;
-    const [key, value] = invoice !== null ? ["invoice_amount", invoice] : ["next_payment_amount", next];
+  if (truthy(record.bank_change_requested) || caseId.endsWith("-BANK")) {
+    // `invoice_amount or bank_change.next_payment_amount`
+    const next = isRecord(record.bank_change) ? record.bank_change.next_payment_amount : undefined;
+    const [key, raw] = truthy(record.invoice_amount) ? ["invoice_amount", record.invoice_amount] : ["next_payment_amount", next];
+    const value = num(raw);
     if (value === null) return [];
     return [
       work({
-        label: "Exposure: the payment a bank change would redirect",
+        label: "Exposure: the whole payment a bank change would redirect",
         formula: key,
         inputs: { [key]: value },
         result: stated,
         unit: "usd",
         evidence_refs: cite(documents, "carrier_invoice"),
-        basis: "a changed payee puts the whole payment at risk",
+        basis: AT_OPEN,
       }),
     ];
   }
@@ -66,26 +74,27 @@ export function exposureWorkings(caseId: string, record: Row, stated: number, do
     if (billed === null) return [];
     const deposits = (Array.isArray(record.deposits) ? record.deposits : []).filter(isRecord);
     const inputs: Row = { shipper_invoice_amount: billed };
-    deposits.slice(0, 12).forEach((d, i) => (inputs[`deposit_${i + 1}`] = num(d.amount) ?? 0));
+    deposits.forEach((d, i) => (inputs[`deposit_${i + 1}`] = num(d.amount) ?? 0));
     const keys = Object.keys(inputs);
     const short = (inputs.shipper_invoice_amount as number) - keys.slice(1).reduce((s, k) => s + (inputs[k] as number), 0);
     const formula = keys.join(" - ");
     return [
       work({
-        label: "Exposure: what the shipper has not paid",
+        label: "Exposure: what the shipper has not paid, every deposit counted",
         formula: short >= 0 ? formula : `max(${formula}, 0)`,
         inputs,
         result: stated,
         unit: "usd",
         evidence_refs: cite(documents, "shipper_invoice"),
-        basis: "every deposit on the record counts against the shipper invoice",
+        basis: AT_OPEN,
       }),
     ];
   }
+  // A case without an invoice is a delivery, with no exposure.
   const invoice = num(record.invoice_amount);
   const contract = num(record.contract_rate);
-  if (invoice === null || contract === null) return [];
-  return [floored("Exposure: billed over contract", ["invoice_amount", invoice], ["contract_rate", contract], stated, cite(documents, "carrier_invoice", "rate_confirmation"), "only the overage is disputed")];
+  if (!truthy(record.invoice_id) || invoice === null || contract === null) return [];
+  return [floored("Exposure: billed over contract, only the overage disputed", ["invoice_amount", invoice], ["contract_rate", contract], stated, cite(documents, "carrier_invoice", "rate_confirmation"), AT_OPEN)];
 }
 
 /* ------------------------------ case file ------------------------------ */
@@ -104,10 +113,10 @@ export type CaseFileFigures = {
 export function shortPayWorkings(f: CaseFileFigures, short: number): Working[] {
   if (f.billed === null) return [];
   const inputs: Row = { shipper_invoice_amount: f.billed };
-  f.applied.slice(0, 12).forEach((d, i) => (inputs[`deposit_${i + 1}`] = d.amount ?? 0));
+  f.applied.forEach((d, i) => (inputs[`deposit_${i + 1}`] = d.amount ?? 0));
   const ids = f.applied.map((d) => d.id).filter(Boolean);
   return [
-    work({
+    derived({
       label: ids.length ? `Short pay (deposits ${ids.join(", ")})` : "Short pay",
       formula: Object.keys(inputs).join(" - "),
       inputs,
@@ -124,7 +133,7 @@ export function rateDeltaWorkings(f: CaseFileFigures): Working[] {
   const r = f.rate;
   if (!r || r.invoice === null || r.contract === null || r.delta === null) return [];
   return [
-    work({
+    derived({
       label: "Invoice vs rate confirmation",
       formula: "invoice_amount - contract_rate",
       inputs: { invoice_amount: r.invoice, contract_rate: r.contract },
@@ -141,7 +150,7 @@ export function detentionWorkings(f: CaseFileFigures): Working[] {
   const d = f.detention;
   if (!d || d.dwellMin === null || d.freeTimeMin === null || d.billableHours === null) return [];
   const out = [
-    work({
+    derived({
       label: "Detention hours the GPS supports",
       formula: "max(gps_dwell_min - free_time_min, 0) / 60",
       inputs: { gps_dwell_min: d.dwellMin, free_time_min: d.freeTimeMin },
@@ -153,14 +162,14 @@ export function detentionWorkings(f: CaseFileFigures): Working[] {
   ];
   if (d.claimedHours !== null)
     out.push(
-      work({
+      derived({
         label: "Claimed hours within support",
         formula: "detention_hours_claimed <= supportable_hours",
         inputs: { detention_hours_claimed: d.claimedHours, supportable_hours: d.billableHours },
         result: !d.overClaimed,
         unit: "bool",
         evidence_refs: cite(f.documents, "carrier_invoice", "pod", "rate_confirmation"),
-        basis: "P-001",
+        basis: "a detention claim needs GPS dwell beyond free time",
       }),
     );
   return out;
@@ -174,7 +183,7 @@ type FinanceFigures = { ar: number; revenue30d: number; expense30d: number; gros
 export function dsoWorkings(f: FinanceFigures): Working[] {
   if (!(f.revenue30d > 0)) return [];
   return [
-    work({
+    derived({
       label: "Days sales outstanding",
       formula: "ar_balance / (revenue_30d / days)",
       inputs: { ar_balance: f.ar, revenue_30d: f.revenue30d, days: 30 },
@@ -190,7 +199,7 @@ export function marginWorkings(f: FinanceFigures, window = "last 30 days"): Work
   if (!(f.revenue30d > 0)) return [];
   const profit = f.revenue30d - f.expense30d;
   return [
-    work({
+    derived({
       label: "Gross profit",
       formula: "revenue - expense",
       inputs: { revenue: f.revenue30d, expense: f.expense30d },
@@ -198,7 +207,7 @@ export function marginWorkings(f: FinanceFigures, window = "last 30 days"): Work
       unit: "usd",
       basis: `revenue and expense posted to the ledger, ${window}`,
     }),
-    work({
+    derived({
       label: "Gross margin",
       formula: "gross_profit / revenue * 100",
       inputs: { gross_profit: profit, revenue: f.revenue30d },

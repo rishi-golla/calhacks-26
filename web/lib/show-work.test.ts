@@ -17,12 +17,16 @@ test("payable exposure is the overage, floored at zero, as ingest computes it", 
   assert.deepEqual(over.evidence_refs, ["doc:INV-LD-1-1", "doc:RC-LD-1"]);
   assert.equal(layoutWorking(over).kind, "tally");
   assert.equal(recheckWorking(over).status, "match");
-  const [under] = exposureWorkings("CASE-LD-2", { invoice_amount: 1900, contract_rate: 2000 }, 0, refs);
+  const [under] = exposureWorkings("CASE-LD-2", { invoice_id: "INV-2", invoice_amount: 1900, contract_rate: 2000 }, 0, refs);
   assert.equal(under.formula, "max(invoice_amount - contract_rate, 0)");
   assert.equal(recheckWorking(under).status, "match");
   // A stated exposure the record does not support is flagged, not hidden.
-  assert.equal(recheckWorking(exposureWorkings("CASE-LD-1", { invoice_amount: 2150, contract_rate: 2000 }, 400, refs)[0]).status, "mismatch");
-  assert.deepEqual(exposureWorkings("CASE-LD-3", { invoice_amount: 2150 }, 150, refs), []);
+  assert.equal(recheckWorking(exposureWorkings("CASE-LD-1", { invoice_id: "INV-1", invoice_amount: 2150, contract_rate: 2000 }, 400, refs)[0]).status, "mismatch");
+  assert.deepEqual(exposureWorkings("CASE-LD-3", { invoice_id: "INV-3", invoice_amount: 2150 }, 150, refs), []);
+  // No invoice: ingest calls it a delivery, with no exposure to explain.
+  assert.deepEqual(exposureWorkings("CASE-LD-4", { invoice_amount: 2150, contract_rate: 2000 }, 0, refs), []);
+  // Exposure was computed by ingest, so its recheck is a real comparison, not a dashboard calc.
+  assert.equal(over.origin, undefined);
 });
 
 test("bank-change exposure is the whole payment; receivable exposure is what is unpaid", () => {
@@ -87,4 +91,24 @@ test("finance DSO and margin match the tiles", () => {
   assert.equal(layoutWorking(margin[0]).kind, "tally");
   assert.deepEqual(dsoWorkings({ ...f, revenue30d: 0 }), []);
   assert.deepEqual(marginWorkings({ ...f, revenue30d: 0 }), []);
+});
+
+test("exposure follows ingest's truthiness and counts every deposit", () => {
+  // `bank_change_requested` is truthy, not strictly true; a zero invoice falls through to the next payment.
+  const [bank] = exposureWorkings("CASE-LD-9", { bank_change_requested: "true", invoice_amount: 0, bank_change: { next_payment_amount: 900 } }, 900, []);
+  assert.deepEqual(bank.inputs, { next_payment_amount: 900 });
+  assert.equal(recheckWorking(bank).status, "match");
+  assert.deepEqual(exposureWorkings("CASE-LD-9", { bank_change_requested: 0, invoice_id: "I", invoice_amount: 10, contract_rate: 10 }, 0, [])[0].label.startsWith("Exposure: billed"), true);
+  const deposits = Array.from({ length: 13 }, () => ({ amount: 100 }));
+  const [ar] = exposureWorkings("CASE-LD-1-AR", { shipper_invoice_amount: 2000, deposits }, 700, []);
+  assert.equal(Object.keys(ar.inputs).length, 14);
+  assert.equal(recheckWorking(ar).status, "match");
+  const short = shortPayWorkings({ ...file, billed: 2000, applied: deposits.map((d, i) => ({ id: `BNK-${i}`, amount: d.amount })) }, 700);
+  assert.equal(recheckWorking(short[0]).status, "match");
+});
+
+test("figures the dashboard computes are marked as its own", () => {
+  const f = { ar: 1, revenue30d: 30, expense30d: 10, grossMarginPct: (20 / 30) * 100 };
+  for (const w of [...shortPayWorkings(file, 200), ...rateDeltaWorkings(file), ...detentionWorkings(file), ...dsoWorkings(f), ...marginWorkings(f)]) assert.equal(w.origin, "dashboard", w.label);
+  assert.notEqual(detentionWorkings(file)[1].basis, "P-001");
 });

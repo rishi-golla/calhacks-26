@@ -2796,6 +2796,9 @@ button.ev-chip:focus-visible {
   text-transform: uppercase;
   cursor: help;
 }
+.wk-recheck.calc {
+  color: var(--ev-mute);
+}
 .wk-recheck.ok {
   color: var(--ev-ok);
 }
@@ -2973,6 +2976,7 @@ button.ev-chip:focus-visible {
   text-align: left;
   text-transform: none;
   letter-spacing: normal;
+  font-family: var(--font-body, inherit);
   font-size: 12px;
   font-weight: 400;
   white-space: normal;

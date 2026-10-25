@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Bell, Database, FlaskConical, Home, ListTree, Network, RefreshCw, Table2, Zap } from "lucide-react";
+import { Bell, Database, FlaskConical, Home, ListTree, Network, Play, RefreshCw, Zap } from "lucide-react";
 import { useOps, type DataMode } from "../data-provider";
 import { agentLabel } from "@/lib/agents";
 import { fmtAgo, fmtMoney, type AttentionItem } from "@/lib/ops";
@@ -13,7 +13,7 @@ const NAV = [
   { href: "/", label: "Finance", icon: Home, exact: true },
   { href: "/agents", label: "Agents", icon: Network },
   { href: "/cases", label: "Cases", icon: ListTree },
-  { href: "/ops", label: "Ops console", icon: Table2 },
+  { href: "/demo", label: "Demo", icon: Play },
 ];
 
 export default function Shell({ children }: { children: ReactNode }) {
@@ -224,6 +224,9 @@ function SourcePill() {
               <RefreshCw size={12} /> Reconnect
             </button>
           )}
+          <Link href="/ops" className="fl-micro" style={{ display: "block", marginTop: 12, textDecoration: "underline", textUnderlineOffset: 3 }} onClick={() => setOpen(false)}>
+            Admin console
+          </Link>
         </div>
       )}
     </div>

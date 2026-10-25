@@ -2,12 +2,13 @@ PY := .venv/bin/python
 SIM_DATA_DIR ?= data
 SPACETIME_DB ?= freightops
 SPACETIME_URL ?= http://127.0.0.1:3000
+EVALUATOR_INTERVAL_S ?= 30
 # Service targets load ENV_FILE (default .env); variables already in your shell win.
 # test, lint, demo and the live-* launchers never use it, so tests stay offline.
 ENV_FILE ?= .env
 export ENV_FILE
 RUN := $(PY) -m scripts.with_env --
-.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest source verify-data review-worker live-agents live-demo live-gateway
+.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest source verify-data review-worker evaluator live-agents live-demo live-gateway
 
 setup:            ## create venv + install
 	python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -34,6 +35,8 @@ verify-data:      ## verify generated W4 documents and event traces
 	$(PY) -m sim.verify --data "$(SIM_DATA_DIR)"
 review-worker:    ## W2 review outbox -> Settlement Quality Review
 	$(RUN) $(PY) -m common.review_worker
+evaluator:        ## score agents against the sim answer key -> SpacetimeDB `metric` (run on the sim's machine)
+	$(RUN) $(PY) -m evaluator.main --loop $(EVALUATOR_INTERVAL_S)
 web:              ## dashboard on :3001
 	cd web && npm run dev -- -p 3001
 test:

@@ -45,7 +45,7 @@ make test
 ```
 
 Service targets (`agents`, `gateway`, `router`, `ingest`, `sim`, `world`, `source`, `harness`,
-`review-worker`) load `.env` themselves; pick another profile with `ENV_FILE=path/to/file.env`.
+`review-worker`, `evaluator`) load `.env` themselves; pick another profile with `ENV_FILE=path/to/file.env`.
 Variables already set in your shell take precedence. `make test`, `make lint` and `make demo` never
 load it, so a live profile in `.env` cannot reach the test suite. Don't `source` a live `.env` into
 the shell you run tests from.
@@ -143,6 +143,17 @@ SIM_DATA_DIR=/tmp/w4-data WORLD_FILE=/tmp/w4-data/world.json .venv/bin/python -m
 
 `RAW_STREAM_MAXLEN` (default 200000) caps Redis `raw`. Redis trims past the cap whether or not ingest has read an
 entry, so the simulator logs a warning once the stream reaches 80% of it.
+
+### Evaluator (G6/T10)
+`make evaluator` joins `$SIM_DATA_DIR/answer_key.jsonl` to the agents' decisions in SpacetimeDB (cases, root tasks,
+holds, payment proposals, calls) and writes the scoreboard to `metric` with `set_metric`: `precision`, `recall`,
+`dollars_caught`, `false_holds`, `median_resolution_s` and `calls_placed` (the dashboard's scoreboard), plus
+coverage, false-hold rate and per-scenario and per-lane breakdowns. Only loads with no work in flight are scored, and
+unchanged figures are not rewritten. The answer key lives only where the simulator runs, so the evaluator runs on
+that machine (the ASUS) and only calls out to Maincloud; it needs `SPACETIME_DISABLED=0` and
+`SPACETIME_TOKEN_EVALUATOR`. `python -m evaluator.main --once --dry-run` prints the scoreboard without writing, and
+`--rows FILE` scores a saved table snapshot offline (`--dump-rows FILE` saves one). See `evaluator/main.py` for the
+definitions.
 
 ## Rules
 - `OUTREACH_MODE=demo`: calls/emails are only ever routed to `DEMO_ALLOWLIST_*`; the real contact is shown as `intended_to`.

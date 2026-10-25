@@ -66,9 +66,9 @@ function Delta({ change: c, good }: { change: { abs: number; pct: number | null 
 }
 
 function KpiTiles() {
-  const { finance, snapshot, source, viewEpoch } = useOps();
-  // After "Start fresh" the tiles total ledger activity since the epoch (named once, in the top bar), so no 30d deltas.
-  const scoped = viewEpoch.active && !!viewEpoch.epoch;
+  const { finance, snapshot, source } = useOps();
+  // After "Start fresh" (with no imported history) the tiles total ledger activity since the epoch, named once in the top bar, so no 30d deltas.
+  const scoped = finance.since !== null;
   const hasLedger = snapshot.ledger_entry.length > 0;
   const series = useMemo(
     () => ({

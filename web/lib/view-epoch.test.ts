@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SCOPED_TABLES, CARRY_GRACE_MS, carriedOver, fmtSince, readViewEpoch, rowInScope, scopeEvents, scopeSnapshot, showEarlierApplies, showEarlierValue, viewScope } from "./view-epoch";
+import { SCOPED_TABLES, CARRY_GRACE_MS, carriedOver, financeScope, fmtSince, hasImportedHistory, readViewEpoch, rowInScope, scopeEvents, scopeSnapshot, showEarlierApplies, showEarlierValue, viewScope } from "./view-epoch";
 import { emptySnapshot, type Row, type Snapshot } from "./data";
 import { DemoSim } from "./demo-sim";
 import { buildFinance, buildWorkloads, type LiveEvent } from "./ops";
@@ -388,4 +388,78 @@ test("buildFinance with since: revenue30d and expense30d from since, revenueMtd 
   assert.equal(recent.revenue30d, 100);
   const unscoped = buildFinance(s, NOW);
   assert.equal(unscoped.revenue30d, 100);
+});
+
+
+/* ---------------------------- imported history ---------------------------- */
+
+const HIST = "HIST-LD-0915-3FA2C1";
+const journal = (id: string, caseId: string, offsetDays: number, lines: Row[]): Row => ({ id, case_id: caseId, posted_at: at(-offsetDays * DAY), lines });
+const billing = (id: string, caseId: string, offsetDays: number, amount: number) =>
+  journal(id, caseId, offsetDays, [{ account: "accounts_receivable", debit: amount, credit: 0 }, { account: "freight_revenue", debit: 0, credit: amount }]);
+const cost = (id: string, caseId: string, offsetDays: number, amount: number) =>
+  journal(id, caseId, offsetDays, [{ account: "freight_expense", debit: amount, credit: 0 }, { account: "accounts_payable", debit: 0, credit: amount }]);
+const historySnap = () =>
+  snap({
+    case: [
+      { ...kase(HIST, -20 * DAY), status: "resolved", resolved_at: at(-19 * DAY) },
+      { ...kase("CASE-LD-OLD", -DAY), status: "open" },
+      kase("CASE-LD-NEW", 60),
+    ],
+    invoice: [
+      { id: "INV-H", case_id: HIST, amount: 1700, paid_amount: 0, issued_at: at(-20 * DAY), status: "open" },
+      { id: "INV-OLD", case_id: "CASE-LD-OLD", amount: 900, paid_amount: 0, issued_at: at(-DAY), status: "open" },
+    ],
+    ledger_entry: [
+      journal("HIST-JE-OPENING", "", 90, [{ account: "cash", debit: 250_000, credit: 0 }, { account: "opening_balance_equity", debit: 0, credit: 250_000 }]),
+      billing(`HIST-JE-${HIST.slice(5)}-BILL`, HIST, 20, 2000),
+      cost(`HIST-JE-${HIST.slice(5)}-COST`, HIST, 19, 1700),
+      billing("JE-OLD", "CASE-LD-OLD", 1, 999),
+      billing("JE-NEW", "CASE-LD-NEW", 0, 500),
+    ],
+    audit_event: [{ id: "A-H", case_id: HIST, kind: "import_history_batch", ts: at(-60) }],
+  });
+
+test("imported history stays in scope through Start fresh; earlier live activity does not", () => {
+  const s = historySnap();
+  const scope = viewScope(s, SINCE);
+  assert.ok(scope.cases.has(HIST));
+  assert.ok(!scope.carried.has(HIST), "imported history is in scope on its own, not carried over");
+  const out = scoped(s);
+  assert.deepEqual(out.case.map((c) => c.case_id), [HIST, "CASE-LD-NEW"]);
+  assert.deepEqual(out.invoice.map((r) => r.id), ["INV-H"]);
+  assert.deepEqual(out.ledger_entry.map((r) => r.id), ["HIST-JE-OPENING", `HIST-JE-${HIST.slice(5)}-BILL`, `HIST-JE-${HIST.slice(5)}-COST`, "JE-NEW"]);
+  assert.deepEqual(out.audit_event.map((r) => r.id), ["A-H"]);
+  assert.ok(rowInScope("ledger_entry", { id: "HIST-JE-X", case_id: "", posted_at: at(-400 * DAY) }, scope));
+  assert.ok(!rowInScope("ledger_entry", { id: "JE-X", case_id: "", posted_at: at(-1) }, scope));
+});
+
+test("hasImportedHistory looks for HIST- journals or cases", () => {
+  assert.equal(hasImportedHistory(historySnap()), true);
+  assert.equal(hasImportedHistory(snap({ case: [kase("CASE-1", 0)], ledger_entry: [billing("JE-1", "CASE-1", 1, 10)] })), false);
+  assert.equal(hasImportedHistory(snap({ case: [kase(HIST, -DAY)] })), true);
+});
+
+test("financeScope: an epoch alone totals since it; with imported history the windows stay normal", () => {
+  assert.deepEqual(financeScope(undefined, false), { since: undefined, ledgerCash: false });
+  assert.deepEqual(financeScope(undefined, true), { since: undefined, ledgerCash: false });
+  assert.deepEqual(financeScope(SINCE, false), { since: SINCE, ledgerCash: true });
+  assert.deepEqual(financeScope(SINCE, true), { since: undefined, ledgerCash: true });
+});
+
+test("Finance after Start fresh with imported history: the books plus live activity since the epoch", () => {
+  const s = { ...historySnap(), metric: [{ name: "cash_position", value: 9_999_999 }] };
+  const f = buildFinance(scoped(s), NOW, financeScope(SINCE, hasImportedHistory(s)));
+  assert.equal(f.since, null);
+  assert.equal(f.cash, 250_000, "ledger cash, not the all-time metric");
+  assert.equal(f.ar, 2500, "imported billing plus the live billing since the epoch; the hidden one is left out");
+  assert.equal(f.ap, 1700);
+  assert.equal(f.revenue30d, 2500);
+  assert.equal(f.expense30d, 1700);
+  assert.equal(Math.round(f.grossMarginPct * 10) / 10, 32);
+  // Without imported history the same epoch totals only what happened since it.
+  const live = snap({ ledger_entry: [billing("JE-OLD", "C", 1, 999), billing("JE-NEW", "C", 0, 500)] });
+  const g = buildFinance(scoped(live), NOW, financeScope(SINCE, hasImportedHistory(live)));
+  assert.equal(g.since, SINCE);
+  assert.equal(g.ar, 500);
 });

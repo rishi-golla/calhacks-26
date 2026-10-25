@@ -31,7 +31,9 @@ DATABASE = "at350-freightops"
 PUBLISHER = "c2005175965c7ab35b8367adc2064a7bc96cacb0b0b796ddf81377fc02b50f1f"
 FIXTURE_HUMAN = "human:operator"
 ACTORS = (*SERVICES, FIXTURE_HUMAN)
-ADMIN_REDUCERS = {"grant_role", "set_period", "ensure_agent_defaults", "settle_cases"}
+# import_history_batch / remove_imported_history: scripts.seed_history (HIST- rows only, enforced by the module).
+ADMIN_REDUCERS = {"grant_role", "set_period", "ensure_agent_defaults", "settle_cases",
+                  "import_history_batch", "remove_imported_history"}
 PERIODS_AHEAD = 18
 # Observed Maincloud round trips reach 1 s; the client's 5 s default is too tight under load.
 CLOUD_TIMEOUT_SECONDS = 15
@@ -140,6 +142,19 @@ def save_private(path: Path, content: str) -> None:
     finally:
         if temporary and os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def refusal_reason(text: str, limit: int = 160) -> str:
+    """A reducer's refusal as one short printable line: control and non-ASCII characters become spaces, long
+    unbroken runs (anything token-like) are elided, and the result is capped. The payload itself is never echoed."""
+    line = re.sub(r"[^\x20-\x7e]+", " ", text)
+    line = re.sub(r"[A-Za-z0-9+/=_.-]{48,}", "[...]", line)
+    line = " ".join(line.split())
+    return line if len(line) <= limit else line[: limit - 3] + "..."
+
+
+class CloudReducerRefused(RuntimeError):
+    """An admin reducer threw (HTTP 530): the database refused the request, so resending it cannot help."""
 
 
 class CloudAdmin:
@@ -267,6 +282,11 @@ class CloudAdmin:
                 DATABASE, reducer, json.dumps(json.dumps(body, separators=(",", ":"))),
             ], capture_output=True, text=True, check=False, timeout=60)
             if result.returncode:
+                # A reducer that threw answers 530 with its own message, which names no credential; surface
+                # it so the caller can tell a refusal from a transport failure. Other CLI output stays withheld.
+                reason = re.search(r"Response text: ([^\n]{1,300})", result.stderr or "")
+                if reason and "530" in (result.stderr or ""):
+                    raise CloudReducerRefused(f"Cloud admin reducer {reducer} refused: {refusal_reason(reason.group(1))}")
                 raise RuntimeError(f"Cloud admin reducer {reducer} failed; CLI output withheld")
             return None
         token = self.identity(actor)["token"]

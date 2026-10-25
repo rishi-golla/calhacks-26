@@ -22,13 +22,20 @@ import {
 export const clock = (ms: number) =>
   ms ? new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : "—";
 
+/** The clock alone for today, prefixed with the date otherwise ("Oct 19, 17:08:00"): imported history is months old. */
+export const dayClock = (ms: number, now: number) =>
+  !ms || new Date(ms).toDateString() === new Date(now).toDateString()
+    ? clock(ms)
+    : `${new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" })}, ${clock(ms)}`;
+
 export const shortDur = (ms: number) => {
   if (!Number.isFinite(ms) || ms < 0) return "—";
   if (ms < 1_000) return `${Math.round(ms)}ms`;
   const s = ms / 1000;
   if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)}s`;
   if (s < 3_600) return `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s`;
-  return `${Math.floor(s / 3_600)}h ${String(Math.round((s % 3_600) / 60)).padStart(2, "0")}m`;
+  if (s < 2 * 86_400) return `${Math.floor(s / 3_600)}h ${String(Math.round((s % 3_600) / 60)).padStart(2, "0")}m`;
+  return `${Math.floor(s / 86_400)}d ${Math.floor((s % 86_400) / 3_600)}h`;
 };
 
 /** A tool call's name in plain words: "read_load_record" → "Read load record". */
@@ -94,7 +101,8 @@ export function caseKind(c: CaseView): CaseKind {
   if (/-BANK$/i.test(c.caseId)) return "bank_change";
   if (/-AR$/i.test(c.caseId)) return "receivable";
   const root = c.tasks.find((t) => !t.parentTaskId) ?? c.tasks[0];
-  return (root && SKILL_KIND[root.skill]) || (c.tasks.length ? "payable" : "case");
+  // Imported history carries no tasks; outside its -AR cases it is a carrier invoice, a payable.
+  return (root && SKILL_KIND[root.skill]) || (c.tasks.length || c.imported ? "payable" : "case");
 }
 export const KIND_LABEL: Record<CaseKind, string> = { payable: "Payable", receivable: "Receivable", bank_change: "Bank change", case: "Case" };
 

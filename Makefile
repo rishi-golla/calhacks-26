@@ -8,7 +8,7 @@ EVALUATOR_INTERVAL_S ?= 30
 ENV_FILE ?= .env
 export ENV_FILE
 RUN := $(PY) -m scripts.with_env --
-.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest source verify-data review-worker evaluator cloud-verify live-agents live-demo live-gateway
+.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo seed-history w2-check world seed-carriers sim ingest source verify-data review-worker evaluator cloud-verify live-agents live-demo live-gateway
 
 setup:            ## create venv + install
 	python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -29,6 +29,8 @@ source:           ## re-export the agent source dataset from data/ingest.db (ing
 	$(RUN) $(PY) -m ingest.source_export
 world:            ## refresh real carriers (FMCSA) + shippers (SEC EDGAR) -> data/world.json
 	$(RUN) $(PY) -m sim.world --refresh
+seed-carriers:    ## swap offline fixture carriers for Apify-confirmed FMCSA ones (ARGS=--fetch re-selects, spends)
+	$(RUN) $(PY) -m scripts.seed_real_carriers $(ARGS)
 sim:              ## publish raw simulator arrivals to Redis `raw`
 	$(RUN) $(PY) -m sim.generator
 verify-data:      ## verify generated W4 documents and event traces
@@ -69,6 +71,8 @@ spacetime-test:    ## real reducers against a fresh local test database
 	$(PY) -m scripts.spacetime_smoke --server $(SPACETIME_URL)
 spacetime-demo:    ## explicitly seed labeled W2 demonstration data
 	$(PY) -m scripts.spacetime_demo --server $(SPACETIME_URL) --database $(SPACETIME_DB)
+seed-history:      ## import ~90 days of resolved company history (admin); HISTORY_ARGS="--dry-run|--docs|--undo|--seed N|--days N|--loads N"
+	$(PY) -m scripts.seed_history --server $(SPACETIME_URL) --database $(SPACETIME_DB) $(HISTORY_ARGS)
 w2-check:          ## Python, module, and production dashboard checks
 	$(MAKE) lint test
 	cd spacetime/module/spacetimedb && npm test

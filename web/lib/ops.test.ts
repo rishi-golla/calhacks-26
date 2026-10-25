@@ -520,6 +520,20 @@ test("buildAttention puts critical approvals first and sorts by severity then re
   assert.equal(items[0].detail, "Case one");
 });
 
+test("buildAttention drops review issues once their case resolves", () => {
+  const s = snap({
+    case: [
+      { case_id: "OPEN", status: "open" },
+      { case_id: "DONE", status: "resolved" },
+    ],
+    review: [
+      { id: "R1", case_id: "OPEN", verdict: "issue", ts: at(-1) },
+      { id: "R2", case_id: "DONE", verdict: "issue", ts: at(-1) },
+    ],
+  });
+  assert.deepEqual(buildAttention(s, buildCases(s), NOW).map((i) => i.id), ["review:R1"]);
+});
+
 test("diffSnapshots emits exactly the new events and nothing when unchanged", () => {
   const base = snap({
     case: [{ case_id: "C1", opened_at: at(0) }],
@@ -595,4 +609,54 @@ test("diffSnapshots: live doc reads count only alongside their audit row", () =>
   // Simulated reads carry their own timestamp and need no audit row.
   const sim = snap({ doc_read: [{ id: "DR-s", task_id: "T1", doc_ref: "doc:s", ts: at(4) }] });
   assert.equal(diffSnapshots(base, sim).filter((e) => e.type === "doc_read").length, 1);
+});
+
+
+/* ---------------------------- imported history ---------------------------- */
+
+const HIST = "HIST-LD-0915-3FA2C1";
+
+test("imported cases are flagged, need nothing and stay out of agent metrics", () => {
+  const s = snap({
+    case: [
+      { case_id: HIST, load_id: "LD-0915-3FA2C1", title: "Mesa invoice on LD-0915-3FA2C1", status: "resolved", opened_at: at(-30 * 86_400), resolved_at: at(-29 * 86_400) },
+      { case_id: "CASE-1", title: "Live", status: "resolved", opened_at: at(-120), resolved_at: at(-60) },
+    ],
+    task: [task({ task_id: "T1", case_id: "CASE-1", a2a_state: "completed" })],
+    invoice: [{ id: "INV-H", case_id: HIST, carrier_id: "C-1", amount: 1700, paid_amount: 0, issued_at: at(-30 * 86_400), status: "open" }],
+  });
+  const cases = buildCases(s);
+  assert.equal(cases.get(HIST)!.imported, true);
+  assert.equal(cases.get("CASE-1")!.imported, false);
+  assert.deepEqual(cases.get(HIST)!.attention, []);
+  assert.deepEqual(cases.get(HIST)!.tasks, []);
+  const m = buildOpsMetrics(s, cases, NOW);
+  assert.equal(m.casesTotal, 2);
+  assert.equal(m.casesResolved, 2);
+  assert.equal(m.casesNeedingYou, 0);
+  assert.equal(m.medianResolutionS, 60, "only the live case's resolution time counts");
+  assert.equal(m.minutesSaved, 18);
+  assert.equal(m.automationRate, 1);
+  assert.deepEqual(buildAttention(s, cases, NOW), []);
+});
+
+test("an imported case landing is not a new-case event", () => {
+  const next = snap({ case: [{ case_id: HIST, opened_at: at(-30 * 86_400) }, { case_id: "CASE-2", opened_at: at(0) }] });
+  const opened = diffSnapshots(snap(), next).filter((e) => e.type === "case_opened").map((e) => e.caseId);
+  assert.deepEqual(opened, ["CASE-2"]);
+});
+
+test("buildFinance counts accessorial revenue and expense with freight", () => {
+  const s = snap({
+    ledger_entry: [
+      { id: "B", posted_at: at(-3600), lines: [{ account: "accounts_receivable", debit: 1250, credit: 0 }, { account: "freight_revenue", debit: 0, credit: 1000 }, { account: "accessorial_revenue", debit: 0, credit: 250 }] },
+      { id: "C", posted_at: at(-3500), lines: [{ account: "freight_expense", debit: 850, credit: 0 }, { account: "accessorial_expense", debit: 200, credit: 0 }, { account: "accounts_payable", debit: 0, credit: 1050 }] },
+    ],
+  });
+  const f = buildFinance(s, NOW);
+  assert.equal(f.revenue30d, 1250);
+  assert.equal(f.expense30d, 1050);
+  assert.equal(f.ar, 1250);
+  assert.equal(f.ap, 1050);
+  assert.equal(f.since, null);
 });

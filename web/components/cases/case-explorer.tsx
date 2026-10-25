@@ -176,6 +176,7 @@ export default function CaseExplorer() {
           ...c.agents.flatMap((a) => [a, AGENT_META[a].name, AGENT_META[a].nick]),
           ...c.tasks.flatMap((t) => [t.skill, skillLabel(t.skill)]),
           KIND_LABEL[kind],
+          c.imported ? "imported history" : "",
         ]
           .join(" ")
           .toLowerCase();
@@ -449,7 +450,7 @@ function CaseRow({ c, kind, now, top, fresh }: { c: CaseView; kind: CaseKind; no
             />
           ))
         ) : (
-          <span className="fl-mute fl-micro">queued</span>
+          <span className="fl-mute fl-micro">{c.imported ? "imported" : "queued"}</span>
         )}
       </span>
       <span className={`num fl-mono cx-age ${resolved ? "" : "live"}`}>{c.openedAt ? shortDur(caseDuration(c, now)) : null}</span>

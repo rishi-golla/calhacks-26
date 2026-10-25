@@ -14,13 +14,17 @@
  * - A row with no known case is in scope by its own timestamp.
  * - Ledger entries go by their own `posted_at` only, whatever their case:
  *   finance totals every posting since the epoch.
+ * - Imported history (lib/history: `HIST-` cases and journals) is the
+ *   company's past, not earlier activity: it stays in scope whatever its date,
+ *   so Finance shows the imported books plus live activity since the epoch.
  *
  * Reference and state tables (agents, config, companies, metrics, memory)
  * are never scoped. The case page reads the unscoped snapshot, so a
  * direct link to an earlier case still opens.
  */
 import { str, timestamp, type Row, type Snapshot, type TableName } from "./data";
-import { taskView, type LiveEvent } from "./ops";
+import { isImportedId, isImportedRow } from "./history";
+import { taskView, type FinanceOptions, type LiveEvent } from "./ops";
 
 export type ViewEpoch = {
   /** Epoch in ms. */
@@ -128,7 +132,7 @@ export function viewScope(snapshot: Snapshot, since: number): ViewScope {
   for (const row of snapshot.case) {
     const id = str(row.case_id, "");
     known.add(id);
-    if (timestamp(row.opened_at) >= since) cases.add(id);
+    if (timestamp(row.opened_at) >= since || isImportedId(id)) cases.add(id);
     else earlier.add(id);
   }
   const carried = carriedOver(snapshot, since, earlier);
@@ -148,7 +152,7 @@ function caseOf(row: Row, scope: ViewScope): string {
 
 export function rowInScope(table: TableName, row: Row, scope: ViewScope): boolean {
   if (!(table in ROW_TIME)) return true;
-  if (table === "ledger_entry") return timestamp(row.posted_at) >= scope.since;
+  if (table === "ledger_entry") return isImportedRow(row) || timestamp(row.posted_at) >= scope.since;
   const caseId = caseOf(row, scope);
   if (caseId) return scope.cases.has(caseId);
   // A live doc read has neither a case nor a timestamp; it is dated by its task.
@@ -175,6 +179,22 @@ export function scopeSnapshot(snapshot: Snapshot, scope: ViewScope, previous?: S
   if (next.case.length === snapshot.case.length) next.case = snapshot.case;
   else if (sameRows(previous?.case, next.case)) next.case = previous!.case;
   return next;
+}
+
+/** The snapshot carries imported history (any `HIST-` journal or case). */
+export function hasImportedHistory(snapshot: Snapshot): boolean {
+  return snapshot.ledger_entry.some(isImportedRow) || snapshot.case.some((row) => isImportedId(row.case_id));
+}
+
+/**
+ * How Finance totals a scoped snapshot. With an epoch and no imported history,
+ * the tiles total activity since the epoch. With imported history the scoped
+ * ledger is the company's books plus live postings since the epoch, so the
+ * usual 30-day and month-to-date windows apply. Under any epoch, cash comes
+ * from the ledger rows, never the all-time `cash_position` metric.
+ */
+export function financeScope(since: number | undefined, history: boolean): FinanceOptions {
+  return { since: history ? undefined : since, ledgerCash: since !== undefined };
 }
 
 /** Live events in scope: by their case when it is known, else by their time. */

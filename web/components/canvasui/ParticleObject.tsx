@@ -657,7 +657,10 @@ export function createParticleObject(
       alpha: true,
       powerPreference: "high-performance",
     });
-  } catch {
+  } catch (error) {
+    // No renderer (WebGL denied or lost since the caller probed it): report it
+    // so the caller can show its fallback instead of an empty canvas.
+    config.onError?.(error);
     return null;
   }
 

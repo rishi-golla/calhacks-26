@@ -316,7 +316,10 @@ def _readiness(executor):
             raise ValueError("live mode requires the service actor SpacetimeDB credential")
         if not os.getenv("SPACETIME_URL") or not os.getenv("SPACETIME_DB"):
             raise ValueError("live mode requires explicit SpacetimeDB URL and database")
-        if not os.getenv("SOURCE_DATA_PATH") or not Path(os.environ["SOURCE_DATA_PATH"]).is_file():
+        from common.source_repository import source_backend
+        # SpacetimeDB is required above, so the spacetime backend needs no local file.
+        if source_backend() == "file" and (not os.getenv("SOURCE_DATA_PATH")
+                                           or not Path(os.environ["SOURCE_DATA_PATH"]).is_file()):
             raise ValueError("live mode requires an accessible source dataset")
         credentials = [os.getenv(f"A2A_TOKEN_{actor.upper()}", "") for actor in sorted(SERVICE_ACTORS)]
         if any(not value for value in credentials) or len(set(credentials)) != len(credentials):

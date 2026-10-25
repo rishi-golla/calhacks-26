@@ -38,6 +38,9 @@ resolved ones):
 .venv/bin/python -m scripts.spacetime_cloud settle-cases
 ```
 
+Run it again after the publish that adds the duplicate-only rule, so re-numbered invoice cases
+(`CASE-<load>-R`) that P-007 dispatched only as a `duplicate` resolve.
+
 The same publish adds the public `view_epoch` table ("Start fresh"). Publish it before deploying a
 dashboard build that subscribes to `view_epoch`, or that build's live subscription and snapshot fail.
 

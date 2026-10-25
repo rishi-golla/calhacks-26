@@ -171,12 +171,22 @@ provisioning can call it after every publish.
 ### Case settlement
 
 Case status follows the work on the case. At the end of `upsert_task`, `record_delegation`,
-`enqueue_first_hop`, `ack_outbox`, `add_review`, `request_approval`, `decide_approval`,
-`raise_flag` and `resolve_flag`, the module re-derives the status of the affected case inside
-the same transaction:
+`enqueue_first_hop`, `record_dispatch`, `ack_outbox`, `add_review`, `request_approval`,
+`decide_approval`, `raise_flag` and `resolve_flag`, the module re-derives the status of the
+affected case inside the same transaction:
 
 - `human_owned` cases, and cases with no task yet (opened by ingest, first hop not delivered),
-  are left alone.
+  are left alone, except a case the router dispatched only as a `duplicate` (below).
+- **Duplicate only**: a case with no task, at least one `duplicate` dispatch row, and nothing
+  delivered on it (no `queued` or `accepted` dispatch row, and no duplicate keeping a task that is
+  not another case's) is finished work, for example a re-numbered invoice case (`CASE-<load>-R`)
+  whose invoice P-007 blocked. It settles by the rules below as if its tasks were all complete,
+  normally `resolved`; that change set's audit event has `reason_code = duplicate` and summary
+  `duplicate: <the latest duplicate row's reason>` unless the caller supplied its own. A P-007
+  duplicate of an accepted event carries the original case's task and still counts as nothing
+  delivered here; the task is another case's when its mirror is, or, before the mirror arrives,
+  when another case's dispatch row carries it. If new work (a first hop) is later routed to such a case while it is resolved,
+  it goes back to `open`, awaiting its first task; a task reopens it as usual.
 - **Active** (`in_progress`): a task is non-terminal (`submitted`, `working`, `input-required`,
   `auth-required`), a `routing_outbox` row for the case is not `done`, an approval is `pending`
   and unexpired, or a flag is `open` or `reviewing`.
@@ -190,9 +200,10 @@ A resolved case changes only when the mutation creates new work: a new task, del
 hop, approval request or flag, or an `issue` review. Leaving `resolved` clears `resolved_at`.
 An explicit `update_case(resolved)` is therefore not undone by the caller's own task finishing,
 or by the reviews it enqueues; a later new task (for example the Validator's review task) or an
-issue does reopen it. A status change is captured as `case` cells in the triggering mutation's
-change set, under the case chain; nothing is written when the status is unchanged.
-`update_case` remains the explicit override. No tables or indexes change.
+issue does reopen it. A `record_dispatch` observation is never new work. A status change is
+captured as `case` cells in the triggering mutation's change set, under the case chain; nothing is
+written when the status is unchanged. `update_case` remains the explicit override. No tables or
+indexes change; the duplicate rule reads `dispatch` through its existing `case_id` index.
 An approval that expires undecided stops counting as active, but expiry alone triggers no reducer;
 the requesting task normally settles the case when it finishes, and `settle_cases` can be re-run.
 

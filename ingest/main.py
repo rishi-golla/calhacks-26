@@ -466,7 +466,7 @@ def _remittance_advice(trigger: dict, message: dict, db: sqlite3.Connection) -> 
     invoice = _read_json(row)
     if not invoice:
         if invoice_id:
-            # A collections clerk applying unreferenced cash reads the advice that came with it (UNAPPLIED_CASH).
+            # Kept so a deposit arriving under this unknown reference can be matched by the PO the advice cites.
             po_match = re.search(r"\(PO\s+([^)\s]+)\)", message.get("body", ""), re.IGNORECASE)
             db.execute("INSERT OR REPLACE INTO remittances(reference, json) VALUES (?,?)", (invoice_id, _dump({
                 "reference": invoice_id, "po": po_match.group(1) if po_match else None,

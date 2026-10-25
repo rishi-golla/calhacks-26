@@ -100,6 +100,22 @@ class CarrierAPAgent(FreightAgent):
         if amount <= 0:
             return await finish(self, env, task_id, outcome="clear", findings={"already_paid": True, "workings": workings},
                                 evidence_refs=refs)
+        # A rerun (for example after a Validator review) must not propose the same invoice twice: the module
+        # refuses a proposal beyond the invoice's available balance, which used to fail the rerun outright.
+        existing = source.get("payment_proposals", []) if source_fixtures_only() else await rows(
+            self.name, "payment_proposal", "invoice_id", invoice_id)
+        proposed = sum((money(row.get("amount", 0)) for row in existing if row.get("status") != "cancelled"),
+                       money(0))
+        if proposed >= amount:
+            current = next((row for row in existing if row.get("status") != "cancelled"), {})
+            workings.append(working("Already proposed for this invoice", "sum(payment_proposal.amount)",
+                                    {"proposed": number(proposed), "open_balance": number(amount)}, proposed,
+                                    basis="pay once: reuse the standing proposal"))
+            findings = {"match": match, "workings": workings, "payment_proposal": {
+                "id": current.get("id", ""), "decision": "allow", "reused": True}}
+            findings.update(await self.book_payable(env, meta, task_id, source, invoice_id, amount))
+            return await finish(self, env, task_id, outcome="approve", findings=findings, evidence_refs=refs,
+                                policy_ids=["P-002"])
         proposal_id = identifier(task_id, "payment_proposal")
         payload = {"id": proposal_id, "invoice_id": invoice_id, "amount": number(amount)}
         if money(source["invoice_amount"]) > 5000:

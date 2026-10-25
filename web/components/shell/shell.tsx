@@ -21,7 +21,7 @@ export default function Shell({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const title = NAV.find((n) => (n.exact ? pathname === n.href : pathname.startsWith(n.href)))?.label ?? "FreightLine";
   return (
-    <div className="fl">
+    <div className={`fl ${pathname === "/" ? "theme-mono" : ""}`}>
       <Intro onDone={() => setReady(true)} />
       <div className="fl-shell" style={{ opacity: ready ? 1 : 0, transition: "opacity 400ms var(--ease-out)" }}>
         <aside className="fl-rail">

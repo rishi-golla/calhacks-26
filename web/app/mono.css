@@ -1,0 +1,428 @@
+/*
+ * Monochrome theme (`.fl.theme-mono`): near-black, white/grey type, rounded
+ * soft-gradient cards, pill controls, sentence-case Inter throughout.
+ * Colour is kept only for status (attention, failures, holds).
+ */
+
+.fl.theme-mono {
+  --bg-0: #050505;
+  --bg-1: #0d0d0e;
+  --bg-2: #141416;
+  --bg-3: #1d1d20;
+  --line: rgba(255, 255, 255, 0.09);
+  --line-soft: rgba(255, 255, 255, 0.05);
+  --line-strong: rgba(255, 255, 255, 0.28);
+  --text: #f4f4f5;
+  --text-dim: #a1a1aa;
+  --text-mute: #71717a;
+  --teal: #e4e4e7;
+  --aqua: #a1a1aa;
+  --lilac: #8b8b93;
+  --yellow: #e2c46b;
+  --orange: #eea35f;
+  --coral: #c4c4c8;
+  --red: #f0716f;
+  --ok: #7fd8a8;
+  --warn: #e2c46b;
+  --hot: #eea35f;
+  --bad: #f0716f;
+  --info: #a1a1aa;
+  --agent: #a1a1aa;
+  --font-display: var(--font-body);
+  --font-label: var(--font-body);
+  --font-mono: var(--font-body);
+  --radius: 16px;
+  --card: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015)), #09090a;
+  --card-edge: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+  background:
+    radial-gradient(1200px 520px at 50% -120px, rgba(255, 255, 255, 0.07), transparent 70%),
+    var(--bg-0);
+  letter-spacing: -0.011em;
+}
+.fl.theme-mono *,
+.fl.theme-mono *::before,
+.fl.theme-mono *::after {
+  text-transform: none !important;
+  letter-spacing: inherit;
+}
+.fl.theme-mono :is(.fl-num, .fl-mono, td.num, th.num) {
+  font-variant-numeric: tabular-nums;
+}
+.fl.theme-mono ::selection {
+  background: #fff;
+  color: #000;
+}
+.fl.theme-mono ::-webkit-scrollbar-thumb {
+  background: var(--bg-3);
+  border-radius: 10px;
+}
+.fl.theme-mono button:focus-visible,
+.fl.theme-mono a:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.5);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+.fl.theme-mono :where(input, select, textarea) {
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* ------------------------------- type ------------------------------- */
+.fl.theme-mono :is(.fl-display, .fl-display-wide) {
+  font-variation-settings: normal;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+}
+.fl.theme-mono :is(.fl-label, .fl-micro, .fl-section) {
+  font-weight: 500;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.fl.theme-mono .fl-micro {
+  font-size: 12px;
+  color: var(--text-mute);
+}
+.fl.theme-mono .fl-section {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text);
+}
+.fl.theme-mono .fl-section::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-mute);
+}
+
+/* ----------------------------- surfaces ----------------------------- */
+.fl.theme-mono .fl-panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--card-edge);
+}
+.fl.theme-mono .fl-panel.raised {
+  background: rgba(255, 255, 255, 0.05);
+}
+.fl.theme-mono .fl-panel-head {
+  border-bottom-color: var(--line-soft);
+}
+.fl.theme-mono .fl-ticks::before,
+.fl.theme-mono .fl-ticks::after,
+.fl.theme-mono .fl-scanlines::after {
+  display: none;
+}
+
+/* ------------------------------- chips ------------------------------- */
+.fl.theme-mono .fl-chip {
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-dim);
+}
+.fl.theme-mono .fl-chip.outline {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--line);
+  color: var(--text);
+}
+.fl.theme-mono .fl-chip.outline:is(.hot, .bad, .warn) {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.fl.theme-mono .fl-chip.solid {
+  background: #fff;
+  color: #000;
+}
+.fl.theme-mono .fl-dot {
+  border-radius: 50%;
+}
+
+/* ------------------------------ buttons ------------------------------ */
+.fl.theme-mono .fl-btn {
+  border-radius: 999px;
+  font-weight: 500;
+  font-size: 13px;
+  padding: 7px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.fl.theme-mono .fl-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.fl.theme-mono .fl-btn.primary {
+  background: #fff;
+  border-color: #fff;
+  color: #000;
+}
+.fl.theme-mono .fl-btn.primary:hover {
+  background: #e4e4e7;
+  color: #000;
+}
+.fl.theme-mono .fl-btn.small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* -------------------------- segmented tabs -------------------------- */
+.fl.theme-mono .fl-tabs {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.fl.theme-mono .fl-tab {
+  border: 0;
+  border-radius: 999px;
+  font-weight: 500;
+  font-size: 12.5px;
+  padding: 5px 12px;
+}
+.fl.theme-mono .fl-tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+.fl.theme-mono .fl-tab.active {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+/* ------------------------------- tables ------------------------------- */
+.fl.theme-mono .fl-table th {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-mute);
+  border-bottom-color: var(--line-soft);
+}
+
+/* -------------------------------- shell -------------------------------- */
+.fl.theme-mono .fl-rail {
+  background: rgba(10, 10, 11, 0.6);
+  border-right-color: var(--line-soft);
+}
+.fl.theme-mono .fl-brand,
+.fl.theme-mono .fl-rail-foot {
+  border-color: var(--line-soft);
+}
+.fl.theme-mono .fl-brand-name {
+  font-variation-settings: normal;
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+}
+.fl.theme-mono .fl-brand-name small {
+  font-weight: 400;
+  font-size: 11.5px;
+}
+.fl.theme-mono .fl-brand-mark i {
+  border-radius: 2px;
+}
+.fl.theme-mono .fl-brand-mark i:nth-child(2) {
+  background: #a1a1aa;
+}
+.fl.theme-mono .fl-brand-mark i:nth-child(3) {
+  background: #52525b;
+}
+.fl.theme-mono .fl-nav {
+  padding: 8px 10px;
+}
+.fl.theme-mono .fl-nav-group {
+  padding: 14px 8px 6px;
+  font-size: 12px;
+  color: var(--text-mute);
+}
+.fl.theme-mono .fl-nav-item {
+  border-left: 0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-weight: 500;
+  font-size: 14px;
+}
+.fl.theme-mono .fl-nav-item.active {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.fl.theme-mono .fl-nav-item .fl-count {
+  border-radius: 999px;
+  background: #fff;
+  color: #000;
+  font-weight: 600;
+  padding: 1px 7px;
+}
+.fl.theme-mono .fl-topbar {
+  background: rgba(5, 5, 5, 0.6);
+  border-bottom-color: var(--line-soft);
+}
+.fl.theme-mono .fl-crumb {
+  font-size: 13px;
+}
+.fl.theme-mono .fl-source {
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--text);
+}
+.fl.theme-mono .fl-popover {
+  border-radius: 14px;
+}
+
+/* ------------------------- finance: hero header ------------------------- */
+.fl.theme-mono .fh {
+  position: relative;
+  gap: 18px;
+}
+.fl.theme-mono .fh > :not(.fm-wave) {
+  position: relative;
+  z-index: 1;
+}
+.fm-wave {
+  position: absolute;
+  top: -22px;
+  left: -24px;
+  right: -24px;
+  height: 420px;
+  pointer-events: none;
+  z-index: 0;
+  mask-image: linear-gradient(to bottom, transparent, #000 15%, #000 55%, transparent 92%);
+}
+.fm-wave svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.fl:not(.theme-mono) .fm-wave {
+  display: none;
+}
+.fl.theme-mono .fh-header {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 18px;
+  padding: 44px 0 34px;
+}
+.fl.theme-mono .fh-header-id {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.fl.theme-mono .fh-header .fl-section {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(20, 20, 22, 0.7);
+  backdrop-filter: blur(8px);
+  font-size: 12.5px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.fl.theme-mono .fh-header .fl-section::before {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+.fl.theme-mono .fh-wordmark {
+  margin-top: 18px;
+  font-size: clamp(40px, 5.4vw, 72px);
+  font-weight: 500;
+  letter-spacing: -0.045em;
+  line-height: 1.02;
+  background: linear-gradient(180deg, #fff 30%, #a1a1aa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.fl.theme-mono .fh-header-sub {
+  margin-top: 14px;
+  font-size: 16px;
+  color: var(--text-dim);
+}
+.fl.theme-mono .fh-header-status {
+  align-items: center;
+}
+.fl.theme-mono .fh-chips {
+  justify-content: center;
+}
+.fl.theme-mono .fh-chips .fl-chip {
+  padding: 7px 14px;
+  font-size: 13px;
+  background: rgba(16, 16, 18, 0.8);
+  backdrop-filter: blur(8px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* --------------------------- finance: cards --------------------------- */
+.fl.theme-mono .fh-kpis {
+  gap: 12px;
+  background: none;
+  border: 0;
+}
+.fl.theme-mono .fh-kpi {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--card-edge);
+  padding: 16px 18px 14px;
+}
+.fl.theme-mono .fh-kpi::before {
+  display: none;
+}
+.fl.theme-mono :is(.fh-kpi-label, .fh-stat-label) {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.fl.theme-mono .fh-kpi-value {
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+.fl.theme-mono .fh-kpi-foot {
+  font-size: 12.5px;
+}
+.fl.theme-mono .fh-delta {
+  border-radius: 6px;
+  font-size: 11.5px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-dim);
+}
+.fl.theme-mono :is(.fh-delta.ok, .fh-delta.hot) {
+  background: rgba(255, 255, 255, 0.07);
+}
+.fl.theme-mono .fh-delta.ok {
+  color: var(--ok);
+}
+.fl.theme-mono .fh-ok {
+  color: var(--ok);
+}
+.fl.theme-mono :is(.fh-axis, .fh-legend, .fh-fc-meta, .fh-fc-note, .fh-cash-sub, .fh-att-age, .fh-att-why) {
+  font-size: 12px;
+}
+.fl.theme-mono .fh .fh-att-filter button {
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.fl.theme-mono .fh-att-tag {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.fl.theme-mono .fh-att-row {
+  border-radius: 12px;
+}
+.fl.theme-mono :is(.fh-bar.out, .fh-legend i.out) {
+  background: #5b5b63;
+}
+.fl.theme-mono :is(.fh-bar.in, .fh-legend i.in) {
+  background: #e4e4e7;
+}
+.fl.theme-mono .fh-fc-value.hot {
+  color: var(--text);
+}

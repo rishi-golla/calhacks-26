@@ -21,6 +21,7 @@ import { change, count, dayLabel, emptyNote, signedShort, usd, usdShort } from "
 import { InvoicesPanel } from "./invoices-table";
 import { LiveTicker } from "./live-ticker";
 import "./finance.css";
+import { DotWave } from "./dot-wave";
 
 const pct1 = (v: number) => `${v.toFixed(1)}%`;
 const perHour = (v: number) => `${Math.round(v)}/h`;
@@ -30,6 +31,7 @@ const reveal = (i: number) => ({ "--delay": `${i * 70}ms` }) as CSSProperties;
 export default function FinanceHome() {
   return (
     <div className="fl-page fh">
+      <DotWave />
       <Header />
       <KpiTiles />
       <div className="fh-row fh-row-main fl-reveal" style={reveal(2)}>
@@ -197,7 +199,7 @@ function KpiTiles() {
       label: "Revenue MTD",
       short: "Rev MTD",
       value: finance.revenueMtd,
-      color: "var(--yellow)",
+      color: "var(--coral)",
       series: series.revenue,
       good: "up",
       delta: <span className="fh-delta flat">30d {usdShort(finance.revenue30d)}</span>,

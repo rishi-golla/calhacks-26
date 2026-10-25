@@ -16,6 +16,7 @@ import math
 import os
 import pathlib
 import random
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -471,9 +472,75 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
     return steps
 
 
+def raw_maxlen() -> int:
+    """Cap on Redis `raw` (approximate MAXLEN). Entries past it are trimmed whether or not ingest has read them, so
+    keep it well above the longest backlog ingest may build up."""
+    value = os.getenv("RAW_STREAM_MAXLEN", "200000")
+    try:
+        cap = int(value)
+    except ValueError:
+        cap = 0
+    if cap <= 0:
+        raise ValueError(f"RAW_STREAM_MAXLEN must be a positive integer, got {value!r}")
+    return cap
+
+
+RAW_STREAM_WARN_FRACTION = 0.8
+RAW_STREAM_CHECK_S = 5.0
+INGEST_GROUP = "ingest"  # ingest.main.GROUP, the consumer group reading `raw`
+_last_length_check = 0.0
+
+
+def _text(value) -> str:
+    return value.decode() if isinstance(value, bytes) else str(value or "")
+
+
+def _stream_id(value) -> tuple[int, int]:
+    millis, _, seq = _text(value).partition("-")
+    return int(millis or 0), int(seq or 0)
+
+
+async def unread_backlog(r: redis.Redis) -> tuple[int | None, bool]:
+    """(entries ingest has not read yet, whether unread entries were already trimmed). The count is the group's
+    `lag` (Redis 7+). Without it, the group's last-delivered ID is compared with the oldest retained entry: if it
+    is older, everything retained is unread and the gap has been trimmed; otherwise the backlog is unknown."""
+    groups = await r.xinfo_groups(RAW_STREAM)
+    group = next((g for g in groups if _text(g.get("name")) == INGEST_GROUP), None)
+    if group is None:
+        return int(await r.xlen(RAW_STREAM)), False  # ingest has not joined yet: nothing has been read
+    if group.get("lag") is not None:
+        return int(group["lag"]), False
+    info = await r.xinfo_stream(RAW_STREAM)
+    first = info.get("first-entry")
+    if first and _stream_id(group.get("last-delivered-id")) < _stream_id(first[0]):
+        return int(info.get("length") or 0), _text(group.get("last-delivered-id")) != "0-0"
+    return None, False
+
+
+async def _warn_near_cap(r: redis.Redis, cap: int) -> None:
+    """At most every RAW_STREAM_CHECK_S, warn when ingest's unread backlog nears the cap; never fails a publish."""
+    global _last_length_check
+    now = time.monotonic()
+    if now - _last_length_check < RAW_STREAM_CHECK_S:
+        return
+    _last_length_check = now
+    try:
+        backlog, trimmed = await unread_backlog(r)
+    except Exception:  # noqa: BLE001 -- the check is advisory; publishing must not depend on it
+        return
+    if trimmed:
+        log.warning("Redis %s trimmed entries ingest had not read (RAW_STREAM_MAXLEN=%d); arrivals were lost",
+                    RAW_STREAM, cap)
+    elif backlog is not None and backlog >= cap * RAW_STREAM_WARN_FRACTION:
+        log.warning("ingest is %d entries behind on Redis %s, %.0f%% of RAW_STREAM_MAXLEN=%d; unread arrivals past "
+                    "the cap are trimmed", backlog, RAW_STREAM, 100 * backlog / cap, cap)
+
+
 async def publish(r: redis.Redis | None, ev: dict) -> None:
     if r is not None:
-        await r.xadd(RAW_STREAM, {"json": json.dumps(ev)}, maxlen=20_000, approximate=True)
+        cap = raw_maxlen()
+        await r.xadd(RAW_STREAM, {"json": json.dumps(ev)}, maxlen=cap, approximate=True)
+        await _warn_near_cap(r, cap)
     events.append_event(ev)
 
 
@@ -498,6 +565,7 @@ async def stream_load(r: redis.Redis, load: dict, scenario: str, rnd: random.Ran
                       overrides: dict | None = None, backdate: timedelta | None = None,
                       source: str = "sim", fast_forward_to: str | None = None, pins: dict | None = None) -> None:
     load["_event_source"] = source
+    raw_maxlen()  # fail before the answer key records a load that could never be published
     clk = await clock.load(r, heartbeat=True)
     if fast_forward_to:
         t0, steps = fast_forward(load, scenario, rnd, clk.now(), fast_forward_to, overrides, pins)
@@ -528,6 +596,7 @@ async def launch(load: dict, scenario: str, r: redis.Redis | None, injection: di
                  fast_forward_to: str | None = None) -> asyncio.Task:
     """Announce an operator-injected load (`scenario.injected`) and stream it in the background. Returns the
     streaming task once the announcement is in `raw`."""
+    raw_maxlen()  # fail before announcing a load that could never stream
     owns_redis = r is None
     client = r or redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     load["_event_source"] = "demo"
@@ -687,6 +756,7 @@ async def retention_loop() -> None:
 
 
 async def main() -> None:
+    raw_maxlen()  # fail fast on a bad RAW_STREAM_MAXLEN
     world = ensure()
     await seed_hero(world)
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))

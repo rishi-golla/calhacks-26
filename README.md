@@ -45,7 +45,7 @@ make test
 ```
 
 Service targets (`agents`, `gateway`, `router`, `ingest`, `sim`, `world`, `source`, `harness`,
-`review-worker`) load `.env` themselves; pick another profile with `ENV_FILE=path/to/file.env`.
+`review-worker`, `evaluator`) load `.env` themselves; pick another profile with `ENV_FILE=path/to/file.env`.
 Variables already set in your shell take precedence. `make test`, `make lint` and `make demo` never
 load it, so a live profile in `.env` cannot reach the test suite. Don't `source` a live `.env` into
 the shell you run tests from.
@@ -149,6 +149,24 @@ SIM_DATA_DIR=/tmp/w4-data WORLD_FILE=/tmp/w4-data/world.json .venv/bin/python -m
   --replay /tmp/w4-data/events.jsonl --db /tmp/w4-data/replay.db   # -> /tmp/w4-data/source.json
 ```
 `make verify-data` defaults to `data/` and writes `verify_report.json` there.
+
+`RAW_STREAM_MAXLEN` (default 200000) caps Redis `raw`. Redis trims past the cap whether or not ingest has read an
+entry, so the simulator warns when ingest's unread backlog (the `ingest` group's lag) reaches 80% of the cap, and
+when unread entries have already been trimmed.
+
+### Evaluator (G6/T10)
+`make evaluator` joins `$SIM_DATA_DIR/answer_key.jsonl` to the agents' decisions in SpacetimeDB (cases, root tasks,
+holds, payment proposals, calls) and writes the scoreboard to `metric` with `set_metric`: `precision`, `recall`,
+`dollars_caught`, `false_holds`, `median_resolution_s` and `calls_placed` (the dashboard's scoreboard), plus
+coverage, false-hold rate and per-scenario and per-lane breakdowns. A load is scored once nothing on it is in flight
+(a parked top-level task counts as an escalated hold), or once it has expired: the simulator's business clock is past
+its last scheduled step (`EVALUATOR_LIFECYCLE_DAYS`, default 9) and nothing changed for `EVALUATOR_GRACE_S` (default
+900); an error still undecided then counts as missed. Undefined ratios are written as -1, which the dashboard shows
+as "—", and unchanged figures are not rewritten. The answer key lives only where the simulator runs, so the
+evaluator runs on that machine (the ASUS), reads the business clock from its Redis, and only calls out to Maincloud;
+it needs `SPACETIME_DISABLED=0` and `SPACETIME_TOKEN_EVALUATOR`. `python -m evaluator.main --once --dry-run` prints the scoreboard without writing, and
+`--rows FILE` scores a saved table snapshot offline (`--dump-rows FILE` saves one). See `evaluator/main.py` for the
+definitions.
 
 ## Rules
 - `OUTREACH_MODE=demo`: calls/emails are only ever routed to `DEMO_ALLOWLIST_*`; the real contact is shown as `intended_to`.

@@ -21,7 +21,7 @@ from agents.documents.tools import check_packet
 from agents.risk.tools import audit_charges, charge_workings
 from common.agent_support import identifier, journal_lines, matched_deposit_total, money
 from common.envelope import Friction, Lesson, ResultArtifact, ReviewOutput
-from common.learning import apply_instruction_patch
+from common.learning import apply_instruction_patch, memory_scope
 from common.policy import APPROVAL_THRESHOLD_USD, CONTRACT_TOLERANCE
 from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
 from common.workings import plain, refs_for, working
@@ -611,9 +611,8 @@ def deterministic_review(bundle: dict) -> ReviewOutput:
     # the task is still rerun, but it teaches no lesson.
     judged = not any(item["name"] in RUN_FAILURES for item in failures)
     if failures and role in FINANCIAL_AGENTS and judged:
-        scope = {key: str(source[key]) for key in ("carrier_id", "lane", "claim_type") if source.get(key)}
-        if skill:
-            scope["skill"] = skill
+        # The same scope every reader derives (common.learning.memory_scope), so the lesson is found again.
+        scope = memory_scope(source, skill)
         lessons.append(Lesson(agent=role, type="memory", scope=scope, text_or_diff=lesson_text(skill, failures),
                               confidence=0.9, evidence_refs=artifact.evidence_refs if artifact else []))
     return ReviewOutput(verdict="issue" if failures else "pass", checks=c.items, friction=friction,
@@ -654,12 +653,36 @@ def grounded_issues(issues: list[str], checks: list[dict]) -> tuple[list[str], l
     return grounded, [issue for issue in issues if issue not in grounded]
 
 
-def instruction_proposal(original: str) -> str:
-    """Generate a bounded advisory patch; no incoming model/flag text becomes instructions."""
-    reminder = "\nBefore completing a result, cite the source records and recheck monetary totals in exact cents.\n"
-    if reminder.strip() in original:
+# Mirrors validateAutomatedInstruction in the SpacetimeDB module, which enforces the same bounds.
+CONTROL_WORDS = re.compile(r"\b(ignore|disregard|override|bypass|disable|allowlist|permissions?|credentials?"
+                           r"|passwords?|tokens?|api keys?)\b", re.IGNORECASE)
+MAX_LEARNED_LINES = 8
+
+
+def plain_text(value, limit: int) -> str:
+    """One printable-ASCII line: model-drafted learning never carries markup, control characters or newlines."""
+    text = " ".join(str(value or "").split())
+    return "".join(ch for ch in text if " " <= ch <= "~")[:limit].strip()
+
+
+def drafted_lesson(draft: dict) -> str:
+    text = plain_text(draft.get("lesson"), 900)
+    return text if len(text) >= 20 and not CONTROL_WORDS.search(text) else ""
+
+
+def learned_line(draft: dict) -> str:
+    text = plain_text(draft.get("instruction"), 290)
+    return f"Learned: {text}" if len(text) >= 10 and not CONTROL_WORDS.search(text) else ""
+
+
+def instruction_proposal(original: str, line: str = "") -> str:
+    """Generate a bounded append-only patch: the code-owned reminder, or one model-drafted learned line."""
+    line = line or "Before completing a result, cite the source records and recheck monetary totals in exact cents."
+    lines = original.splitlines()
+    if line in lines or (line.startswith("Learned: ") and
+                         sum(x.startswith("Learned: ") for x in lines) >= MAX_LEARNED_LINES):
         return ""
-    revised = original + reminder
+    revised = original + f"\n{line}\n"
     patch = "".join(difflib.unified_diff(original.splitlines(keepends=True), revised.splitlines(keepends=True),
                                        fromfile="a/instructions.md", tofile="b/instructions.md", n=0))
     if apply_instruction_patch(original, patch) != revised:

@@ -4,19 +4,18 @@
  * back office that keeps it, in real time. Everything renders from `useOps()`
  * (live SpacetimeDB or the labeled browser simulation); nothing polls.
  *
- * Top to bottom: 4 KPI tiles → cash + forecast | needs attention →
- * operations → agent crew → invoices & payments | activity.
+ * Top to bottom: header → 4 KPI tiles → cash + forecast | needs attention.
+ * Operations and invoices live on their own routes (/operations, /invoices).
  */
 import { Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useOps } from "@/components/data-provider";
-import { AgentCrew } from "./agent-crew";
+import { AGENT_IDS } from "@/lib/agents";
+import { fmtAgo } from "@/lib/ops";
 import { AttentionQueue } from "./attention-queue";
 import { ForecastBars, LineChart, Sparkline } from "./charts";
 import { CountUp } from "./count-up";
 import { change, count, dayLabel, emptyNote, usd, usdShort } from "./format";
-import { InvoicesPanel } from "./invoices-table";
-import { LiveTicker } from "./live-ticker";
 import "./finance.css";
 
 const pct1 = (v: number) => `${v.toFixed(1)}%`;
@@ -26,26 +25,63 @@ const reveal = (i: number) => ({ "--delay": `${i * 70}ms` }) as CSSProperties;
 
 export default function FinanceHome() {
   return (
-    <div className="fl-page fh">
+    <div className="fl-page fh fh-overview">
+      <Header />
       <KpiTiles />
-      <div className="fh-row fh-row-main fl-reveal" style={reveal(1)}>
+      <div className="fh-row fh-row-main fl-reveal" style={reveal(2)}>
         <CashPanel />
         <AttentionQueue id="attention" />
-      </div>
-      <div className="fl-reveal" style={reveal(2)}>
-        <OpsStrip />
-      </div>
-      <div className="fl-reveal" style={reveal(3)}>
-        <AgentCrew />
-      </div>
-      <div className="fh-row fh-row-bottom fl-reveal" style={reveal(4)}>
-        <InvoicesPanel />
-        <LiveTicker />
       </div>
       <Suspense fallback={null}>
         <FocusFromQuery />
       </Suspense>
     </div>
+  );
+}
+
+/* ------------------------------- header ------------------------------- */
+
+function Header() {
+  const { source, simulated, ops, attention, now, lastUpdated } = useOps();
+  const total = AGENT_IDS.length;
+  const online = Math.min(total, ops.agentsOnline);
+  const provenance = simulated ? "Simulated" : source === "live" ? "Live" : source === "fallback" ? "Snapshot" : source === "connecting" ? "Connecting" : "Offline";
+  return (
+    <header className="fh-header fl-reveal" style={reveal(0)}>
+      <div className="fh-header-id">
+        <div className="fl-section" style={{ "--accent": simulated ? "var(--lilac)" : "var(--teal)" } as CSSProperties}>
+          Financial health · {provenance}
+        </div>
+        <h1 className="fl-display fh-wordmark">
+          <span className="ln">
+            <span>Golden Gate Freight</span>
+          </span>
+        </h1>
+        <div className="fh-header-sub">
+          Autonomous back office · <span className="fl-num">{count(ops.casesActive)}</span> open cases ·{" "}
+          <span className="fl-num">{count(ops.tasksActive)}</span> tasks in flight
+        </div>
+      </div>
+      <div className="fh-header-status">
+        <div className="fh-chips">
+          {simulated && (
+            <span className="fl-chip agent outline" title="Rows are generated in this browser and are not recorded anywhere">
+              Simulated
+            </span>
+          )}
+          <span className={`fl-chip outline ${online === total ? "ok" : online > 0 ? "warn" : ""}`}>
+            <i className={`fl-dot ${online ? "pulse" : ""}`} />
+            {online}/{total} agents online
+          </span>
+          <a href="#attention" className={`fl-chip outline ${attention.length ? "hot" : source === "live" || simulated ? "ok" : ""}`}>
+            {attention.length} need attention
+          </a>
+        </div>
+        <div className="fl-micro" suppressHydrationWarning>
+          {lastUpdated ? `Updated ${fmtAgo(lastUpdated, now)}` : source === "connecting" ? "Connecting…" : "No updates yet"}
+        </div>
+      </div>
+    </header>
   );
 }
 
@@ -240,7 +276,7 @@ function CashPanel() {
 
 /* ------------------------- autonomous operations ------------------------- */
 
-function OpsStrip() {
+export function OpsStrip() {
   const { ops, caseList, now } = useOps();
   const dayStart = new Date(now).setHours(0, 0, 0, 0);
   const today = useMemo(() => caseList.filter((c) => c.openedAt >= dayStart).length, [caseList, dayStart]);

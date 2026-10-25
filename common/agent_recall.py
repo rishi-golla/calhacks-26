@@ -2,8 +2,9 @@
 
 SpacetimeDB stays the system of record for agent memory and precedents (versioned, revertible by a human, P-012).
 This index is a mirror for similarity search: `sync()` copies active `agent_memory` and `precedent` rows into it and
-deletes anything a human deactivated, so a revert also removes it from recall. Recall is advisory: guarded workflows
-still decide every outcome.
+deletes anything a human deactivated, so a revert also removes it from recall. A looping sync sends only what changed.
+Elastic only ranks; `similar_cases` reads the ranked rows back from SpacetimeDB, so recall never shows a stale copy.
+Recall is advisory: guarded workflows still decide every outcome.
 
 Configuration (never in the repo):
   ELASTIC_CLOUD_URL                     the Elastic project endpoint
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -42,12 +44,22 @@ def enabled() -> bool:
     return _headers("ELASTIC_AGENT_MEMORY_READER_KEY") is not None
 
 
+FIELDS = ("id", "kind", "agent", "carrier_id", "claim_type", "lane", "outcome", "source_ref", "case_id", "text",
+          "version", "at")
+
+
 async def similar_cases(*, carrier_id: str = "", claim_type: str = "", lane: str = "", skill: str = "",
-                        text: str = "", limit: int = 5) -> list[dict]:
-    """Closest active lessons and precedents. Same carrier and claim type rank highest; text breaks ties."""
+                        text: str = "", limit: int = 5, actor: str = "validator", db=None) -> list[dict]:
+    """Closest active lessons and precedents. Same carrier and claim type rank highest; text breaks ties.
+
+    Elastic only ranks: it returns ids. The rows are then read from SpacetimeDB, so a lesson reverted since the last
+    sync is dropped and text, outcome and version are always current. If SpacetimeDB can't be read, recall returns
+    nothing rather than the mirror's possibly stale copy.
+    """
     headers = _headers("ELASTIC_AGENT_MEMORY_READER_KEY")
     if headers is None:
         return []
+    limit = max(1, min(limit, 10))
     should = []
     for field, value, boost in (("carrier_id", carrier_id, 4), ("claim_type", claim_type, 3), ("lane", lane, 1),
                                 ("skill", skill, 1)):
@@ -57,20 +69,56 @@ async def similar_cases(*, carrier_id: str = "", claim_type: str = "", lane: str
         should.append({"match": {"text": {"query": text[:2000]}}})
     if not should:
         return []
-    query = {"size": max(1, min(limit, 10)),
-             "_source": ["id", "kind", "agent", "carrier_id", "claim_type", "lane", "outcome", "source_ref",
-                         "case_id", "text", "version", "at"],
+    # Fetch twice the limit so rows dropped by the SpacetimeDB check don't shrink the answer.
+    query = {"size": limit * 2, "_source": False,
              "query": {"bool": {"filter": [{"term": {"active": True}}], "should": should,
                                 "minimum_should_match": 1}}}
     try:
         async with httpx.AsyncClient(timeout=3, headers=headers) as client:
             r = await client.post(f"{_endpoint()}/{INDEX}/_search", json=query)
             r.raise_for_status()
-            hits = r.json()["hits"]["hits"]
+            ranked = [(h["_id"], round(h["_score"], 2)) for h in r.json()["hits"]["hits"]]
     except (httpx.HTTPError, KeyError, ValueError) as e:
         log.warning("agent recall unavailable: %s", type(e).__name__)
         return []
-    return [{**h["_source"], "score": round(h["_score"], 2)} for h in hits]
+    current = await current_docs([doc_id for doc_id, _ in ranked], actor=actor, db=db)
+    if current is None:
+        return []
+    cases = []
+    for doc_id, score in ranked:
+        doc = current.get(doc_id)
+        if doc and doc["active"]:
+            cases.append({**{k: doc[k] for k in FIELDS}, "score": score})
+    return cases[:limit]
+
+
+async def current_docs(doc_ids: list[str], *, actor: str = "validator", db=None) -> dict[str, dict] | None:
+    """The SpacetimeDB rows behind index ids, as index docs; None when SpacetimeDB can't be read."""
+    from common.spacetime_client import SpacetimeClient, SpacetimeError, _sql_string
+
+    tables = {"memory": ("agent_memory", memory_doc), "precedent": ("precedent", precedent_doc)}
+    wanted: dict[str, list[str]] = {}
+    for doc_id in doc_ids:
+        kind, _, row_id = doc_id.partition(":")
+        if kind in tables and row_id:
+            wanted.setdefault(kind, []).append(row_id)
+    if not wanted:
+        return {}
+    db = db or SpacetimeClient(actor=actor)
+    docs = {}
+    try:
+        for kind, row_ids in wanted.items():
+            table, to_doc = tables[kind]
+            rows = await db.query_rows(f"SELECT * FROM {table} WHERE "
+                                       + " OR ".join(f"id = {_sql_string(i)}" for i in row_ids))
+            for row in rows:
+                if row.get("id") in row_ids:
+                    doc = to_doc(row)
+                    docs[doc["id"]] = doc
+    except (SpacetimeError, httpx.HTTPError, KeyError) as e:
+        log.warning("agent recall: SpacetimeDB unavailable (%s); returning nothing", type(e).__name__)
+        return None
+    return docs
 
 
 # ---- sync: SpacetimeDB (system of record) -> Elastic (recall mirror) ----
@@ -106,35 +154,62 @@ def precedent_doc(row: dict) -> dict:
             "active": True, "version": 1, "at": row.get("as_of") or None}
 
 
-async def sync() -> dict:
-    """One mirror pass. Inactive (reverted) memory is deleted from the index, never kept as stale recall."""
+BULK_CHUNK = 500
+DELETED = "deleted"
+
+
+def _fingerprint(doc: dict) -> str:
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode()).hexdigest()
+
+
+async def sync(sent: dict[str, str] | None = None, *, db=None) -> dict:
+    """One mirror pass. Inactive (reverted) memory is deleted from the index, never kept as stale recall.
+
+    `sent` maps index ids to the fingerprint last written successfully. With it, a pass sends only new, changed and
+    removed docs; a failed item is left out of `sent`, so the next pass retries it. Without it, every doc is sent.
+    """
     headers = _headers("ELASTIC_AGENT_MEMORY_WRITER_KEY")
     if headers is None:
         raise SystemExit("set ELASTIC_CLOUD_URL and ELASTIC_AGENT_MEMORY_WRITER_KEY")
     from common.spacetime_client import SpacetimeClient
 
-    db = SpacetimeClient(actor="validator")   # reads only; both tables are public
+    sent = {} if sent is None else sent
+    db = db or SpacetimeClient(actor="validator")   # reads only; both tables are public
     memories = await db.query_rows("SELECT * FROM agent_memory")
     precedents = await db.query_rows("SELECT * FROM precedent")
-    docs = [memory_doc(m) for m in memories] + [precedent_doc(p) for p in precedents]
-    upserts = [d for d in docs if d["active"]]
-    deletes = [d["id"] for d in docs if not d["active"]]
-    lines = []
-    for d in upserts:
-        lines += [json.dumps({"index": {"_index": INDEX, "_id": d["id"]}}), json.dumps(d, default=str)]
-    for doc_id in deletes:
-        lines.append(json.dumps({"delete": {"_index": INDEX, "_id": doc_id}}))
-    errors = 0
-    if lines:
-        async with httpx.AsyncClient(timeout=60, headers=headers) as es:
-            r = await es.post(f"{_endpoint()}/_bulk", content="\n".join(lines) + "\n",
-                              headers={"content-type": "application/x-ndjson"})
+    docs = {d["id"]: d for d in [memory_doc(m) for m in memories] + [precedent_doc(p) for p in precedents]}
+    ops = []   # (doc id, what `sent` records on success: a fingerprint, DELETED, or None to forget the id)
+    for doc_id, d in docs.items():
+        if d["active"]:
+            if sent.get(doc_id) != (fp := _fingerprint(d)):
+                ops.append((doc_id, fp, [{"index": {"_index": INDEX, "_id": doc_id}}, d]))
+        elif sent.get(doc_id) != DELETED:
+            ops.append((doc_id, DELETED, [{"delete": {"_index": INDEX, "_id": doc_id}}]))
+    # Rows that vanished from SpacetimeDB leave the index too.
+    ops += [(doc_id, None, [{"delete": {"_index": INDEX, "_id": doc_id}}])
+            for doc_id, fp in sent.items() if doc_id not in docs and fp != DELETED]
+    indexed = removed = errors = 0
+    async with httpx.AsyncClient(timeout=60, headers=headers) as es:
+        for start in range(0, len(ops), BULK_CHUNK):
+            chunk = ops[start:start + BULK_CHUNK]
+            body = "".join(json.dumps(line, default=str) + "\n" for _, _, lines in chunk for line in lines)
+            r = await es.post(f"{_endpoint()}/_bulk", content=body, headers={"content-type": "application/x-ndjson"})
             r.raise_for_status()
-            errors = sum(1 for item in r.json().get("items", [])
-                         if next(iter(item.values())).get("status", 200) >= 300
-                         and next(iter(item.values())).get("status") != 404)
-    return {"memories": len(memories), "precedents": len(precedents), "indexed": len(upserts),
-            "removed": len(deletes), "errors": errors, "at": datetime.now(UTC).isoformat()}
+            for (doc_id, outcome, lines), item in zip(chunk, r.json().get("items", []), strict=True):
+                status = next(iter(item.values())).get("status", 200)
+                deleting = "delete" in lines[0]
+                if status < 300 or (deleting and status == 404):   # a delete of a missing doc is already done
+                    if outcome is None:
+                        sent.pop(doc_id, None)
+                    else:
+                        sent[doc_id] = outcome
+                    removed += deleting
+                    indexed += not deleting
+                else:
+                    errors += 1
+    return {"memories": len(memories), "precedents": len(precedents), "indexed": indexed, "removed": removed,
+            "unchanged": sum(1 for doc_id in docs if doc_id not in {op[0] for op in ops}),
+            "errors": errors, "at": datetime.now(UTC).isoformat()}
 
 
 def main() -> None:
@@ -145,8 +220,9 @@ def main() -> None:
     if not args.sync:
         ap.print_help()
         return
+    sent: dict[str, str] = {}   # first pass sends everything; later passes send only changes
     while True:
-        print(json.dumps(asyncio.run(sync())), flush=True)
+        print(json.dumps(asyncio.run(sync(sent))), flush=True)
         if not args.loop:
             break
         asyncio.run(asyncio.sleep(args.loop))

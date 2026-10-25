@@ -889,3 +889,8 @@
 .fl-notif:hover {
   background: rgba(255, 255, 255, 0.05);
 }
+
+/* Unthemed host for the intro overlay: carries the base tokens, takes no space. */
+.fl.fl-intro-host {
+  min-height: 0;
+}

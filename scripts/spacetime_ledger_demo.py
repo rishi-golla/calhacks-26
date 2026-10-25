@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import requests
 
@@ -33,7 +33,7 @@ def seed(admin: LocalAdmin, server: str, database: str) -> None:
                           data=f"UPDATE ledger_entry SET posted_at = '{stamp}' WHERE id = '{entry_id}'")
         r.raise_for_status()
 
-    today = datetime.now(timezone.utc).replace(hour=15, minute=0, second=0, microsecond=0)
+    today = datetime.now(UTC).replace(hour=15, minute=0, second=0, microsecond=0)
     start = today - timedelta(days=DAYS)
     for month in sorted({(start + timedelta(days=i)).strftime("%Y-%m") for i in range(DAYS + 1)}):
         write("admin", "set_period", f"period-{month}", period=month, status="open")

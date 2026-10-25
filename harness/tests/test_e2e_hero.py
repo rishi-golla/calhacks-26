@@ -86,7 +86,7 @@ async def _final_task(task_id: str) -> dict:
 
 
 async def test_hero_invoice_end_to_end(pool, agents, tmp_path):
-    vault, dispatcher = Vault(tmp_path / "vault.sqlite"), Dispatcher(tmp_path / "ingest.sqlite")
+    vault, dispatcher = Vault(tmp_path / "vault.sqlite"), Dispatcher(tmp_path / "ingest.sqlite", transport="a2a")
     event = {"event_id": f"EVT-test-{uuid.uuid4().hex[:8]}", "type": "carrier_invoice.received",
              "ts": "2026-06-14T15:02:11Z", "case_hint": "LOAD-4821", "priority": "P0", "source": "sim",
              "payload": {"case_id": "CASE-4821", "load_id": "LOAD-4821",

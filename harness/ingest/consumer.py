@@ -1,4 +1,4 @@
-"""Redis `events` consumer, group `router` (PRD H1, H4, H5). ACK only after a terminal outcome (accepted,
+"""Redis `events` consumer, group `router` (PRD H1, H4, H5). ACK only after a terminal outcome (queued, accepted,
 duplicate, not_routed, triage). Failed dispatches stay pending and are reclaimed with XAUTOCLAIM.
 
 Each entry runs as its own task, so events that need no model (TMS events, parked PODs) finish at once
@@ -16,7 +16,7 @@ import redis.asyncio as redis
 from harness.ingest.dispatch import Dispatcher
 from harness.ingest.pipeline import P_ORDER, BadEvent, process
 from harness.ingest.routing import table_route
-from harness.ingest.telemetry import record_dispatch
+from harness.ingest.telemetry import QUEUE_MS, queue_ms, record_dispatch
 from harness.ingest.vault import Vault
 from harness.pool import Pool
 
@@ -28,7 +28,7 @@ CONSUMER = os.getenv("ROUTER_CONSUMER", f"asus-{socket.gethostname()}")
 RECLAIM_IDLE_MS = int(os.getenv("ROUTER_RECLAIM_IDLE_MS", "120000"))
 MODEL_CONCURRENCY = int(os.getenv("ROUTER_MODEL_CONCURRENCY", "8"))
 MAX_INFLIGHT = int(os.getenv("ROUTER_MAX_INFLIGHT", "64"))
-ACK_STATUSES = {"accepted", "duplicate", "not_routed", "triage"}
+ACK_STATUSES = {"queued", "accepted", "duplicate", "not_routed", "triage"}
 
 
 def needs_model(ev: dict) -> bool:
@@ -39,12 +39,15 @@ def needs_model(ev: dict) -> bool:
 async def _handle(r: redis.Redis, pool: Pool, vault: Vault, dispatcher: Dispatcher, entry_id: bytes, ev: dict,
                   *, stream: str, group: str, triage: str, handler=process) -> None:
     received_ms = int(time.time() * 1000)
+    token = QUEUE_MS.set(queue_ms(entry_id, received_ms))   # a first-hop enqueue reports this entry's queue time
     try:
         res = await handler(pool, vault, dispatcher, ev)
     except BadEvent as e:
         await record_dispatch(entry_id, ev, "triage", f"bad event: {e}", received_ms=received_ms)
         await _dead_letter(r, stream, group, entry_id, f"bad event: {e}", json.dumps(ev, default=str))
         return
+    finally:
+        QUEUE_MS.reset(token)
     await _telemetry(entry_id, ev, res, received_ms)   # raises -> entry stays pending (durable acceptance)
     if res["status"] == "triage":
         await r.xadd(triage, {"json": json.dumps({"event_id": res["event_id"], "case_id": res["case_id"],
@@ -57,6 +60,7 @@ async def _handle(r: redis.Redis, pool: Pool, vault: Vault, dispatcher: Dispatch
 
 
 async def _telemetry(entry_id, ev: dict, res: dict, received_ms: int) -> None:
+    """`queued` writes nothing: enqueue_first_hop committed its dispatch row with the outbox row."""
     status, reason = res["status"], (res.get("route") or {}).get("reason", "")
     if status == "accepted":
         d = res.get("dispatch") or {}
@@ -65,9 +69,10 @@ async def _telemetry(entry_id, ev: dict, res: dict, received_ms: int) -> None:
                                   skill=d.get("skill") or "", task_id=d["task_id"], received_ms=received_ms)
     elif status == "duplicate":
         prior = res.get("prior") or res.get("dispatch") or {}
-        if prior.get("task_id"):   # only an accepted event has a dispatch row to mark as duplicate
-            await record_dispatch(entry_id, ev, "duplicate", "re-delivered event", agent=prior.get("agent") or "",
-                                  skill=prior.get("skill") or "", task_id=prior["task_id"], received_ms=received_ms)
+        if prior.get("agent") and prior.get("skill"):   # only a routed (queued or accepted) event has a route
+            # A queued event's task is created later by the dispatch worker, so the router may not know it.
+            await record_dispatch(entry_id, ev, "duplicate", "re-delivered event", agent=prior["agent"],
+                                  skill=prior["skill"], task_id=prior.get("task_id") or "", received_ms=received_ms)
     elif status == "triage":
         await record_dispatch(entry_id, ev, "triage", reason, received_ms=received_ms)
     elif status == "not_routed" and ev.get("type") != "gps.ping":
@@ -99,8 +104,8 @@ async def run_consumer(pool: Pool, url: str | None = None, *, stream: str = STRE
         await r.xgroup_create(stream, group, id="0", mkstream=True)
     except redis.ResponseError:
         pass
-    log.info("consuming %s as %s/%s (model slots %d, max in flight %d)", stream, group, consumer,
-             MODEL_CONCURRENCY, MAX_INFLIGHT)
+    log.info("consuming %s as %s/%s (first hop %s, model slots %d, max in flight %d)", stream, group, consumer,
+             dispatcher.transport, MODEL_CONCURRENCY, MAX_INFLIGHT)
     slots = asyncio.Semaphore(MODEL_CONCURRENCY)
     inflight: dict[bytes, asyncio.Task] = {}
 

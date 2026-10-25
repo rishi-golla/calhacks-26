@@ -1,6 +1,6 @@
 """Stage 1 ingest for one event. Order: regex redaction -> 7.3 table (cheap exit for unrouted types) ->
 model A extraction + name/address tokenization -> model B only if unlabeled -> model C cross-check ->
-TaskEnvelope (7.2, unchanged schema) -> A2A dispatch."""
+TaskEnvelope (7.2, unchanged schema) -> first hop (A2A, or the SpacetimeDB outbox; see dispatch.py)."""
 import json
 import logging
 import os
@@ -21,7 +21,7 @@ from harness.pool import Pool, Unavailable
 log = logging.getLogger("harness.ingest")
 TEXT_KEYS = ("text", "body", "raw_text", "document_text", "content", "transcript")
 HEADER_KEYS = ("from", "to", "subject", "date")
-TERMINAL = ("accepted", "triage", "not_routed")
+TERMINAL = ("queued", "accepted", "triage", "not_routed")
 P_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
 EXTRACT_SYSTEM = (
@@ -117,6 +117,16 @@ def _verbatim_spans(items: list[dict], text: str, vault: Vault, kinds: dict[str,
     return spans
 
 
+async def _first_hop(dispatcher: Dispatcher, out: dict, event_id: str, route: Route, env: TaskEnvelope) -> str:
+    try:
+        out["dispatch"] = await dispatcher.send(event_id, route.skill, env, reason=route.reason)
+    except DispatchError as e:
+        out["error"] = str(e)
+        return "dispatch_failed"
+    # queued (SpacetimeDB outbox) or accepted (A2A task created), unless the event was already delivered.
+    return "duplicate" if out["dispatch"].get("duplicate") else out["dispatch"]["status"]
+
+
 async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict, *,
                   dispatch: bool = True) -> dict[str, Any]:
     t0 = time.perf_counter()
@@ -139,6 +149,13 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
     prior = dispatcher.get(event_id)
     if prior and prior["status"] in TERMINAL:
         return {**out, "status": "duplicate", "prior": prior}
+    pinned = dispatcher.pinned(event_id) if dispatch else None
+    if pinned:   # an enqueue was already attempted and only its exact payload may be resent: skip the models
+        route = Route(pinned["skill"], "routed", pinned["reason"])
+        out.update({"route": route.__dict__, "envelope": pinned["envelope"]})
+        status = await _first_hop(dispatcher, out, event_id, route, TaskEnvelope.model_validate(pinned["envelope"]))
+        timings["total"] = int((time.perf_counter() - t0) * 1000)
+        return {**out, "status": status, "timings_ms": timings}
 
     # 1. Regex redaction before any model sees the content.
     t = time.perf_counter()
@@ -240,12 +257,7 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
     elif not dispatch:
         status = "dry_run"
     else:
-        try:
-            out["dispatch"] = await dispatcher.send(event_id, route.skill, env)
-            status = "duplicate" if out["dispatch"].get("duplicate") else "accepted"
-        except DispatchError as e:
-            out["error"] = str(e)
-            status = "dispatch_failed"
+        status = await _first_hop(dispatcher, out, event_id, route, env)
         lap("dispatch", t)
     timings["total"] = int((time.perf_counter() - t0) * 1000)
     out.update({"status": status, "timings_ms": timings})

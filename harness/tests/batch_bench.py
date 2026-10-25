@@ -129,7 +129,7 @@ async def run(args) -> dict:
     await pool.check_health()
     health = asyncio.create_task(pool.health_loop())
     tmp = Path(tempfile.mkdtemp(prefix="bench-"))
-    vault, dispatcher = Vault(tmp / "vault.sqlite"), Dispatcher(tmp / "ingest.sqlite")
+    vault, dispatcher = Vault(tmp / "vault.sqlite"), Dispatcher(tmp / "ingest.sqlite", transport="a2a")
     slots = asyncio.Semaphore(args.concurrency)
 
     async def one(i: int, ev: dict) -> dict:

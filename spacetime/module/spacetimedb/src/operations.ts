@@ -16,8 +16,17 @@ const must = <T>(value: T | undefined | null, message: string): T => {
   return value;
 };
 
+/** Role list for reducers any connected identity may call; an unprovisioned caller acts as `visitor:<identity prefix>`. */
+export const ANYONE = ['*'] as const;
+
 function principal(ctx: Ctx, roles: readonly string[]): Principal {
-  const p = must(ctx.db.principal.identity.find(identity(ctx)), 'identity is not provisioned');
+  const found = ctx.db.principal.identity.find(identity(ctx));
+  if (roles.includes('*')) {
+    if (!found) return { identity: identity(ctx), role: 'visitor', actor: `visitor:${identity(ctx).slice(0, 12)}`, active: true, granted_at: now(ctx) };
+    if (!found.active) throw new Error(`role ${found.role} may not perform this action`);
+    return found;
+  }
+  const p = must(found, 'identity is not provisioned');
   if (!p.active || !roles.includes(p.role)) throw new Error(`role ${p.role} may not perform this action`);
   if (AGENTS.includes(p.role as typeof AGENTS[number])) {
     const config = ctx.db.agent_config.agent.find(p.role);

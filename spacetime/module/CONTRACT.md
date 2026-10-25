@@ -6,7 +6,7 @@ Every payload requires a unique `write_id`. Retry the **same payload and write_i
 
 All legacy money fields (`amount`, `exposure_usd`, `debit`, `credit`, `paid_amount`, `contract_amount`) are **USD**, accept at most two decimals, and use integer cents for control checks and sums. `$9,400` is `9400`. Timestamps are UTC ISO strings. Missing optional strings are `""`; JSON-valued columns such as `scope`, `artifact_json`, `findings_json`, and `checks_json` are canonical JSON strings.
 
-Authentication comes only from the actual SpacetimeDB sender identity. The init lifecycle provisions the database publisher as admin. Admin is an infrastructure role; it does not bypass financial role checks. Provision distinct service identities and a human identity. Roles: `admin`, `human`, `ingest`, `harness`, `evaluator`, `router`, `carrier_ap`, `shipper_ar`, `cfo`, `risk`, `controller`, `verification`, `voice_desk`, `validator`, `documents`. The `documents` role owns POD/document collection tasks and may delegate verification-purpose outreach to `voice_desk`; it has no financial-write permissions.
+Authentication comes only from the actual SpacetimeDB sender identity. The init lifecycle provisions the database publisher as admin. Admin is an infrastructure role; it does not bypass financial role checks. Provision distinct service identities and a human identity. Roles: `admin`, `human`, `ingest`, `harness`, `evaluator`, `router`, `carrier_ap`, `shipper_ar`, `cfo`, `risk`, `controller`, `verification`, `voice_desk`, `validator`, `documents`. The `documents` role owns POD/document collection tasks and may delegate verification-purpose outreach to `voice_desk`; it has no financial-write permissions. Every reducer requires a provisioned, active identity except `set_view_epoch`, which any connected identity may call.
 
 | Reducer | Role | Payload besides `write_id` |
 |---|---|---|
@@ -37,7 +37,7 @@ Authentication comes only from the actual SpacetimeDB sender identity. The init 
 | `set_metric` | evaluator | `name`, `value` |
 | `set_agent_model` | human | `agent`, `model`, `enabled` (default true) |
 | `ensure_agent_defaults` | admin | none; inserts `{model: auto, enabled: true}` for every agent missing from `agent_config` and leaves existing rows alone |
-| `set_view_epoch` | human, admin | `since` (optional ISO timestamp, default now) upserts the `view_epoch` row; or `clear: true` (without `since`) deletes it. Clearing when no row exists writes only the receipt |
+| `set_view_epoch` | anyone (any active principal, or an unprovisioned identity acting as `visitor:<first 12 hex of identity>`) | `since` (optional ISO timestamp, default now) upserts the `view_epoch` row; or `clear: true` (without `since`) deletes it. Clearing when no row exists writes only the receipt |
 | `settle_cases` | admin | none; runs the case-settlement rule below over every case (one-time sweep for cases written before the rule). Each changed case gets its own change set and audit event on its case chain, in one transaction; the sweep itself and a no-op sweep write only receipts |
 | `upsert_forecast` | cfo | `id`, `case_id`, `period`, `category`, `amount` (signed), `confidence`, `assumptions_json` |
 | `upsert_company` | ingest | `id`, `kind`, `name`, optional `usdot`, `mc`, `phone`, `website`, `source_url` |
@@ -216,10 +216,13 @@ the requesting task normally settles the case when it finishes, and `settle_case
 ### Start fresh view boundary
 
 `view_epoch` is a public singleton table: at most one row, `id = "current"`, with `since`
-(the dashboard hides activity before it), `set_by` (the caller's actor, e.g. `human:operator`)
+(the dashboard hides activity before it), `set_by` (the caller's actor, e.g. `human:operator` or
+`visitor:0123456789ab`)
 and `set_at`. Both timestamps use the module convention (`2026-10-24T09:30:00.000Z`); a
 supplied `since` must parse as a date and is normalised to that form. No row means no boundary.
-`set_view_epoch` is accountable like any write: it emits a change set (sheet `view_epoch`, row
+`set_view_epoch` is open to every dashboard viewer: it only moves a view boundary, so it does not
+require a role. A deactivated principal is still refused, and the caller does not become
+provisioned. It is accountable like any write: it emits a change set (sheet `view_epoch`, row
 `current`) and an audit event on the system chain. It deletes nothing else; memory, lessons,
 precedents, counterparties and the ledger are untouched. The evaluator reads the row and scores
 only loads whose earliest case `opened_at` is at or after `since`, and counts only calls started

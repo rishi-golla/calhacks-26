@@ -83,10 +83,13 @@ async def _run_chain(pool: Pool, chain: list[Backend], payload: dict, priority: 
                 notes.append(f"{b.served_name} timeout")
                 break
             except httpx.HTTPStatusError as e:
-                if 400 <= e.response.status_code < 500:
+                status = e.response.status_code
+                # 404/405/401/403 mean the thing on that port is not our model server (or is misconfigured), not
+                # that this request is malformed: fail over like any other dead backend instead of blaming the caller.
+                if 400 <= status < 500 and status not in (401, 403, 404, 405):
                     raise BadRequest(e.response.text[:500]) from e
                 pool.mark_down(b)
-                notes.append(f"{b.served_name} http {e.response.status_code}")
+                notes.append(f"{b.served_name} http {status}")
                 break
             except httpx.HTTPError as e:
                 pool.mark_down(b)

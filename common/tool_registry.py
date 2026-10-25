@@ -14,7 +14,7 @@ from typing import Any
 from common.agent_support import child_envelope, evidence, money, number, rows
 from common.config import AGENTS, CALL_PURPOSES, SKILL_OWNER
 from common.envelope import DelegationMeta, TaskEnvelope
-from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
+from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode, source_fixtures_only
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,7 @@ async def read_settlement_state(ctx: ToolContext, arguments: dict) -> dict:
     result = {}
     for table, fixture_key in (("hold", "holds"), ("payment_proposal", "payment_proposals"),
                                ("approval", "approvals")):
-        result[fixture_key] = source.get(fixture_key, []) if fixture_mode() else await rows(
+        result[fixture_key] = source.get(fixture_key, []) if source_fixtures_only() else await rows(
             ctx.agent.name, table, "case_id", ctx.env.case_id)
     result["paid_amount"] = source.get("paid_amount", 0)
     return _with_refs(source, ctx, result)
@@ -194,7 +194,7 @@ async def read_credit_evidence(ctx: ToolContext, arguments: dict) -> dict:
 
 async def inspect_journal(ctx: ToolContext, arguments: dict) -> dict:
     source = await _source(ctx)
-    requests = source.get("journal_requests", []) if fixture_mode() else await rows(
+    requests = source.get("journal_requests", []) if source_fixtures_only() else await rows(
         ctx.agent.name, "journal_request", "case_id", ctx.env.case_id)
     lines = source.get("journal_lines", [])
     debit = sum((money(line.get("debit", 0)) for line in lines), Decimal(0))

@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import DataGrid, { type Column as GridColumn } from "react-data-grid";
 import { Download, GitCommitHorizontal, FileText } from "lucide-react";
 import { date, exportCsv, json, newest, str, type Row } from "@/lib/data";
-import { useLive } from "./live-provider";
+import { useCaseFocus, useLive } from "./live-provider";
 import { cellValue, chronologicalChanges, compareSnapshots } from "@/lib/audit";
 import {
   Badge,
@@ -31,6 +31,8 @@ export default function AuditWorkspace({ onFlag }: { onFlag: FlagHandler }) {
   const { data } = useLive();
   const [sheet, setSheet] = useState("holds");
   const [caseId, setCaseId] = useState("");
+  // A chosen case's full change history, not just the live window.
+  useCaseFocus(caseId);
   const [tab, setTab] = useState("blame");
   const [cell, setCell] = useState<Cell | null>(null);
   const [from, setFrom] = useState("");

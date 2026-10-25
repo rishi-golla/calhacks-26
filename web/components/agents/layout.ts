@@ -25,7 +25,7 @@ export const NODE_POS: Record<NodeId, Point> = {
   controller: { x: 822, y: 196 },
   voice_desk: { x: 822, y: 486 },
   cfo: { x: 1030, y: 140 },
-  validator: { x: 1030, y: 474 },
+  validator: { x: 1030, y: 430 },
   human: { x: 1134, y: 316 },
 };
 

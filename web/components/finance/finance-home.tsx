@@ -171,7 +171,8 @@ function KpiTiles() {
       series: series.ar,
       good: "none",
       delta: sinceDelta ?? <Delta change={change(finance.trends.ar)} good="none" />,
-      foot: dso ? (
+      // Days of sales outstanding needs a 30-day revenue base, which an epoch does not give.
+      foot: dso && !since ? (
         <>
           DSO <b className="fl-num">{Math.round(dso)}</b> days
         </>

@@ -442,7 +442,8 @@ export function buildWorkloads(snapshot: Snapshot, now: number, { since }: { sin
     const t = taskView(row);
     if (since !== undefined && t.terminal && t.endedAt >= since) {
       if (t.state === "completed") doneSince.set(t.agent, (doneSince.get(t.agent) ?? 0) + 1);
-      else if (t.state === "failed") failedSince.set(t.agent, (failedSince.get(t.agent) ?? 0) + 1);
+      // The heartbeat counts rejected tasks as errors too.
+      else if (t.state === "failed" || t.state === "rejected") failedSince.set(t.agent, (failedSince.get(t.agent) ?? 0) + 1);
     }
     if (t.terminal) continue;
     const list = byAgent.get(t.agent);
@@ -629,10 +630,12 @@ const ACCOUNT_ALIASES: Record<string, string> = {
 };
 
 /**
- * `ledgerOnly`: cash from the ledger rows given, ignoring the `cash_position`
- * metric, which is an all-time balance (used when rows are scoped to an epoch).
+ * `since` (a "Start fresh" epoch, with rows already scoped to it): cash comes
+ * from the ledger rows given, not the all-time `cash_position` metric, and the
+ * month-to-date and 30-day totals run from `since` instead, matching the
+ * "since" labels on Home.
  */
-export function buildFinance(snapshot: Snapshot, now: number, { ledgerOnly = false }: { ledgerOnly?: boolean } = {}): FinanceMetrics {
+export function buildFinance(snapshot: Snapshot, now: number, { since }: { since?: number } = {}): FinanceMetrics {
   const day = 86_400_000;
   const entries = snapshot.ledger_entry
     .map((row) => ({ at: timestamp(row.posted_at), lines: (Array.isArray(row.lines) ? row.lines : json<LedgerLine[]>(row.lines, [])) as LedgerLine[] }))
@@ -648,18 +651,19 @@ export function buildFinance(snapshot: Snapshot, now: number, { ledgerOnly = fal
   };
   const bal = { cash: 0, ar: 0, ap: 0, revenue: 0, expense: 0 };
   const start = now - 30 * day;
+  const totalsFrom = since ?? start;
   const buckets = new Map<number, typeof bal>();
   let revenue30d = 0;
   let expense30d = 0;
   let revenueMtd = 0;
-  const monthStart = new Date(now).setDate(1);
+  const monthStart = since ?? new Date(now).setDate(1);
   for (const e of entries) {
     for (const line of e.lines) {
       const d = delta(line);
       if (!d) continue;
       bal[d.acct as keyof typeof bal] += d.amount;
-      if (d.acct === "revenue" && e.at >= start) revenue30d += d.amount;
-      if (d.acct === "expense" && e.at >= start) expense30d += d.amount;
+      if (d.acct === "revenue" && e.at >= totalsFrom) revenue30d += d.amount;
+      if (d.acct === "expense" && e.at >= totalsFrom) expense30d += d.amount;
       if (d.acct === "revenue" && e.at >= monthStart) revenueMtd += d.amount;
     }
     if (e.at >= start) {
@@ -721,7 +725,7 @@ export function buildFinance(snapshot: Snapshot, now: number, { ledgerOnly = fal
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([period, v]) => ({ period, inflow: v.inflow, outflow: v.outflow, net: v.inflow - v.outflow, confidence: v.conf.length ? v.conf.reduce((s, c) => s + c, 0) / v.conf.length : 0 }));
   const metric = (name: string) => snapshot.metric.find((m) => m.name === name);
-  const cashMetric = ledgerOnly ? undefined : (metric("cash_position") ?? metric("cash_position_usd") ?? metric("cash_balance"));
+  const cashMetric = since !== undefined ? undefined : (metric("cash_position") ?? metric("cash_position_usd") ?? metric("cash_balance"));
   return {
     cash: cashMetric ? num(cashMetric.value) : bal.cash,
     ap: bal.ap,

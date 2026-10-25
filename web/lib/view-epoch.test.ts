@@ -63,7 +63,7 @@ test("case-linked rows follow their case across every scoped table", () => {
   const s = snap({
     case: [kase("NEW", 10), kase("OLD", -DAY)],
     task: [task({ task_id: "TN", case_id: "NEW", a2a_state: "completed", started_at: at(20), updated_at: at(30) }), task({ task_id: "TO", case_id: "OLD", a2a_state: "completed" })],
-    dispatch: [linked({ ts: at(-DAY) }), orphan({ ts: at(100) })],
+    dispatch: [linked({ ts: at(-DAY), task_id: "TN" }), orphan({ ts: at(100), task_id: "TO" })],
     delegation_edge: [linked({ ts: at(-DAY) }), orphan({ ts: at(100) })],
     review: [linked({ ts: at(-DAY) }), orphan({ ts: at(100) })],
     approval: [linked({ decision: "approved", requested_at: at(-DAY) }), orphan({ decision: "approved", requested_at: at(100) })],
@@ -257,6 +257,8 @@ test("buildWorkloads with since counts only tasks finished since, ignoring the h
   assert.equal(w.carrier_ap.done, 2);
   assert.equal(w.carrier_ap.errors, 1);
   assert.equal(w.risk.done, 1);
+  const withRejected = snap({ ...s, task: [...s.task, task({ task_id: "g", a2a_state: "rejected", updated_at: at(7) }), task({ task_id: "h", a2a_state: "rejected", updated_at: at(-7) })] });
+  assert.equal(buildWorkloads(withRejected, NOW, { since: SINCE }).carrier_ap.errors, 2);
   assert.equal(w.carrier_ap.done + w.risk.done, 3);
 });
 
@@ -270,13 +272,13 @@ test("buildWorkloads without since still uses the heartbeat", () => {
   assert.equal(w.carrier_ap.errors, 40);
 });
 
-test("buildFinance ledgerOnly ignores the cash_position metric", () => {
+test("buildFinance since ignores the cash_position metric", () => {
   const s = snap({
     metric: [{ name: "cash_position", value: 9_999_999 }],
     ledger_entry: [{ id: "L", posted_at: at(-60), lines: [{ account: "cash", debit: 1000, credit: 0 }, { account: "freight_revenue", debit: 0, credit: 1000 }] }],
   });
   assert.equal(buildFinance(s, NOW).cash, 9_999_999);
-  assert.equal(buildFinance(s, NOW, { ledgerOnly: true }).cash, 1000);
+  assert.equal(buildFinance(s, NOW, { since: SINCE }).cash, 1000);
 });
 
 /* ----------------------------------- sim ---------------------------------- */
@@ -333,4 +335,47 @@ test("fmtSince: time only today, month and day otherwise", () => {
   const other = fmtSince(NOW - 3 * 86_400_000, NOW);
   assert.match(other, /^.+, \d{2}:\d{2}$/);
   assert.match(other, /[A-Za-z]/);
+});
+
+/* ------------------------- review follow-ups (Devin) ---------------------- */
+
+test("ledger goes by posted_at alone, even for a hidden old case", () => {
+  const s = snap({
+    case: [kase("C1", -DAY)],
+    ledger_entry: [
+      { id: "post", case_id: "C1", posted_at: at(10) },
+      { id: "pre", case_id: "C1", posted_at: at(-10) },
+    ],
+  });
+  const scope = viewScope(s, SINCE);
+  assert.equal(scope.cases.has("C1"), false);
+  const out = scopeSnapshot(s, scope);
+  assert.deepEqual(out.ledger_entry.map((r) => r.id), ["post"]);
+  assert.deepEqual(out.case, []);
+});
+
+test("carried: a dispatch within grace whose task has no row yet", () => {
+  const dispatch = (offsetS: number, taskId = "TX"): Row => ({ id: "D", case_id: "C1", task_id: taskId, ts: at(offsetS) });
+  assert.equal(carriedBy({ dispatch: [dispatch(-GRACE_S + 5)] }), true, "within grace");
+  assert.equal(carriedBy({ dispatch: [dispatch(30)] }), true, "after since");
+  assert.equal(carriedBy({ dispatch: [dispatch(-GRACE_S - 5)] }), false, "older than grace");
+  assert.equal(
+    carriedBy({ dispatch: [dispatch(-5, "T1")], task: [task({ a2a_state: "completed", updated_at: at(-DAY) })] }),
+    false,
+    "task exists and finished before since",
+  );
+});
+
+test("buildFinance with since totals revenue and expense from since, not the month or 30 days", () => {
+  const entry = (id: string, offsetDays: number): Row => ({
+    id,
+    posted_at: at(-offsetDays * DAY),
+    lines: [{ account: "cash", debit: 100, credit: 0 }, { account: "freight_revenue", debit: 0, credit: 100 }],
+  });
+  const s = snap({ ledger_entry: [entry("old", 35), entry("recent", 1)] });
+  const scoped40 = buildFinance(s, NOW, { since: NOW - 40 * DAY * 1000 });
+  assert.equal(scoped40.revenueMtd, 200);
+  assert.equal(scoped40.revenue30d, 200);
+  const unscoped = buildFinance(s, NOW);
+  assert.equal(unscoped.revenue30d, 100);
 });

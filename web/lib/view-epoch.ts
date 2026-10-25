@@ -12,8 +12,8 @@
  * - A row that belongs to a known case follows its case. A carried-over case
  *   keeps its whole history, so its trace and its totals stay coherent.
  * - A row with no known case is in scope by its own timestamp.
- * - Ledger entries also need their own `posted_at` on or after `since`, so
- *   balances read as activity since the epoch.
+ * - Ledger entries go by their own `posted_at` only, whatever their case:
+ *   finance totals every posting since the epoch.
  *
  * Reference and state tables (agents, config, companies, metrics, memory)
  * are never scoped. The case page reads the unscoped snapshot, so a
@@ -88,6 +88,8 @@ const isPending = (a: Row) => !a.decision || a.decision === "pending";
  * Case ids opened before `since` that were still active across it:
  * - a task of the case started or changed at or after `since`;
  * - a non-terminal task changed within `CARRY_GRACE_MS` before `since`;
+ * - a dispatch routed within `CARRY_GRACE_MS` before `since`, or later, whose
+ *   task does not exist yet (its first hop is still being delivered);
  * - a pending approval that had not expired by `since`;
  * - an open flag;
  * - an active hold placed within `CARRY_GRACE_MS` before `since`, or later.
@@ -99,11 +101,14 @@ export function carriedOver(snapshot: Snapshot, since: number, candidates: Set<s
     if (candidates.has(id)) out.add(id);
   };
   const recent = since - CARRY_GRACE_MS;
+  const tasks = new Set<string>();
   for (const row of snapshot.task) {
     const t = taskView(row);
+    tasks.add(t.taskId);
     const last = Math.max(t.startedAt, t.updatedAt);
     if (last >= since || (!t.terminal && last >= recent)) add(t.caseId);
   }
+  for (const d of snapshot.dispatch) if (timestamp(d.ts) >= recent && !tasks.has(str(d.task_id, ""))) add(d.case_id);
   for (const a of snapshot.approval)
     if (isPending(a)) {
       const expires = timestamp(a.expires_at);
@@ -141,10 +146,9 @@ function caseOf(row: Row, scope: ViewScope): string {
 
 export function rowInScope(table: TableName, row: Row, scope: ViewScope): boolean {
   if (!(table in ROW_TIME)) return true;
-  const caseId = caseOf(row, scope);
-  if (caseId && !scope.cases.has(caseId)) return false;
   if (table === "ledger_entry") return timestamp(row.posted_at) >= scope.since;
-  if (caseId) return true;
+  const caseId = caseOf(row, scope);
+  if (caseId) return scope.cases.has(caseId);
   // A live doc read has neither a case nor a timestamp; it is dated by its task.
   if (table === "doc_read" && !rowTime(table, row)) return false;
   return rowTime(table, row) >= scope.since;

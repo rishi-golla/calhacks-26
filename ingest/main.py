@@ -653,8 +653,9 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
 
 def failure_class(error: BaseException) -> str:
     """Cutover plan H2. Deterministic: the module refused the write (HTTP 530 on SpacetimeDB 2.x, though the client
-    files it under `server`) or the request is unauthorized or unknown. Transient: the network, any other 5xx, or
-    rate limiting. Everything else (conflict, configuration, policy, non-SpacetimeDB errors) keeps the old retry."""
+    files it under `server`) or the request is unauthorized or unknown. Transient: the network, any other 5xx, rate
+    limiting, an exhausted energy budget (402) or a request timeout (408). Everything else (conflict, configuration,
+    policy, non-SpacetimeDB errors) keeps the old retry."""
     if spacetime_mirror.refused(error) or (
             isinstance(error, SpacetimeHTTPError) and error.kind in ("authorization", "not_found")):
         return DETERMINISTIC

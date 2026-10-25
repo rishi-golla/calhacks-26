@@ -438,6 +438,21 @@ async def test_an_outage_halts_the_pass_keeps_the_backlog_and_backs_off(clock, c
     assert len(server.sources()) == total and mirror.backlog == {} and mirror.retry_s == 1.0
 
 
+@pytest.mark.parametrize("status", [402, 408, 503])
+async def test_an_exhausted_or_overloaded_server_halts_the_pass_instead_of_refusing_records(clock, status):
+    server = Server()
+    mirror = server.mirror()
+    dataset = _small_dataset(5)
+    server.status[SOURCE] = status
+    await mirror.sync_sources(dataset)
+    assert mirror.rejected == {} and len(mirror.backlog) == len(spacetime_mirror.dataset_records(dataset))
+    assert mirror.retry_at == clock.now + 1
+    del server.status[SOURCE]
+    clock.now = mirror.retry_at
+    await mirror.sync_sources(None)
+    assert mirror.backlog == {} and len(server.sources()) == len(spacetime_mirror.dataset_records(dataset))
+
+
 async def test_a_refused_record_is_skipped_until_it_changes(caplog):
     server = Server()
     mirror = server.mirror()
@@ -504,6 +519,9 @@ async def test_an_oversized_record_is_refused_without_a_request():
     (SpacetimeHTTPError(503, mutation=True), "transient"),
     (SpacetimeHTTPError(504, mutation=True), "transient"),
     (SpacetimeHTTPError(429, mutation=True), "transient"),
+    (SpacetimeHTTPError(402, mutation=True), "transient"),  # Maincloud energy budget exhausted
+    (SpacetimeHTTPError(408, mutation=True), "transient"),
+    (SpacetimeHTTPError(422, mutation=True), "deterministic"),
     (SpacetimeTransportError(timeout=True, may_have_committed=True), "transient"),
     (SpacetimeTransportError(timeout=False, may_have_committed=False), "transient"),
     (SpacetimeHTTPError(409, mutation=True), "other"),
@@ -566,7 +584,7 @@ async def test_a_success_clears_the_deterministic_count(world):
     assert redis.dead == [] and redis.acked == ["9-0"] and retry.failures == {}
 
 
-@pytest.mark.parametrize("failure", ["down", 500, 503, 429])
+@pytest.mark.parametrize("failure", ["down", 500, 503, 429, 402, 408])
 async def test_an_outage_backs_off_without_ever_dead_lettering(world, clock, caplog, failure):
     log: list = []
     server = Server(log)

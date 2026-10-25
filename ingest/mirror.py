@@ -51,6 +51,9 @@ SOURCE_MAPS = (("cases", "case"), ("companies", "company"), ("contacts", "contac
 MAX_PAYLOAD_CHARS = 262144
 # SpacetimeDB 2.x answers a reducer that refused the write with HTTP 530; the client files it under `server`.
 REDUCER_REFUSED = 530
+# Filed under `rejected` by the client, but the same write can land later: 402 is Maincloud's exhausted energy
+# budget, 408 a request timeout.
+TRANSIENT_STATUSES = {402, 408}
 RETRY_CAP_S = 30.0
 
 
@@ -61,13 +64,15 @@ class RecordTooLarge(SpacetimeError):
 def refused(error: BaseException) -> bool:
     """The module refused this exact write (or would, for an oversized record): resending it cannot succeed."""
     return isinstance(error, RecordTooLarge) or (isinstance(error, SpacetimeHTTPError) and (
-        error.kind == "rejected" or error.status_code == REDUCER_REFUSED))
+        (error.kind == "rejected" and error.status_code not in TRANSIENT_STATUSES)
+        or error.status_code == REDUCER_REFUSED))
 
 
 def transient(error: BaseException) -> bool:
     """An outage or overload: the same write can land later."""
     return isinstance(error, SpacetimeTransportError) or (isinstance(error, SpacetimeHTTPError) and (
-        error.kind in ("server", "rate_limited") and error.status_code != REDUCER_REFUSED))
+        (error.kind in ("server", "rate_limited") and error.status_code != REDUCER_REFUSED)
+        or error.status_code in TRANSIENT_STATUSES))
 
 
 def describe(error: BaseException) -> str:

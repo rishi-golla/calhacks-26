@@ -416,6 +416,14 @@ class LeasingRedis(FakeRedis):
     async def hdel(self, name, key):
         self.hashes.get(name, {}).pop(key, None)
 
+    async def eval(self, script, _numkeys, key, owner, *_args):
+        """The generator's two owner-checked lease scripts: refresh, or release (`del`)."""
+        if self.kv.get(key) != owner:
+            return 0
+        if "'del'" in script:
+            self.kv.pop(key)
+        return 1
+
 
 def test_injected_load_resumes_its_remaining_steps_after_the_stream_dies(world, frozen):
     """Pre-wipe Oct 24: burst loads stream inside the gateway, and 52 of them never got their shipper payment
@@ -461,3 +469,80 @@ def test_simulator_loads_are_not_tracked_for_resume(world, frozen):
             await generator.stream_load(r, load, "clean", random.Random())
     asyncio.run(run())
     assert not r.hashes
+
+
+class Killed(BaseException):
+    """A process stopping mid-step: not an error any best-effort handler swallows."""
+
+
+def test_a_replayed_step_reuses_its_ids_and_posts_the_bank_credit_once(world, frozen):
+    """A stream that dies after `paid` posted its bank credit but before its progress was saved runs `paid` again
+    on resume. The replay must mint the same event, mail and transaction IDs, and the bank must not credit twice."""
+    from sim import bank
+    p = demo.PRESETS["short_pay"]  # the trigger is the load's last step, `paid`
+    load, scenario = demo_load(world, "short_pay")
+    r = LeasingRedis()
+    hset = r.hset
+
+    async def lose_final_save(name, key, value):
+        if json.loads(value)["emitted"] == len(generator.lifecycle(load, scenario, random.Random(),
+                                                                   t0=datetime.fromisoformat(
+                                                                       json.loads(value)["t0"]))):
+            raise Killed  # the process stopped before saving `paid` as done
+        await hset(name, key, value)
+    r.hset = lose_final_save
+
+    async def first_run():
+        with pytest.raises(Killed):
+            await generator.stream_load(r, load, scenario, random.Random(), source="demo",
+                                        fast_forward_to=p.trigger_step, pins=p.pins)
+    asyncio.run(first_run())
+    r.hset = hset
+    first = [ev for ev in r.raw if ev["type"] in {"bank.event", "email.received"}][-2:]
+    assert load["load_id"] in r.hashes[generator.INFLIGHT_KEY]  # still recorded as one step short
+    r.kv.pop(generator._lease_key(load["load_id"]), None)
+
+    async def resume():
+        await asyncio.gather(*await generator.resume_inflight(r))
+    asyncio.run(resume())
+    replayed = [ev for ev in r.raw if ev["type"] in {"bank.event", "email.received"}][-2:]
+    assert [ev["event_id"] for ev in replayed] == [ev["event_id"] for ev in first]
+    assert replayed[1]["payload"]["record"] == first[1]["payload"]["record"]
+    txn = first[1]["payload"]["record"].split(",")[4]
+    bank_file = bank.bank_dir() / first[1]["payload"]["file"]
+    assert bank_file.read_text().count(f",{txn},") == 1
+    assert load["load_id"] not in r.hashes[generator.INFLIGHT_KEY]
+
+
+def test_a_stream_stops_when_another_process_takes_its_lease(world, frozen):
+    p = demo.PRESETS["phone"]
+    load, scenario = demo_load(world, "phone")
+    r = LeasingRedis()
+    frozen_steps = []
+
+    async def run():
+        with pytest.raises(StopStreaming):
+            await generator.stream_load(r, load, scenario, random.Random(), source="demo",
+                                        fast_forward_to=p.trigger_step, pins=p.pins)
+    asyncio.run(run())
+    frozen_steps.append(len(r.raw))
+    r.kv[generator._lease_key(load["load_id"])] = "another-gateway"
+    frozen.at = NOW + timedelta(days=30)
+    state = json.loads(r.hashes[generator.INFLIGHT_KEY][load["load_id"]])
+
+    async def stolen():
+        await generator.stream_load(r, load, scenario, random.Random(), source="demo", resume=state)
+    asyncio.run(stolen())
+    assert len(r.raw) == frozen_steps[0], "a stream without the lease published a step"
+
+
+def test_resume_skips_loads_this_process_is_already_streaming(world, frozen):
+    load, _scenario = demo_load(world, "phone")
+    r = LeasingRedis()
+    r.hashes[generator.INFLIGHT_KEY] = {load["load_id"]: json.dumps({"version": 1, "load": load})}
+    generator._STREAMING.add(load["load_id"])
+    try:
+        assert asyncio.run(generator.resume_inflight(r)) == []
+        assert generator._lease_key(load["load_id"]) not in r.kv
+    finally:
+        generator._STREAMING.discard(load["load_id"])

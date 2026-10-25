@@ -8,6 +8,7 @@ import {
   isSafeCaseId,
   liveWindowMinutes,
   snapshotBuilder,
+  sourceRecordQuery,
   sqlString,
   subscriptionPlan,
   tablePolicy,
@@ -161,4 +162,16 @@ test("view_epoch is an optional table in the app and ops plans", () => {
     assert.ok(!plan.base.some((q) => q.table === "view_epoch"), `${profile} base`);
     assert.ok(!plan.windowed.some((q) => q.table === "view_epoch"), `${profile} windowed`);
   }
+});
+
+test("source_record is never in the shared plan; a case page asks for its own row", () => {
+  for (const profile of ["app", "ops"] as const)
+    for (const cutoff of [CUTOFF, null]) {
+      const plan = subscriptionPlan(profile, cutoff);
+      const sql = [...plan.base, ...plan.windowed, ...plan.optional, ...caseQueries(profile, "CASE-1", cutoff)].map((q) => q.sql);
+      assert.ok(!sql.some((q) => q.includes("source_record")), `${profile} ${cutoff}`);
+    }
+  assert.equal(sourceRecordQuery("CASE-LD-1025-0E60ED88"), `SELECT * FROM "source_record" WHERE "case_id" = 'CASE-LD-1025-0E60ED88'`);
+  assert.equal(sourceRecordQuery("x' OR '1'='1"), null);
+  assert.equal(sourceRecordQuery(""), null);
 });

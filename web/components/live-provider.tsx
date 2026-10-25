@@ -12,6 +12,7 @@ import { DbConnection } from "@/module_bindings";
 import {
   camel,
   emptySnapshot,
+  normalize,
   type HumanReducer,
   type Row,
   type Snapshot,
@@ -21,6 +22,7 @@ import {
   caseQueries,
   liveWindowMinutes,
   snapshotBuilder,
+  sourceRecordQuery,
   subscriptionPlan,
   windowCutoff,
   type LiveProfile,
@@ -30,6 +32,15 @@ import {
 type ConnectionState = "connecting" | "live" | "fallback" | "offline";
 /** Whether an optional table (see `lib/live-queries`) exists on this module. */
 export type OptionalTableState = "pending" | "ready" | "absent";
+/**
+ * One case's `source_record` rows (see `useSourceRecords`). `absent`: this
+ * module or these bindings have no such table. `offline`: no live connection.
+ */
+export type SourceRecords = {
+  state: "loading" | "ready" | "absent" | "offline";
+  rows: Row[];
+};
+type SourceListener = (records: SourceRecords) => void;
 type LiveContext = {
   data: Snapshot;
   state: ConnectionState;
@@ -53,15 +64,21 @@ type LiveContext = {
    * release function is called. Reference-counted per case id.
    */
   focusCase: (caseId: string) => () => void;
+  /**
+   * Keep one case's `source_record` rows live (a query of their own, never
+   * the shared plan) until the returned release function is called.
+   */
+  watchSourceRecords: (caseId: string, listener: SourceListener) => () => void;
   reconnect: () => void;
   mutate: (name: HumanReducer, payload: Row) => Promise<void>;
 };
 const Context = createContext<LiveContext | null>(null);
+type RowCallback = (ctx: unknown, row: unknown) => void;
 type TableHandle = {
   iter: () => Iterable<unknown>;
-  onInsert: (cb: () => void) => void;
-  onUpdate?: (cb: () => void) => void;
-  onDelete: (cb: () => void) => void;
+  onInsert: (cb: RowCallback) => void;
+  onUpdate?: (cb: RowCallback) => void;
+  onDelete: (cb: RowCallback) => void;
 };
 type SubscriptionHandle = {
   isActive: () => boolean;
@@ -105,6 +122,8 @@ export function LiveProvider({
   const retries = useRef(0);
   const focused = useRef(new Map<string, number>());
   const syncFocus = useRef<() => void>(() => {});
+  const sourceWatchers = useRef(new Map<string, Set<SourceListener>>());
+  const syncSources = useRef<(fresh?: string) => void>(() => {});
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -152,6 +171,7 @@ export function LiveProvider({
       ready = false;
       connected.current = false;
       syncFocus.current = () => {};
+      syncSources.current = () => {};
       if (slideTimer) clearInterval(slideTimer);
       slideTimer = undefined;
       setError(message);
@@ -224,7 +244,7 @@ export function LiveProvider({
             table.onUpdate?.(touch);
           }
           const subscribe = (
-            queries: PlannedQuery[],
+            queries: readonly { sql: string }[],
             onApplied: () => void,
             onError: (message: string) => void,
           ): Sub => {
@@ -269,6 +289,8 @@ export function LiveProvider({
             setSince(cutoff);
             syncFocus.current = focus;
             focus();
+            syncSources.current = sources;
+            sources();
             bulkLoaded([...plan.base, ...plan.windowed]);
             refresh();
             if (plan.windowed.length) slideTimer = setInterval(slide, 30_000);
@@ -343,6 +365,65 @@ export function LiveProvider({
               );
             }
           };
+          // Case files: one `source_record` query per watched case, its rows
+          // read straight from the client cache. Never part of the snapshot.
+          const sourceTable = tables[camel("source_record")];
+          const sourceSubs = new Map<string, Sub>();
+          const sourceApplied = new Set<string>();
+          const readSources = (id: string): Row[] =>
+            sourceTable
+              ? Array.from(sourceTable.iter(), (row) => normalize(row) as Row).filter((row) => row.case_id === id)
+              : [];
+          const emitSources = (id: string, records: SourceRecords) => {
+            for (const listener of sourceWatchers.current.get(id) ?? []) listener(records);
+          };
+          if (sourceTable) {
+            const touch: RowCallback = (_ctx, row) => {
+              const id = (row as { caseId?: unknown } | null)?.caseId;
+              if (typeof id === "string" && sourceApplied.has(id))
+                emitSources(id, { state: "ready", rows: readSources(id) });
+            };
+            sourceTable.onInsert(touch);
+            sourceTable.onDelete(touch);
+            sourceTable.onUpdate?.(touch);
+          }
+          /** `fresh`: a listener just joined that case; hand it the rows already here. */
+          const sources = (fresh?: string) => {
+            if (disposed || !ready) return;
+            for (const [id, sub] of sourceSubs)
+              if (!sourceWatchers.current.has(id)) {
+                sub.release();
+                sourceSubs.delete(id);
+                sourceApplied.delete(id);
+              }
+            for (const id of sourceWatchers.current.keys()) {
+              if (sourceSubs.has(id)) {
+                if (id === fresh && sourceApplied.has(id))
+                  emitSources(id, { state: "ready", rows: readSources(id) });
+                continue;
+              }
+              const sql = sourceRecordQuery(id);
+              if (!sourceTable || !sql) {
+                emitSources(id, { state: sourceTable ? "ready" : "absent", rows: [] });
+                continue;
+              }
+              sourceSubs.set(
+                id,
+                subscribe(
+                  [{ sql }],
+                  () => {
+                    sourceApplied.add(id);
+                    emitSources(id, { state: "ready", rows: readSources(id) });
+                  },
+                  // An older module has no source_record table.
+                  () => {
+                    sourceSubs.delete(id);
+                    emitSources(id, { state: "absent", rows: [] });
+                  },
+                ),
+              );
+            }
+          };
         })
         .onConnectError((_ctx, err) =>
           lost(err?.message || "Cannot connect to SpacetimeDB"),
@@ -363,6 +444,7 @@ export function LiveProvider({
       disposed = true;
       connected.current = false;
       syncFocus.current = () => {};
+      syncSources.current = () => {};
       controller.abort();
       clearTimeout(initialFallback);
       clearInterval(interval);
@@ -388,6 +470,25 @@ export function LiveProvider({
       syncFocus.current();
     };
   }, []);
+  const watchSourceRecords = useCallback(
+    (caseId: string, listener: SourceListener) => {
+      if (!caseId) return () => {};
+      const watchers = sourceWatchers.current;
+      const set = watchers.get(caseId) ?? new Set<SourceListener>();
+      set.add(listener);
+      watchers.set(caseId, set);
+      syncSources.current(caseId);
+      let done = false;
+      return () => {
+        if (done) return;
+        done = true;
+        set.delete(listener);
+        if (!set.size && watchers.get(caseId) === set) watchers.delete(caseId);
+        syncSources.current();
+      };
+    },
+    [],
+  );
   const mutate = useCallback(async (name: HumanReducer, payload: Row) => {
     if (!connection.current || !connected.current)
       throw new Error(
@@ -420,6 +521,7 @@ export function LiveProvider({
         historyWindow: { minutes, since },
         optionalTables,
         focusCase,
+        watchSourceRecords,
         reconnect: () => {
           retries.current = 0;
           setAttempt((value) => value + 1);
@@ -440,4 +542,20 @@ export function useLive() {
 export function useCaseFocus(caseId: string) {
   const { focusCase } = useLive();
   useEffect(() => focusCase(caseId), [focusCase, caseId]);
+}
+const NO_ROWS: Row[] = [];
+/**
+ * `caseId`'s `source_record` rows, live while the calling component is
+ * mounted; "" watches nothing. The fallback snapshot does not carry them, so
+ * off the live connection this reads `offline`.
+ */
+export function useSourceRecords(caseId: string): SourceRecords {
+  const { watchSourceRecords, state } = useLive();
+  const [value, setValue] = useState<{ caseId: string; records: SourceRecords } | null>(null);
+  useEffect(
+    () => (caseId ? watchSourceRecords(caseId, (records) => setValue({ caseId, records })) : undefined),
+    [caseId, watchSourceRecords],
+  );
+  if (value && value.caseId === caseId) return value.records;
+  return { state: state === "connecting" || state === "live" ? "loading" : "offline", rows: NO_ROWS };
 }

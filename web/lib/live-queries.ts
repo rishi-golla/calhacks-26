@@ -164,6 +164,16 @@ export function caseQueries(profile: LiveProfile, caseId: string, cutoff: string
   return out;
 }
 
+/**
+ * The case page's case file: that case's `source_record` rows (only `case:<id>`
+ * carries a case_id). `source_record` holds one record per case, so it is never
+ * in the shared plan; the page subscribes this alone and drops it on unmount.
+ * Null when the id is not a safe literal.
+ */
+export function sourceRecordQuery(caseId: string): string | null {
+  return isSafeCaseId(caseId) ? `SELECT * FROM "source_record" WHERE "case_id" = ${sqlString(caseId)}` : null;
+}
+
 /** `/cases/<id>` → the case id, else "". */
 export function caseIdFromPath(pathname: string | null | undefined): string {
   const match = /^\/cases\/([^/?#]+)\/?$/.exec(pathname ?? "");

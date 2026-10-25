@@ -8,6 +8,10 @@
  * per node, never drawn one-workflow-per-case, so the map stays readable at
  * hundreds of concurrent cases. Packets and tickers are imperative
  * (`PacketEngine`); React renders the nodes, edges and rail.
+ *
+ * Learning is drawn too: gold lines from Settlement Quality Review to each
+ * agent it has taught, a light-bulb packet for every new lesson, and a glow
+ * on an agent's lesson badge whenever a task recalls one (lib/lessons).
  */
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
@@ -17,11 +21,12 @@ import { useLiveEvents, useOps } from "@/components/data-provider";
 import { moodForStatus, type Mood } from "@/components/mascot";
 import { AGENT_IDS, AGENT_META, isAgentId, type AgentId, type NodeId } from "@/lib/agents";
 import { timestamp } from "@/lib/data";
+import { lessonIndex } from "@/lib/lessons";
 import { intakeArriving, type LiveEvent } from "@/lib/ops";
 import { AgentNode, type NodeTone, type NodeView } from "./agent-node";
 import { AgentPanel } from "./agent-panel";
 import { CaseRail, type RailMetrics } from "./case-rail";
-import { Edges } from "./edges";
+import { Edges, type LessonEdge } from "./edges";
 import { STAGE_H, STAGE_W, setStretch } from "./layout";
 import { casePath, edgeTraffic, matchesTab, packetsFor, shortCaseId, type KindTab } from "./model";
 import { PacketEngine } from "./packet-engine";
@@ -124,7 +129,7 @@ const docName = (ref: string) => (ref.split(":")[1] ?? ref).split("#")[0];
 /* ------------------------------ component ------------------------------ */
 
 export default function AgentUniverse() {
-  const { snapshot, cases, caseList, workloads, ops, attention, now, simulated, sim } = useOps();
+  const { snapshot, fullSnapshot, cases, caseList, workloads, ops, attention, now, simulated, sim } = useOps();
   const [engine] = useState(() => new PacketEngine());
   const map = useRef<HTMLDivElement>(null);
   const layer = useRef<HTMLDivElement>(null);
@@ -173,12 +178,27 @@ export default function AgentUniverse() {
     return out;
   }, [workloads]);
 
+  // Learning outlives "Start fresh": lessons, their source cases and recall counts read the unscoped tables.
+  const { task, agent_memory, review, instruction_version } = fullSnapshot;
+  const lessons = useMemo(() => lessonIndex({ task, agent_memory, review, instruction_version }), [task, agent_memory, review, instruction_version]);
+  const lessonEdges = useMemo<LessonEdge[]>(
+    () => [...lessons.byAgent.entries()].filter(([agent]) => agent !== "validator").map(([agent, list]) => ({ agent, count: list.length })),
+    [lessons],
+  );
+  // Read by the live-event handler, which only needs the latest texts.
+  const lessonText = useRef(new Map<string, string>());
+  useEffect(() => {
+    lessonText.current = new Map(lessons.all.map((l) => [l.id, l.text]));
+  }, [lessons]);
+
   const pendingApprovals = useMemo(() => snapshot.approval.filter((a) => !a.decision || a.decision === "pending"), [snapshot.approval]);
 
   // Packet visibility follows the case filter and the selected case.
   useEffect(() => {
     engine.setVisibility((caseId) => {
       if (selectedCase) return caseId === selectedCase ? "show" : "dim";
+      // Lessons whose source case is not on the board (none, or before Start fresh) still fly.
+      if (!caseId || !cases.has(caseId)) return "show";
       if (tab === "all") return "show";
       const c = cases.get(caseId);
       return c && matchesTab(c, tab) ? "show" : "hide";
@@ -213,6 +233,16 @@ export default function AgentUniverse() {
           break;
         case "case_opened":
           engine.ticker("intake", `+ ${e.caseId}`);
+          break;
+        case "lesson":
+          if (isAgentId(e.agent)) engine.ticker("validator", `💡 lesson → ${AGENT_META[e.agent].nick}`, "lesson");
+          break;
+        case "lesson_recalled":
+          if (isAgentId(e.agent)) {
+            const first = lessonText.current.get(e.lessonIds[0]);
+            engine.glowLesson(e.agent);
+            engine.ticker(e.agent, `💡 recalled ${e.lessonIds.length > 1 ? `${e.lessonIds.length} lessons` : first ? `“${first.slice(0, 48)}${first.length > 48 ? "…" : ""}”` : "a lesson"}`, "lesson");
+          }
           break;
         case "dispatch":
           if (isAgentId(e.to)) engine.ticker("intake", `→ ${AGENT_META[e.to].nick}`);
@@ -292,6 +322,7 @@ export default function AgentUniverse() {
     const caseIds = [...w.activeTasks].sort((a, b) => b.startedAt - a.startedAt).map((x) => x.caseId);
     views.push({
       id,
+      lessons: id === "validator" ? lessons.all.filter((l) => l.agent !== "validator").length : (lessons.byAgent.get(id)?.length ?? 0),
       mood,
       bubble: mood === "talking" ? (liveCalls === 1 ? "On a call" : `${liveCalls} calls live`) : undefined,
       tone: toneFor(w.status, t),
@@ -333,7 +364,7 @@ export default function AgentUniverse() {
         <Backdrop variant="field" intensity={0.5} />
 
         <div className="au-stage" style={stageStyle}>
-          <Edges stats={traffic} focus={focus} path={path?.edges ?? null} hideHuman={!showHuman} stretch={fit.stretch} />
+          <Edges stats={traffic} focus={focus} path={path?.edges ?? null} hideHuman={!showHuman} stretch={fit.stretch} lessons={lessonEdges} />
           {views.map((v) => (
             <AgentNode
               key={v.id}
@@ -411,6 +442,7 @@ export default function AgentUniverse() {
             mood={views.find((v) => v.id === panelId)?.mood ?? "idle"}
             snapshot={snapshot}
             workload={isAgentId(panelId) ? workloads[panelId] : undefined}
+            lessons={lessons}
             cases={cases}
             now={now}
             onClose={() => {

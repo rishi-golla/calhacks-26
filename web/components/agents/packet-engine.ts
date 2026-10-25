@@ -14,7 +14,7 @@
 import { agentColor, skillLabel, type NodeId } from "@/lib/agents";
 import { curveAngle, curveAt, edgeCurve, edgeKey, type Curve } from "./layout";
 
-export type PacketKind = "doc" | "invoice" | "phone" | "check" | "case" | "stamp";
+export type PacketKind = "doc" | "invoice" | "phone" | "check" | "case" | "stamp" | "lesson";
 
 export type PacketSpec = {
   from: NodeId | "entry";
@@ -24,6 +24,8 @@ export type PacketSpec = {
   /** Tag text override (defaults to the skill label). */
   label?: string;
   kind?: PacketKind;
+  /** Ticker text for the target node when the packet lands. */
+  landing?: string;
 };
 
 export type Visibility = "show" | "dim" | "hide";
@@ -32,6 +34,8 @@ type NodeHandle = {
   flash?: HTMLElement | null;
   bump?: HTMLElement | null;
   ticker?: HTMLElement | null;
+  /** The lesson badge, when the node has learned something. */
+  lesson?: HTMLElement | null;
 };
 
 type Packet = {
@@ -50,11 +54,15 @@ type Packet = {
   arrivedAt: number;
   dim: boolean;
   caseIds: Set<string>;
+  /** Ticker text the target shows when this packet lands. */
+  landing: string;
 };
 
 const quintOut = (t: number) => 1 - Math.pow(1 - t, 5);
 /** After landing, a packet is absorbed into the node over this long. */
 const ABSORB_MS = 240;
+/** How long a lesson ticker line holds before routine activity replaces it. */
+const LESSON_TICKER_MS = 1_800;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 const ICON: Record<PacketKind, string> = {
@@ -65,6 +73,9 @@ const ICON: Record<PacketKind, string> = {
     '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 2.5h2.1l1 3-1.4 1a7.2 7.2 0 0 0 3.6 3.6l1-1.4 3 1v2.1a1 1 0 0 1-1 1A10.8 10.8 0 0 1 3.2 3.5a1 1 0 0 1 1-1z"/></svg>',
   check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.4l3 3 6-7"/></svg>',
   stamp: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5h4l-.8 5h2.8v2.5H4V7.5h2.8zM3.5 12.5h9"/></svg>',
+  // A Validator lesson: a light bulb.
+  lesson:
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8a4.2 4.2 0 0 0-2.4 7.6c.5.4.8.9.8 1.5v.6h3.2v-.6c0-.6.3-1.1.8-1.5A4.2 4.2 0 0 0 8 1.8zM6.4 13.2h3.2M7 14.6h2"/></svg>',
 };
 
 export function packetKindForSkill(skill: string): PacketKind {
@@ -130,20 +141,38 @@ export class PacketEngine {
     }
   }
 
-  /** Short activity line under a node (latest tool call, document, outcome). */
-  ticker(id: NodeId, text: string) {
+  /** Short activity line under a node (latest tool call, document, outcome). `tone` restyles it (e.g. a lesson). */
+  ticker(id: NodeId, text: string, tone = "") {
     const el = this.nodes.get(id)?.ticker;
     if (!el) return;
     const now = performance.now();
-    if (now - (this.lastTicker.get(id) ?? 0) < 280) return;
+    const since = now - (this.lastTicker.get(id) ?? 0);
+    if (since < 280) return;
+    // A lesson line holds a little longer than routine tool and document lines.
+    if (!tone && el.dataset.tone === "lesson" && since < LESSON_TICKER_MS) return;
     this.lastTicker.set(id, now);
     el.textContent = text;
+    el.dataset.tone = tone;
     if (!this.reduced) el.animate([{ opacity: 0.25, transform: "translateY(3px)" }, { opacity: 1, transform: "none" }], { duration: 320, easing: "cubic-bezier(.23,1,.32,1)" });
   }
 
   /** Light up a node without a packet (e.g. a task finished in place). */
   pulse(id: NodeId, strong = false) {
     this.flash(id, strong);
+  }
+
+  /** Glow a node's lesson badge: it just learned or recalled a lesson. */
+  glowLesson(id: NodeId) {
+    const el = this.nodes.get(id)?.lesson;
+    if (!el || this.reduced) return;
+    el.animate(
+      [
+        { transform: "scale(1)", boxShadow: "0 0 0 0 rgba(242,193,78,.9)" },
+        { transform: "scale(1.35)", boxShadow: "0 0 18px 6px rgba(242,193,78,.55)", offset: 0.3 },
+        { transform: "scale(1)", boxShadow: "0 0 0 0 rgba(242,193,78,0)" },
+      ],
+      { duration: 1100, easing: "cubic-bezier(.23,1,.32,1)" },
+    );
   }
 
   emit(specs: PacketSpec[]) {
@@ -154,7 +183,10 @@ export class PacketEngine {
     for (const s of specs) {
       const vis = this.visibility(s.caseId);
       if (vis === "hide" || !animate) {
-        if (!animate && vis !== "hide") this.flash(s.to, false);
+        if (!animate && vis !== "hide") {
+          this.flash(s.to, false);
+          if (s.landing) this.ticker(s.to, s.landing, s.kind === "lesson" ? "lesson" : "");
+        }
         continue;
       }
       const key = `${edgeKey(s.from, s.to)}|${s.kind ?? packetKindForSkill(s.skill)}`;
@@ -198,12 +230,14 @@ export class PacketEngine {
       p.edge = edge;
       p.to = s.to;
       p.start = now + i * 55;
-      p.dur = this.duration + (i % 4) * 60;
+      // Lessons fly slower than handoffs, so they read as a separate event.
+      p.dur = (this.duration + (i % 4) * 60) * (kind === "lesson" ? 1.6 : 1);
       p.count = g.n;
       p.arrived = false;
       p.arrivedAt = 0;
       p.dim = g.vis !== "show";
       p.caseIds = g.cases;
+      p.landing = s.landing ?? "";
       if (p.kind !== kind) {
         p.kind = kind;
         p.card.className = `au-pk-card k-${kind}`;
@@ -212,8 +246,8 @@ export class PacketEngine {
       p.card.style.setProperty("--from", s.from === "entry" ? "#ecedf4" : agentColor(s.from));
       p.el.style.setProperty("--to", agentColor(s.to));
       p.tag.textContent = g.skills.size > 1 && !s.label ? `${skillLabel(skill)} +${g.skills.size - 1}` : (s.label ?? skillLabel(skill));
-      // Dense traffic: drop the text tags and keep the cards, so the map stays readable.
-      p.tag.style.display = this.live.length > 14 ? "none" : "";
+      // Dense traffic: drop the text tags and keep the cards, so the map stays readable. Lessons keep theirs.
+      p.tag.style.display = this.live.length > 14 && kind !== "lesson" ? "none" : "";
       p.badge.textContent = `×${g.n}`;
       p.badge.style.display = g.n > 1 ? "" : "none";
       p.el.style.opacity = "0";
@@ -242,7 +276,7 @@ export class PacketEngine {
     badge.className = "au-pk-n";
     el.append(card, tag, badge);
     this.layer.append(el);
-    return { el, card, tag, badge, kind: "", curve: edgeCurve("intake", "carrier_ap"), edge: "", to: "intake", start: 0, dur: 1, count: 1, arrived: false, arrivedAt: 0, dim: false, caseIds: new Set() };
+    return { el, card, tag, badge, kind: "", curve: edgeCurve("intake", "carrier_ap"), edge: "", to: "intake", start: 0, dur: 1, count: 1, arrived: false, arrivedAt: 0, dim: false, caseIds: new Set(), landing: "" };
   }
 
   private release(p: Packet) {
@@ -256,6 +290,11 @@ export class PacketEngine {
     p.arrived = true;
     p.arrivedAt = now;
     if (!p.dim) this.flash(p.to, p.count > 1);
+    if (!p.dim && p.kind === "lesson") {
+      this.glowLesson(p.to);
+      const text = p.landing;
+      if (text) this.ticker(p.to, text, "lesson");
+    }
   }
 
   private flash(id: NodeId, strong: boolean) {

@@ -3,10 +3,10 @@ PDF attachments, shipper remittance advice, detention disputes and bank-change r
 fraud). Nothing is sent: messages are written to data/mail/ and announced on the event stream."""
 import os
 import pathlib
+import uuid
 from email.message import EmailMessage
-from email.utils import format_datetime
+from email.utils import format_datetime, make_msgid
 
-from sim import ids
 from sim.docs import docs_dir
 
 AP_INBOX = "ap@goldengatefreight.example"
@@ -38,7 +38,7 @@ def write(sender: str, to: str, subject: str, body: str, sent_at, attachments: l
           reply_to: str | None = None, in_reply_to: str | None = None) -> dict:
     """Write one .eml; attachments are doc refs whose PDFs get attached. Returns the email.received payload."""
     m = EmailMessage()
-    msg_id = f"<{ids.new_hex(24)}@{domain(sender) or 'mail.example'}>"
+    msg_id = make_msgid(domain=domain(sender) or "mail.example")
     m["Message-ID"], m["From"], m["To"], m["Subject"] = msg_id, sender, to, subject
     m["Date"] = format_datetime(sent_at)
     if reply_to:
@@ -52,7 +52,7 @@ def write(sender: str, to: str, subject: str, body: str, sent_at, attachments: l
         name = f"{ref.removeprefix('doc:')}.pdf"
         m.add_attachment((docs_dir() / name).read_bytes(), maintype="application", subtype="pdf", filename=name)
         names.append(name)
-    mail_id = f"MAIL-{ids.new_hex(10)}"
+    mail_id = f"MAIL-{uuid.uuid4().hex[:10]}"
     (mail_dir() / f"{mail_id}.eml").write_bytes(bytes(m))
     return {"mail_id": mail_id, "message_id": msg_id, "from": sender, "to": to, "reply_to": reply_to,
             "subject": subject, "sent_at": sent_at.isoformat(), "attachments": names, "snippet": body[:200]}

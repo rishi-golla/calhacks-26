@@ -105,12 +105,38 @@ def stable_id(*parts: str) -> str:
     return str(uuid.uuid5(NAMESPACE, canonical(list(parts))))
 
 
+def projection_target() -> str:
+    """The SpacetimeDB database activity is written to, as SpacetimeClient resolves it from the environment."""
+    url = os.getenv("SPACETIME_URL", "http://localhost:3000").rstrip("/")
+    return f"{url}/{os.getenv('SPACETIME_DB', 'freightops')}"
+
+
 def _add_missing_columns(sync_conn) -> None:
-    """Additive, in-place schema upgrades for tables create_all already made (it never alters them)."""
+    """Additive, in-place schema upgrades for tables create_all already made (it never alters them).
+
+    Adding `freight_projections.target` backfills every pending row in the same transaction: from the `_target`
+    an earlier build kept inside the payload, else the database this service is configured for now, which is where
+    the row would have been delivered without targets. Row IDs and write IDs are unchanged, so a write the reducer
+    already received stays idempotent."""
     from sqlalchemy import inspect
     columns = {column["name"] for column in inspect(sync_conn).get_columns(projections.name)}
-    if "target" not in columns:
-        sync_conn.execute(text(f"ALTER TABLE {projections.name} ADD COLUMN target TEXT NOT NULL DEFAULT ''"))
+    if "target" in columns:
+        return
+    sync_conn.execute(text(f"ALTER TABLE {projections.name} ADD COLUMN target TEXT NOT NULL DEFAULT ''"))
+    current = projection_target()
+    rows = sync_conn.execute(select(projections.c.id, projections.c.payload).where(
+        projections.c.delivered == 0)).all()
+    for row_id, raw in rows:
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("_target"), str) and payload["_target"]:
+            target = payload.pop("_target")
+            sync_conn.execute(update(projections).where(projections.c.id == row_id).values(
+                target=target, payload=canonical(payload)))
+        else:
+            sync_conn.execute(update(projections).where(projections.c.id == row_id).values(target=current))
 
 
 def projection_row_id(write_id: str, target: str) -> str:

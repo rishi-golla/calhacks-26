@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 
 import redis.asyncio as redis
 
-from sim import bank, clock, docs, events, geo, hero, ids, mail, retention
+from sim import bank, clock, docs, events, geo, hero, mail, retention
 from sim.world import WORLD_SCHEMA, ensure, offline_world
 
 SCENARIOS = {"clean": 0.60, "decoy_detention_supported_small": 0.06, "decoy_quickpay": 0.06,
@@ -167,7 +167,7 @@ def _check_pins(pins: dict | None) -> dict:
 
 def _event(etype: str, load: dict, payload: dict, at: datetime, priority: str = "P3",
            refs: list[str] | None = None) -> dict:
-    ev = {"event_id": f"EVT-{ids.new_hex(10)}", "type": etype, "ts": events.iso_z(),
+    ev = {"event_id": f"EVT-{uuid.uuid4().hex[:10]}", "type": etype, "ts": events.iso_z(),
           "sim_ts": events.iso_z(at), "case_hint": payload.get("case_id", load["case_id"]),
           "priority": priority, "source": load.get("_event_source", "sim"), "payload": payload}
     if refs:
@@ -284,10 +284,9 @@ def record_answer(load: dict, scenario: str, planted: dict | None = None,
 
 
 def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | None = None,
-              t0: datetime | None = None, pins: dict | None = None, refs: dict | None = None) -> list[Step]:
+              t0: datetime | None = None, pins: dict | None = None) -> list[Step]:
     """Business-time schedule for one load. Documents are written when their step fires, never ahead of time.
-    `overrides` are only recorded on the tender; `pins` fix planted values (see PINS). `refs` collects the document
-    references earlier steps hand to later ones; pass a resumed load's saved refs to continue its schedule."""
+    `overrides` are only recorded on the tender; `pins` fix planted values (see PINS)."""
     pins = _check_pins(pins)
     rnd = _load_rng(load)
     t0 = t0 or _now()
@@ -318,18 +317,11 @@ def lifecycle(load: dict, scenario: str, rnd: random.Random, overrides: dict | N
         remit = {"name": f"{rnd.choice(['Apex', 'Summit', 'Triumph', 'Keystone'])} Freight Capital LLC",
                  "address": "PO Box 4410, Dallas, TX 75201", "routing_last4": f"{rnd.randint(0, 9999):04d}",
                  "account_last4": f"{rnd.randint(0, 9999):04d}"}
-    refs = {} if refs is None else refs
+    refs: dict[str, str] = {}
     steps: list[Step] = []
 
     def add(at: datetime, name: str, fn: Callable[[], list[dict]]) -> None:
-        # Each step draws from its own seed, so a step run on its own after a resume (its predecessors were not
-        # run in this process) draws exactly what it drew the first time: same amounts, names and speeds.
-        seed = f"{lid}:{len(steps)}:{name}"
-
-        def make() -> list[dict]:
-            rnd.seed(seed)
-            return fn()
-        steps.append(Step(at, name, make))
+        steps.append(Step(at, name, fn))
 
     def tender() -> list[dict]:
         refs["rc"] = docs.write(f"RC-{lid}", "rate_confirmation", {
@@ -569,174 +561,27 @@ def fast_forward(load: dict, scenario: str, rnd: random.Random, now: datetime, t
     raise RuntimeError(f"could not fast-forward {load['load_id']} to {trigger}")
 
 
-# Operator-injected loads (demo presets, bursts) stream inside whichever process launched them, usually the gateway.
-# Their remaining lifecycle (POD, shipper invoice, payment: the events that settle a case) is saved here after each
-# step, so a restarted process resumes them instead of leaving their cases open forever (pre-wipe Oct 24: 52 burst
-# loads lost their payment when the streaming process stopped). A lease keeps two processes from streaming one load.
-INFLIGHT_KEY = "sim:inflight"
-INFLIGHT_LEASE_S = 120
-INFLIGHT_MAX_AGE_S = float(os.getenv("SIM_INFLIGHT_MAX_AGE_S", str(6 * 3600)))
-_INSTANCE = uuid.uuid4().hex
-_STREAMING: set[str] = set()  # loads this process is streaming right now
-# Owner-checked lease operations: only the stream that holds a load's lease may extend or release it.
-_REFRESH = ("if redis.call('get', KEYS[1]) == ARGV[1] then "
-            "redis.call('set', KEYS[1], ARGV[1], 'EX', ARGV[2]) return 1 end return 0")
-_RELEASE = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0"
-
-
-class LeaseTaken(Exception):
-    """Another process now streams this load; this stream stops so no step is published twice."""
-
-
-def _lease_key(load_id: str) -> str:
-    return f"{INFLIGHT_KEY}:lease:{load_id}"
-
-
-async def _inflight(r, operation: str, *args, **kwargs):
-    """Best effort: tracking a load's progress must never stop it from streaming. None means unknown."""
-    method = getattr(r, operation, None)
-    if method is None:
-        return None
-    try:
-        return await method(*args, **kwargs)
-    except Exception as exc:  # noqa: BLE001 -- Redis hiccups only cost resumability
-        log.warning("in-flight load tracking skipped (%s): %s", operation, type(exc).__name__)
-        return None
-
-
-async def _claim(r, load_id: str) -> bool:
-    return bool(await _inflight(r, "set", _lease_key(load_id), _INSTANCE, ex=INFLIGHT_LEASE_S, nx=True))
-
-
-async def _refresh(r, load_id: str) -> None:
-    held = await _inflight(r, "eval", _REFRESH, 1, _lease_key(load_id), _INSTANCE, INFLIGHT_LEASE_S)
-    if held is not None and not int(held):
-        raise LeaseTaken(load_id)
-
-
-async def _sleep_holding_lease(r, seconds: float, load_id: str | None) -> None:
-    while seconds > 0:
-        chunk = min(seconds, INFLIGHT_LEASE_S / 3)
-        await asyncio.sleep(chunk)
-        seconds -= chunk
-        if load_id:
-            await _refresh(r, load_id)
-
-
 async def stream_load(r: redis.Redis, load: dict, scenario: str, rnd: random.Random,
                       overrides: dict | None = None, backdate: timedelta | None = None,
-                      source: str = "sim", fast_forward_to: str | None = None, pins: dict | None = None,
-                      *, resume: dict | None = None) -> None:
-    """Play one load out on the business clock. `resume` is a saved in-flight state (see resume_inflight), whose
-    lease the caller already holds: its schedule is rebuilt from the same t0 and only the steps it had not finished
-    are run. Every step runs under sim.ids.replayable, so a step that is run again re-sends the same IDs."""
+                      source: str = "sim", fast_forward_to: str | None = None, pins: dict | None = None) -> None:
     load["_event_source"] = source
     raw_maxlen()  # fail before the answer key records a load that could never be published
     clk = await clock.load(r, heartbeat=True)
-    load_id = load["load_id"]
-    refs: dict = dict(resume["refs"]) if resume else {}
-    emitted = int(resume["emitted"]) if resume else 0
-    if resume:
-        t0 = datetime.fromisoformat(resume["t0"])
-        steps = lifecycle(load, scenario, rnd, overrides, t0, pins, refs=refs)
-    elif fast_forward_to:
+    if fast_forward_to:
         t0, steps = fast_forward(load, scenario, rnd, clk.now(), fast_forward_to, overrides, pins)
-        # fast_forward built throwaway schedules; the one played out must share the refs that get saved.
-        steps = lifecycle(load, scenario, rnd, overrides, t0, pins, refs=refs)
     else:
         t0 = clk.now() - backdate if backdate is not None else clk.now()
-        steps = lifecycle(load, scenario, rnd, overrides, t0, pins, refs=refs)
-    if not resume:
-        record_answer(load, scenario, load.get("planted"), t0)
-    # Claim the lease before the saved state exists, so a resume pass can never find state without an owner.
-    track = source == "demo" and (resume is not None or await _claim(r, load_id))
-    state = {"version": 1, "load": load, "scenario": scenario, "overrides": overrides, "pins": pins,
-             "source": source, "fast_forward_to": fast_forward_to, "t0": t0.isoformat(), "refs": refs,
-             "emitted": emitted, "saved_at": time.time()}
-    _STREAMING.add(load_id)
-    try:
-        if track:
-            await _inflight(r, "hset", INFLIGHT_KEY, load_id, json.dumps(state, default=str))
-        for n, st in enumerate(steps, 1):
-            if n <= emitted:
-                continue
-            wait = clk.wall_delay(st.at - clk.now())
-            if wait > 0:
-                await _sleep_holding_lease(r, wait, load_id if track else None)
-            if track:
-                await _refresh(r, load_id)
-            with ids.replayable(f"{load_id}:{n}"):
-                step_events = st.make()
-            for ev in step_events:
-                ev["ts"] = events.iso_z()
-                await publish(r, ev)
-            if track:
-                await _inflight(r, "hset", INFLIGHT_KEY, load_id, json.dumps(
-                    {**state, "refs": refs, "emitted": n, "saved_at": time.time()}, default=str))
-            if st.name == fast_forward_to:
-                log.info("fast_forward %s: emitted %d steps through %s", load_id, n, st.name)
-        if track:
-            await _inflight(r, "hdel", INFLIGHT_KEY, load_id)
-            await _inflight(r, "eval", _RELEASE, 1, _lease_key(load_id), _INSTANCE)
-    except LeaseTaken:
-        log.warning("stopped streaming %s: another process holds its lease", load_id)
-    finally:
-        _STREAMING.discard(load_id)
-
-
-async def resume_inflight(r: redis.Redis) -> list[asyncio.Task]:
-    """Restart the background streams of injected loads a previous process left unfinished.
-
-    The live gateway calls this periodically. Loads this process is streaming, or whose lease another live
-    process holds, are skipped; an entry older than SIM_INFLIGHT_MAX_AGE_S is dropped."""
-    entries = await _inflight(r, "hgetall", INFLIGHT_KEY) or {}
-    started = []
-    for raw_id, raw_state in entries.items():
-        load_id = raw_id.decode() if isinstance(raw_id, bytes) else str(raw_id)
-        if load_id in _STREAMING or not await _claim(r, load_id):
-            continue
-        try:
-            state = json.loads(raw_state)
-            if state.get("version") != 1 or state["load"]["load_id"] != load_id:
-                raise ValueError("unrecognized in-flight state")
-        except (ValueError, KeyError, TypeError):
-            log.warning("dropping unreadable in-flight load %s", load_id)
-            await _inflight(r, "hdel", INFLIGHT_KEY, load_id)
-            await _inflight(r, "eval", _RELEASE, 1, _lease_key(load_id), _INSTANCE)
-            continue
-        if time.time() - float(state.get("saved_at", 0)) > INFLIGHT_MAX_AGE_S:
-            log.warning("dropping stale in-flight load %s", load_id)
-            await _inflight(r, "hdel", INFLIGHT_KEY, load_id)
-            await _inflight(r, "eval", _RELEASE, 1, _lease_key(load_id), _INSTANCE)
-            continue
-        _STREAMING.add(load_id)  # before the task starts, so the next pass cannot claim it twice
-
-        async def run(state=state) -> None:
-            try:
-                await stream_load(r, state["load"], state["scenario"], random.Random(), state.get("overrides"),
-                                  source=state.get("source", "demo"), fast_forward_to=state.get("fast_forward_to"),
-                                  pins=state.get("pins"), resume=state)
-            except Exception:
-                log.exception("resumed %s stopped streaming", state["load"]["load_id"])
-                raise
-            finally:
-                _STREAMING.discard(state["load"]["load_id"])
-        task = asyncio.create_task(run())
-        _BACKGROUND.add(task)
-        task.add_done_callback(_BACKGROUND.discard)
-        started.append(task)
-        log.info("resumed in-flight load %s after step %d", load_id, state.get("emitted", 0))
-    return started
-
-
-async def resume_inflight_loop(r: redis.Redis, interval: float = 60) -> None:
-    """Keep resuming: a crashed process's leases expire up to INFLIGHT_LEASE_S after it stopped."""
-    while True:
-        try:
-            await resume_inflight(r)
-        except Exception as exc:  # noqa: BLE001 -- retried next interval
-            log.warning("in-flight load resume deferred: %s", type(exc).__name__)
-        await asyncio.sleep(interval)
+        steps = lifecycle(load, scenario, rnd, overrides, t0, pins)
+    record_answer(load, scenario, load.get("planted"), t0)
+    for n, st in enumerate(steps, 1):
+        wait = clk.wall_delay(st.at - clk.now())
+        if wait > 0:
+            await asyncio.sleep(wait)
+        for ev in st.make():
+            ev["ts"] = events.iso_z()
+            await publish(r, ev)
+        if st.name == fast_forward_to:
+            log.info("fast_forward %s: emitted %d steps through %s", load["load_id"], n, st.name)
 
 
 async def run_load(r: redis.Redis, world: dict, rnd: random.Random, scenario: str,

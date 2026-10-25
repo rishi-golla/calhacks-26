@@ -831,13 +831,17 @@ async def test_each_database_keeps_its_own_ordered_outbox(tmp_path, monkeypatch)
         assert not await agent.store.pending_projections("risk")
 
 
-async def test_existing_outbox_table_gains_the_target_column_in_place(tmp_path):
-    """The live PostgreSQL outbox already has rows: the upgrade only adds a defaulted column, and rows queued
-    before it (target '') are still delivered to whichever database the service uses."""
+async def test_existing_outbox_table_gains_the_target_column_in_place(tmp_path, monkeypatch):
+    """The live PostgreSQL outbox already has rows: the upgrade adds a defaulted column and, in the same transaction,
+    gives every pending row its destination. A row that named one in its payload keeps it; any other row gets the
+    database configured now, where it would have been delivered anyway. Row and write IDs never change."""
     import sqlalchemy as sa
     from sqlalchemy.ext.asyncio import create_async_engine
+    monkeypatch.setenv("SPACETIME_URL", "https://maincloud.example")
+    monkeypatch.setenv("SPACETIME_DB", "freightops")
     url = f"sqlite+aiosqlite:///{tmp_path / 'legacy.sqlite'}"
     engine = create_async_engine(url)
+    elsewhere = json.dumps({"task_id": "task", "write_id": "named", "_target": "http://127.0.0.1:3000/wt"})
     async with engine.begin() as conn:
         await conn.execute(sa.text(
             "CREATE TABLE freight_projections (id VARCHAR(36) PRIMARY KEY, task_id VARCHAR(36) NOT NULL, "
@@ -845,13 +849,17 @@ async def test_existing_outbox_table_gains_the_target_column_in_place(tmp_path):
         await conn.execute(sa.text(
             "INSERT INTO freight_projections VALUES ('legacy-write', 'task', 'risk', "
             "'{\"task_id\":\"task\",\"write_id\":\"legacy-write\"}', 0, 1.0)"))
+        await conn.execute(sa.text("INSERT INTO freight_projections VALUES ('named', 'task', 'risk', :p, 0, 2.0)"),
+                           {"p": elsewhere})
     await engine.dispose()
     store = RuntimeStore(url)
     try:
-        pending = await store.pending_projections("risk", target="https://maincloud.example/freightops")
-        assert [(row["id"], row["target"]) for row in pending] == [("legacy-write", "")]
-        await store.queue_projection("risk", {"task_id": "task", "write_id": "legacy-write",
-                                              "_target": "https://maincloud.example/freightops"})
-        assert len(await store.pending_projections("risk")) == 2
+        rows = {row["id"]: row for row in await store.pending_projections("risk")}
+        assert {key: row["target"] for key, row in rows.items()} == {
+            "legacy-write": "https://maincloud.example/freightops", "named": "http://127.0.0.1:3000/wt"}
+        assert "_target" not in json.loads(rows["named"]["payload"])
+        current = await store.pending_projections("risk", target="https://maincloud.example/freightops")
+        assert [row["id"] for row in current] == ["legacy-write"]
+        assert await store.held_projections("risk", "https://maincloud.example/freightops") == 1
     finally:
         await store.close()

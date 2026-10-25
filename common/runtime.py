@@ -22,7 +22,7 @@ from google.protobuf.json_format import MessageToDict
 
 from common.config import AGENTS, MAX_DELEGATION_DEPTH, MAX_FANOUT, SKILL_OWNER
 from common.envelope import DelegationMeta, ResultArtifact, TaskEnvelope
-from common.runtime_store import LeaseLost, RuntimeStore, stable_id, task_id_for
+from common.runtime_store import LeaseLost, RuntimeStore, projection_target, stable_id, task_id_for
 
 log = logging.getLogger(__name__)
 TERMINAL_STATES = {TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_FAILED,
@@ -32,12 +32,6 @@ _execution: ContextVar[tuple[str, str, int] | None] = ContextVar("freight_execut
 
 
 TERMINAL_NAMES = frozenset({"completed", "failed", "canceled", "rejected"})
-
-
-def projection_target() -> str:
-    """The SpacetimeDB database activity is written to, as SpacetimeClient resolves it from the environment."""
-    url = os.getenv("SPACETIME_URL", "http://localhost:3000").rstrip("/")
-    return f"{url}/{os.getenv('SPACETIME_DB', 'freightops')}"
 
 
 def minimal_state_projection(payload: dict, target: str) -> dict:
@@ -359,8 +353,11 @@ class FreightAgent(AgentExecutor):
                     continue
                 payload = json.loads(event["payload"])
                 operation = payload.pop("_operation", "upsert_task")
-                payload.pop("_target", None)
+                embedded = payload.pop("_target", None)
                 fallback = payload.pop("_fallback", False)
+                if embedded and embedded != current:
+                    blocked.add(event["task_id"])  # an unmigrated row names another database: never send it here
+                    continue
                 if operation not in {"upsert_task", "append_audit"}:
                     raise ValueError("unsupported activity outbox operation")
                 if check(operation, self.name, payload).result != "allow":

@@ -45,6 +45,8 @@ export type CaseFile = {
   otherRefs: string[];
   bank: CaseFileBankLine[];
   billed: number | null;
+  /** Deposits applied to this case's invoice from this case's shipper; `deposited` is their sum. */
+  applied: CaseFileBankLine[];
   deposited: number;
   carrier: { name: string; id: string; usdot: string; mc: string } | null;
   /** The carrier the invoice names, when it is not the tendered one. */
@@ -190,11 +192,8 @@ export function buildCaseFile(rows: readonly Row[], caseId: string): CaseFileRes
   // Received: only cash applied to this case's invoice from this case's shipper,
   // the same match Shipper AR makes before it computes the balance.
   const shipperId = text(record.shipper_id) || text(object(record.shipper)?.id);
-  const deposited = round2(
-    bank
-      .filter((b) => !b.unapplied && !!shipperInvoiceId && b.invoiceId === shipperInvoiceId && b.shipperId === shipperId)
-      .reduce((sum, b) => sum + (b.amount ?? 0), 0),
-  );
+  const applied = bank.filter((b) => !b.unapplied && !!shipperInvoiceId && b.invoiceId === shipperInvoiceId && b.shipperId === shipperId);
+  const deposited = round2(applied.reduce((sum, b) => sum + (b.amount ?? 0), 0));
 
   /* -------- facts -------- */
   const c = object(record.carrier);
@@ -235,6 +234,7 @@ export function buildCaseFile(rows: readonly Row[], caseId: string): CaseFileRes
       otherRefs,
       bank,
       billed,
+      applied,
       deposited,
       carrier,
       invoiceCarrier,

@@ -2119,7 +2119,7 @@ details > summary {
 
 /* ---------------------------------------------------------------------------
  * Evidence chips + source viewer (ev-) and shown work (wk-).
- * Shared by the FreightLine screens (.fl, tokens in components/cases/cases.css),
+ * Shared by the FreightLine screens (.fl, tokens in app/freightline.css),
  * the agent inbox (.agent-inbox, tokens in components/agent-inbox.css) and the
  * light ops console (defaults below). Rules only read --ev-* tokens.
  * ------------------------------------------------------------------------- */
@@ -2792,6 +2792,9 @@ button.ev-chip:focus-visible {
   text-transform: uppercase;
   cursor: help;
 }
+.wk-recheck.calc {
+  color: var(--ev-mute);
+}
 .wk-recheck.ok {
   color: var(--ev-ok);
 }
@@ -2950,4 +2953,81 @@ button.ev-chip:focus-visible {
 }
 .review-work {
   padding: 2px 0;
+}
+
+/* show-work popover (components/show-work.tsx): a figure that opens its shown work */
+.sw-trigger {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: help;
+  border-radius: 2px;
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+  text-underline-offset: 3px;
+}
+.sw-trigger:hover {
+  text-decoration-color: currentColor;
+}
+.sw-trigger:focus-visible {
+  outline: 2px solid var(--ev-accent);
+  outline-offset: 2px;
+}
+.sw-pop {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(420px, calc(100vw - 16px));
+  max-height: min(70vh, 560px);
+  overflow: auto;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--ev-line-strong);
+  border-radius: var(--ev-radius);
+  /* --ev-bg is translucent under the glass theme; the sunk tone is solid in every theme. */
+  background: color-mix(in srgb, var(--ev-sunk) 94%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(115%);
+  backdrop-filter: blur(20px) saturate(115%);
+  color: var(--ev-fg);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  font-family: var(--font-body, inherit);
+  font-size: 12px;
+  font-weight: 400;
+  white-space: normal;
+}
+.sw-pop:not([data-placed]) {
+  visibility: hidden;
+}
+.sw-pop .wk-block {
+  margin-top: 4px;
+}
+.sw-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sw-title {
+  font-family: var(--ev-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ev-dim);
+}
+.sw-close {
+  all: unset;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  color: var(--ev-mute);
+}
+.sw-close:hover,
+.sw-close:focus-visible {
+  color: var(--ev-strong);
 }

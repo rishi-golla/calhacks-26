@@ -10,6 +10,8 @@
 import { Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useOps } from "@/components/data-provider";
+import { ShowWork } from "@/components/show-work";
+import { dsoWorkings, marginWorkings } from "@/lib/show-work";
 import { AttentionQueue } from "./attention-queue";
 import { ForecastBars, LineChart, Sparkline } from "./charts";
 import { CountUp } from "./count-up";
@@ -125,7 +127,9 @@ function KpiTiles() {
       // Days of sales outstanding needs a 30-day revenue base, which an epoch does not give.
       foot: dso && !scoped ? (
         <>
-          DSO <b className="fl-num">{Math.round(dso)}</b> days
+          <ShowWork workings={dsoWorkings(finance)} title="Days sales outstanding">
+            DSO <b className="fl-num">{Math.round(dso)}</b> days
+          </ShowWork>
         </>
       ) : undefined,
     },
@@ -139,9 +143,9 @@ function KpiTiles() {
       good: "up",
       delta: scoped ? null : <span className="fh-delta flat">30d {usdShort(finance.revenue30d)}</span>,
       foot: (
-        <span title={scoped ? undefined : "30 days"}>
+        <ShowWork workings={marginWorkings(finance, scoped ? "since the fresh start" : "last 30 days")} title="Gross margin">
           Margin <b className="fl-num">{pct1(finance.grossMarginPct)}</b>
-        </span>
+        </ShowWork>
       ),
     },
   ];

@@ -924,3 +924,25 @@
 .fl.fl-intro-host {
   min-height: 0;
 }
+
+/* Evidence viewer, shown work and show-work popovers (app/globals.css ev-, wk-, sw-)
+ * on every FreightLine screen, not only the ones that load cases.css. */
+.fl {
+  --ev-bg: var(--bg-1);
+  --ev-sunk: var(--bg-0);
+  --ev-chip-bg: var(--bg-2);
+  --ev-fg: var(--text-dim);
+  --ev-strong: var(--text);
+  --ev-dim: var(--text-dim);
+  --ev-mute: var(--text-mute);
+  --ev-line: var(--line);
+  --ev-line-strong: var(--line-strong);
+  --ev-ok: var(--ok);
+  --ev-warn: var(--warn);
+  --ev-bad: var(--bad);
+  --ev-info: var(--info);
+  --ev-accent: var(--teal);
+  --ev-mono: var(--font-mono);
+  --ev-radius: 0;
+  --ev-pdf-bg: #2a2f37;
+}

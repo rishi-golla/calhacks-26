@@ -45,6 +45,13 @@ export function BasisChip({ basis }: { basis: string }) {
 
 function Recheck({ w, r }: { w: Working; r: RecheckResult }) {
   if (r.status === "unchecked") return null;
+  // Recomputing the dashboard's own arithmetic proves nothing; say where the figure came from instead.
+  if (r.status === "match" && w.origin === "dashboard")
+    return (
+      <span className="wk-recheck calc" title="The dashboard calculated this figure from the inputs shown.">
+        dashboard calc
+      </span>
+    );
   if (r.status === "match")
     return (
       <span className="wk-recheck ok" title="Recomputed from the inputs shown: same result">
@@ -291,7 +298,7 @@ export function WorkingRow({ working, nested = false }: { working: Working; nest
         {isPolicyId(w.basis) && <BasisChip basis={w.basis} />}
         <Recheck w={w} r={recheck} />
       </div>
-      <div className="wk-body" title={w.formula || undefined}>
+      <div className="wk-body" title={w.formula ? (w.origin === "dashboard" ? `Dashboard formula: ${w.formula}` : w.formula) : undefined}>
         <Body w={w} layout={layout} disputed={recheck.status === "mismatch"} />
       </div>
       {w.evidence_refs.length > 0 && (

@@ -264,9 +264,12 @@ def test_an_oversized_view_is_clipped_and_never_invents_citations():
     view = review_view(bundle, limit=REVIEW_TOOL_CHARS)
     assert encoded_size(view) <= REVIEW_TOOL_CHARS
     assert all(ref.startswith("doc:") for ref in view["source"]["evidence_refs"])
-    tiny = review_view(bundle, deterministic_review(bundle).checks, limit=2_500)
+    checks = deterministic_review(bundle).checks
+    tiny = review_view(bundle, checks, limit=2_500)
     assert encoded_size(tiny) <= 2_500 and tiny["details_omitted"] is True
-    assert tiny["target"]["task_id"] == "task-cash" and tiny["checks"][0]["name"] == "target_terminal"
+    # A tight budget keeps the failed checks first (here the invented-citation check), then passes as they fit.
+    failed = [c["name"] for c in checks if not c["ok"]]
+    assert tiny["target"]["task_id"] == "task-cash" and [c["name"] for c in tiny["checks"][:len(failed)]] == failed
 
 
 @pytest.fixture

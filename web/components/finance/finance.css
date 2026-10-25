@@ -365,7 +365,7 @@
   padding: 8px 0;
 }
 
-/* ---------------------------- needs attention ---------------------------- */
+/* ------------------------------- work queue ------------------------------- */
 .fh-att {
   display: flex;
   flex-direction: column;
@@ -433,6 +433,37 @@
   text-transform: uppercase;
   color: var(--text-mute);
 }
+/* "Needs you" / "Agents handling": section heads above the kind groups. */
+.fh-att-section {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 14px 16px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.fh-att-section > span:first-child {
+  flex: 1;
+}
+.fh-att-section b {
+  font-weight: 600;
+  color: var(--orange);
+}
+.fh-att-section.agents {
+  margin-top: 8px;
+  padding-bottom: 6px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--text-dim);
+}
+.fh-att-section.agents b {
+  color: var(--text-dim);
+}
+.fh-att-section .fh-att-why {
+  color: var(--text-mute);
+}
 .fh-att-group ul {
   display: grid;
   gap: 2px;
@@ -460,6 +491,27 @@
 }
 .fh-att-row.sev-low {
   --flash: var(--aqua);
+}
+/* Agents handling: no severity color, smaller and dimmer than what needs you. */
+.fh-att-row.quiet {
+  --sev: var(--line);
+  --flash: var(--text-mute);
+  background: transparent;
+}
+.fh-att-row.quiet .fh-att-link {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  padding-block: 6px;
+}
+.fh-att-row.quiet .mascot {
+  opacity: 0.85;
+}
+.fh-att-row.quiet .fh-att-title {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.fh-att-row.quiet .fh-att-amt {
+  font-size: 12px;
+  color: var(--text-mute);
 }
 .fh-att-link {
   display: grid;

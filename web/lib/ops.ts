@@ -6,7 +6,7 @@
  * way. Selectors are pure; wrap them in `useMemo` keyed on the snapshot tables
  * they touch.
  */
-import { AGENT_IDS, isAgentId, type AgentId } from "./agents";
+import { AGENT_IDS, AGENT_META, isAgentId, type AgentId } from "./agents";
 import { json, num, str, timestamp, type Row, type Snapshot } from "./data";
 
 /* ------------------------------ tasks ------------------------------ */
@@ -109,8 +109,12 @@ export type CaseView = {
   agents: AgentId[];
   tasks: TaskView[];
   activeTasks: number;
-  /** Something needs a person: pending approval, input-required, failed task, open flag. */
+  /** Every open item on the case: pending approval, waiting task, failed task, open flag, hold... */
   attention: AttentionKind[];
+  /** The kinds in `attention` that need a person (see `attentionAudience`). */
+  needsYou: AttentionKind[];
+  /** The kinds in `attention` the agents are handling themselves. A case can have `input_required` in both. */
+  agentsHandling: AttentionKind[];
   synthetic: boolean;
   scenario: string;
   row: Row;
@@ -124,6 +128,41 @@ export type AttentionKind =
   | "review_issue"
   | "hold_active"
   | "call_no_answer";
+
+/**
+ * Who has to act on an open item: a person, or the agents themselves. Much of
+ * what is open is agents working with each other (a parent parked on its
+ * delegated child, a call in flight, an agent-placed hold the agents resolve;
+ * a hold that needs a person to release it raises its own `release_hold`
+ * approval), so only "person" items count as needing you.
+ */
+export type Audience = "person" | "agents";
+
+/**
+ * Business statuses that park a task on another agent or an outside process
+ * (`FreightAgent.park` in `common/runtime.py`; values from `common/envelope.py`).
+ * `awaiting_human_approval`, `awaiting_human` and `awaiting_approval` need a
+ * person, and so does any status not listed here, empty or unknown included,
+ * so nothing a human must do is ever hidden.
+ */
+const AGENT_WAITS = new Set(["awaiting_other_agent", "awaiting_call", "awaiting_external_verification", "awaiting_invoice"]);
+
+/**
+ * Classify an attention item. Only `input_required` depends on the task: its
+ * business status says what it is parked on. `auth-required` asks for
+ * credentials, which only a person can supply, whatever the status says.
+ */
+export function attentionAudience(kind: AttentionItem["kind"], businessStatus = "", state = ""): Audience {
+  if (kind === "hold_active") return "agents";
+  if (kind !== "input_required") return "person";
+  if (state === "auth-required") return "person";
+  return AGENT_WAITS.has(businessStatus) ? "agents" : "person";
+}
+
+export const needsPerson = (item: Pick<AttentionItem, "audience">) => item.audience === "person";
+
+const isWaiting = (t: TaskView) => t.state === "input-required" || t.state === "auth-required";
+const waitAudience = (t: TaskView) => attentionAudience("input_required", t.businessStatus, t.state);
 
 export const isSyntheticCase = (row: Row) => /^\[(Live )?synthetic/i.test(str(row.title, ""));
 
@@ -151,11 +190,14 @@ export function buildCases(snapshot: Snapshot): Map<string, CaseView> {
     const attention: AttentionKind[] = [];
     if (pendingApprovals.has(caseId)) attention.push("approval_pending");
     if (tasks.some((t) => t.state === "failed")) attention.push("task_failed");
-    if (tasks.some((t) => t.state === "input-required" || t.state === "auth-required")) attention.push("input_required");
+    const waiting = tasks.filter(isWaiting);
+    if (waiting.length) attention.push("input_required");
     if (openFlags.has(caseId)) attention.push("flag_open");
     if (issueReviews.has(caseId)) attention.push("review_issue");
     if (activeHolds.has(caseId)) attention.push("hold_active");
     if (noAnswer.has(caseId)) attention.push("call_no_answer");
+    const audienceHas = (k: AttentionKind, audience: Audience) =>
+      k === "input_required" ? waiting.some((t) => waitAudience(t) === audience) : attentionAudience(k) === audience;
     cases.set(caseId, {
       caseId,
       loadId: str(row.load_id, ""),
@@ -169,6 +211,8 @@ export function buildCases(snapshot: Snapshot): Map<string, CaseView> {
       tasks,
       activeTasks: tasks.filter((t) => !t.terminal).length,
       attention,
+      needsYou: attention.filter((k) => audienceHas(k, "person")),
+      agentsHandling: attention.filter((k) => audienceHas(k, "agents")),
       synthetic: isSyntheticCase(row),
       scenario: str(row.scenario, ""),
       row,
@@ -514,7 +558,8 @@ export type OpsMetrics = {
   casesActive: number;
   casesResolved: number;
   casesResolvedToday: number;
-  casesNeedingAttention: number;
+  /** Open cases with at least one item that needs a person. */
+  casesNeedingYou: number;
   tasksActive: number;
   tasksCompleted: number;
   tasksFailed: number;
@@ -562,14 +607,14 @@ export function buildOpsMetrics(snapshot: Snapshot, cases: Map<string, CaseView>
   const touched = new Set<string>();
   for (const a of snapshot.approval) if (sampleIds.has(str(a.case_id))) touched.add(str(a.case_id));
   for (const f of snapshot.flag) if (sampleIds.has(str(f.case_id))) touched.add(str(f.case_id));
-  for (const c of sample) if (c.tasks.some((t) => t.state === "input-required" || t.state === "auth-required")) touched.add(c.caseId);
+  for (const c of sample) if (c.tasks.some((t) => isWaiting(t) && waitAudience(t) === "person")) touched.add(c.caseId);
   const agentsOnline = snapshot.agent.filter((a) => now - timestamp(a.last_seen) <= 60_000).length;
   return {
     casesTotal: list.length,
     casesActive: list.filter((c) => c.status !== "resolved").length,
     casesResolved: resolved.length,
     casesResolvedToday: resolved.filter((c) => c.resolvedAt >= dayStart).length,
-    casesNeedingAttention: list.filter((c) => c.attention.length > 0 && c.status !== "resolved").length,
+    casesNeedingYou: list.filter((c) => c.needsYou.length > 0 && c.status !== "resolved").length,
     tasksActive,
     tasksCompleted,
     tasksFailed,
@@ -756,6 +801,10 @@ export function buildFinance(snapshot: Snapshot, now: number, { since }: { since
 export type AttentionItem = {
   id: string;
   kind: AttentionKind | "policy_deny" | "stale_agent";
+  /** Who has to act: see `attentionAudience`. */
+  audience: Audience;
+  /** For a parent parked on delegated work: the agents it is waiting on, when the snapshot shows them. */
+  waitingOn: string[];
   severity: "critical" | "high" | "medium" | "low";
   at: number;
   caseId: string;
@@ -775,11 +824,56 @@ const APPROVAL_TITLE: Record<string, string> = {
   set_credit_limit: "Set credit limit",
 };
 
+const agentNick = (id: string) => (isAgentId(id) ? AGENT_META[id].nick : id.replaceAll("_", " ") || "another agent");
+
+const nameList = (names: string[]) =>
+  names.length <= 2 ? names.join(" and ") : `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
+
+/**
+ * Plain wording for a task the agents are handling ("Waiting on Scout"),
+ * shown instead of "needs input · awaiting other agent".
+ */
+export function waitNote(businessStatus: string, waitingOn: string[] = [], name: (id: string) => string = agentNick): string {
+  switch (businessStatus) {
+    case "awaiting_other_agent":
+      return waitingOn.length ? `Waiting on ${nameList(waitingOn.map(name))}` : "Waiting on another agent";
+    case "awaiting_call":
+      return "Waiting on a call";
+    case "awaiting_external_verification":
+      return "Waiting on outside documents";
+    case "awaiting_invoice":
+      return "Waiting on the carrier invoice";
+    default:
+      return businessStatus ? `Waiting · ${businessStatus.replaceAll("_", " ")}` : "Waiting";
+  }
+}
+
+/**
+ * The agents a parked parent is waiting on: its unfinished children (task rows
+ * with this `parent_task_id`, or delegation edges whose child has no task row
+ * yet), else whoever it delegated to last.
+ */
+function delegatedTo(taskId: string, children: Map<string, TaskView[]>, edges: Map<string, Row[]>): string[] {
+  const kids = children.get(taskId) ?? [];
+  const sent = edges.get(taskId) ?? [];
+  const open = [
+    ...kids.filter((k) => !k.terminal).map((k) => k.agent),
+    ...sent.filter((e) => !kids.some((k) => k.taskId === str(e.task_id, ""))).map((e) => str(e.to_agent, "")),
+  ].filter(Boolean);
+  if (open.length) return [...new Set(open)];
+  const latestEdge = sent.reduce<Row | null>((best, e) => (!best || timestamp(e.ts) > timestamp(best.ts) ? e : best), null);
+  const latestKid = kids.reduce<TaskView | null>((best, k) => (!best || k.startedAt > best.startedAt ? k : best), null);
+  const last = latestEdge ? str(latestEdge.to_agent, "") : (latestKid?.agent ?? "");
+  return last ? [last] : [];
+}
+
 export function buildAttention(snapshot: Snapshot, cases: Map<string, CaseView>, now: number): AttentionItem[] {
   const items: AttentionItem[] = [];
+  const add = (item: Omit<AttentionItem, "audience" | "waitingOn">, { businessStatus = "", state = "", waitingOn = [] as string[] } = {}) =>
+    items.push({ ...item, audience: attentionAudience(item.kind, businessStatus, state), waitingOn });
   for (const a of snapshot.approval)
     if (!a.decision || a.decision === "pending")
-      items.push({
+      add({
         id: `approval:${str(a.id)}`,
         kind: "approval_pending",
         severity: num(a.amount) > 5_000 ? "critical" : "high",
@@ -797,28 +891,55 @@ export function buildAttention(snapshot: Snapshot, cases: Map<string, CaseView>,
     const c = cases.get(caseId);
     return !c || c.status !== "resolved";
   };
+  // Child tasks and delegation edges by parent, to name who a parked parent is waiting on.
+  const children = new Map<string, TaskView[]>();
+  for (const row of snapshot.task) {
+    const t = taskView(row);
+    if (!t.parentTaskId) continue;
+    const list = children.get(t.parentTaskId);
+    if (list) list.push(t);
+    else children.set(t.parentTaskId, [t]);
+  }
+  const edges = new Map<string, Row[]>();
+  for (const e of snapshot.delegation_edge) {
+    const parent = str(e.parent_task_id, "");
+    if (!parent) continue;
+    const list = edges.get(parent);
+    if (list) list.push(e);
+    else edges.set(parent, [e]);
+  }
   for (const row of snapshot.task) {
     const t = taskView(row);
     if (t.state === "failed" && openCase(t.caseId))
-      items.push({ id: `failed:${t.taskId}`, kind: "task_failed", severity: "high", at: t.updatedAt, caseId: t.caseId, taskId: t.taskId, agent: t.agent, title: `${t.skill.replaceAll("_", " ")} failed`, detail: str(t.artifact?.summary, cases.get(t.caseId)?.title ?? ""), amount: cases.get(t.caseId)?.exposureUsd ?? 0, row });
-    else if ((t.state === "input-required" || t.state === "auth-required") && !snapshot.approval.some((a) => a.task_id === t.taskId && (!a.decision || a.decision === "pending")))
-      items.push({ id: `input:${t.taskId}`, kind: "input_required", severity: "medium", at: t.updatedAt, caseId: t.caseId, taskId: t.taskId, agent: t.agent, title: `${t.skill.replaceAll("_", " ")} needs input`, detail: t.businessStatus.replaceAll("_", " "), amount: cases.get(t.caseId)?.exposureUsd ?? 0, row });
+      add({ id: `failed:${t.taskId}`, kind: "task_failed", severity: "high", at: t.updatedAt, caseId: t.caseId, taskId: t.taskId, agent: t.agent, title: `${t.skill.replaceAll("_", " ")} failed`, detail: str(t.artifact?.summary, cases.get(t.caseId)?.title ?? ""), amount: cases.get(t.caseId)?.exposureUsd ?? 0, row });
+    else if (isWaiting(t) && !snapshot.approval.some((a) => a.task_id === t.taskId && (!a.decision || a.decision === "pending"))) {
+      const skill = t.skill.replaceAll("_", " ");
+      const base = { id: `input:${t.taskId}`, kind: "input_required" as const, severity: "medium" as const, at: t.updatedAt, caseId: t.caseId, taskId: t.taskId, agent: t.agent, amount: cases.get(t.caseId)?.exposureUsd ?? 0, row };
+      if (waitAudience(t) === "person") add({ ...base, title: `${skill} needs input`, detail: t.businessStatus.replaceAll("_", " ") }, { businessStatus: t.businessStatus, state: t.state });
+      else {
+        const waitingOn = t.businessStatus === "awaiting_other_agent" ? delegatedTo(t.taskId, children, edges) : [];
+        add({ ...base, title: skill, detail: waitNote(t.businessStatus, waitingOn) }, { businessStatus: t.businessStatus, state: t.state, waitingOn });
+      }
+    }
   }
   for (const f of snapshot.flag)
     if (["open", "reviewing"].includes(str(f.status)))
-      items.push({ id: `flag:${str(f.id)}`, kind: "flag_open", severity: "medium", at: timestamp(f.ts), caseId: str(f.case_id, ""), taskId: "", agent: "human", title: `Flag: ${str(f.kind)}`, detail: str(f.note, ""), amount: 0, row: f });
+      add({ id: `flag:${str(f.id)}`, kind: "flag_open", severity: "medium", at: timestamp(f.ts), caseId: str(f.case_id, ""), taskId: "", agent: "human", title: `Flag: ${str(f.kind)}`, detail: str(f.note, ""), amount: 0, row: f });
   for (const r of snapshot.review)
     if (r.verdict === "issue" && now - timestamp(r.ts) < 6 * 3_600_000)
-      items.push({ id: `review:${str(r.id)}`, kind: "review_issue", severity: "medium", at: timestamp(r.ts), caseId: str(r.case_id, ""), taskId: str(r.target_task_id, ""), agent: "validator", title: "Quality review found an issue", detail: cases.get(str(r.case_id))?.title ?? "", amount: cases.get(str(r.case_id))?.exposureUsd ?? 0, row: r });
+      add({ id: `review:${str(r.id)}`, kind: "review_issue", severity: "medium", at: timestamp(r.ts), caseId: str(r.case_id, ""), taskId: str(r.target_task_id, ""), agent: "validator", title: "Quality review found an issue", detail: cases.get(str(r.case_id))?.title ?? "", amount: cases.get(str(r.case_id))?.exposureUsd ?? 0, row: r });
   for (const e of snapshot.audit_event)
     if (e.kind === "policy_deny" && openCase(str(e.case_id, "")))
-      items.push({ id: `policy:${str(e.id)}`, kind: "policy_deny", severity: "high", at: timestamp(e.ts), caseId: str(e.case_id, ""), taskId: str(e.task_id, ""), agent: str(e.agent, ""), title: `Policy ${str(e.reason_code)} blocked an action`, detail: str(e.summary, ""), amount: cases.get(str(e.case_id))?.exposureUsd ?? 0, row: e });
+      add({ id: `policy:${str(e.id)}`, kind: "policy_deny", severity: "high", at: timestamp(e.ts), caseId: str(e.case_id, ""), taskId: str(e.task_id, ""), agent: str(e.agent, ""), title: `Policy ${str(e.reason_code)} blocked an action`, detail: str(e.summary, ""), amount: cases.get(str(e.case_id))?.exposureUsd ?? 0, row: e });
   for (const h of snapshot.hold)
-    if (["active", "held"].includes(str(h.status)) && openCase(str(h.case_id, "")))
-      items.push({ id: `hold:${str(h.id)}`, kind: "hold_active", severity: "low", at: timestamp(h.placed_at), caseId: str(h.case_id, ""), taskId: "", agent: str(h.placed_by, "controller"), title: `Hold on ${str(h.invoice_id)}`, detail: str(h.reason_code, "").replaceAll("_", " ").toLowerCase(), amount: Math.max(0, num(h.amount) - num(h.released_amount)), row: h });
+    if (["active", "held"].includes(str(h.status)) && openCase(str(h.case_id, ""))) {
+      const by = str(h.placed_by, "controller");
+      const reason = str(h.reason_code, "").replaceAll("_", " ").toLowerCase();
+      add({ id: `hold:${str(h.id)}`, kind: "hold_active", severity: "low", at: timestamp(h.placed_at), caseId: str(h.case_id, ""), taskId: "", agent: by, title: `Hold on ${str(h.invoice_id)}`, detail: [`Held by ${agentNick(by)}`, reason].filter(Boolean).join(" · "), amount: Math.max(0, num(h.amount) - num(h.released_amount)), row: h });
+    }
   for (const c of snapshot.call)
     if (c.status === "no_answer" && openCase(str(c.case_id, "")))
-      items.push({ id: `call:${str(c.id)}`, kind: "call_no_answer", severity: "low", at: timestamp(c.ended_at) || timestamp(c.started_at), caseId: str(c.case_id, ""), taskId: str(c.task_id, ""), agent: "voice_desk", title: "Call not answered", detail: cases.get(str(c.case_id))?.title ?? "", amount: 0, row: c });
+      add({ id: `call:${str(c.id)}`, kind: "call_no_answer", severity: "low", at: timestamp(c.ended_at) || timestamp(c.started_at), caseId: str(c.case_id, ""), taskId: str(c.task_id, ""), agent: "voice_desk", title: "Call not answered", detail: cases.get(str(c.case_id))?.title ?? "", amount: 0, row: c });
   const order = { critical: 0, high: 1, medium: 2, low: 3 };
   return items.sort((a, b) => order[a.severity] - order[b.severity] || b.at - a.at);
 }

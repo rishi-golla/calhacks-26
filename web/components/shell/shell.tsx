@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Activity, Bell, Database, FlaskConical, Home, ListTree, Network, Play, Receipt, RefreshCw, Zap } from "lucide-react";
 import { useOps, type DataMode } from "../data-provider";
 import { agentLabel } from "@/lib/agents";
-import { fmtAgo, fmtMoney, type AttentionItem } from "@/lib/ops";
+import { fmtAgo, fmtMoney, needsPerson, type AttentionItem } from "@/lib/ops";
 import { LogButton, LogWindow, useLogHotkeys } from "./log-overlay";
 import { Mascot } from "../mascot";
 import BurstControl from "./burst-control";
@@ -107,15 +107,19 @@ const KIND_LABEL: Record<AttentionItem["kind"], string> = {
   stale_agent: "Stale",
 };
 
-/** Bell: the items that need a person, newest critical first, linking to their case. */
+/**
+ * Bell: the items that need a person, newest critical first, linking to their
+ * case. What the agents are handling among themselves stays off it.
+ */
 function Notifications() {
   const { attention, now } = useOps();
   const { open, setOpen, ref } = usePopover();
-  const urgent = attention.filter((a) => a.severity === "critical" || a.severity === "high");
-  const items = attention.slice(0, 8);
+  const mine = attention.filter(needsPerson);
+  const urgent = mine.filter((a) => a.severity === "critical" || a.severity === "high");
+  const items = mine.slice(0, 8);
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button className="fl-btn quiet small" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog" aria-label={`${urgent.length} items need attention`}>
+      <button className="fl-btn quiet small" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog" aria-label={`${urgent.length} urgent items need you`}>
         <Bell size={14} />
         {urgent.length > 0 && (
           <span className="fl-num" style={{ color: "var(--orange)" }}>
@@ -124,14 +128,14 @@ function Notifications() {
         )}
       </button>
       {open && (
-        <div className="fl-popover" role="dialog" aria-label="Needs attention" style={{ width: 360, padding: 0 }}>
+        <div className="fl-popover" role="dialog" aria-label="Needs you" style={{ width: 360, padding: 0 }}>
           <div className="fl-panel-head" style={{ padding: "10px 12px" }}>
-            <span className="fl-section">Needs attention</span>
-            <span className="fl-micro">{attention.length}</span>
+            <span className="fl-section">Needs you</span>
+            <span className="fl-micro">{mine.length}</span>
           </div>
           {items.length === 0 ? (
             <p className="fl-dim" style={{ padding: 14, fontSize: 13 }}>
-              All clear.
+              Nothing needs you.
             </p>
           ) : (
             <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
@@ -163,9 +167,9 @@ function Notifications() {
               ))}
             </ul>
           )}
-          {attention.length > items.length && (
+          {mine.length > items.length && (
             <Link href="/?focus=attention" onClick={() => setOpen(false)} className="fl-btn quiet small" style={{ display: "flex", justifyContent: "center", borderTop: "1px solid var(--line-soft)", borderRadius: 0 }}>
-              View all {attention.length}
+              View all {mine.length}
             </Link>
           )}
         </div>

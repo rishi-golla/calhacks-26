@@ -169,7 +169,7 @@ export function Overview({
           onClick={() => navigate("inbox")}
         >
           <span>
-            Needs your attention <ArrowRight size={14} />
+            Needs you <ArrowRight size={14} />
           </span>
           <strong>{pending.length}</strong>
           <small>Pending human approvals</small>

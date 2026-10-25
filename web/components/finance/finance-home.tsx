@@ -4,7 +4,7 @@
  * back office that keeps it, in real time. Everything renders from `useOps()`
  * (live SpacetimeDB or the labeled browser simulation); nothing polls.
  *
- * Top to bottom: 4 KPI tiles → cash + forecast | needs attention.
+ * Top to bottom: 4 KPI tiles → cash + forecast | work queue.
  * Operations and invoices live on their own routes (/operations, /invoices).
  */
 import { Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";

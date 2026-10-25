@@ -798,22 +798,8 @@ a.fh-att-link:hover {
   text-align: center;
   transition: background-color var(--t-hover) var(--ease-hover);
 }
-.fh-crew-item::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 0;
-  width: 16px;
-  height: 2px;
-  background: var(--agent);
-  transform: translateX(-50%);
-  transition: transform var(--t-hover) var(--ease-out);
-}
 .fh-crew-item:hover {
   background: rgba(255, 255, 255, 0.03);
-}
-.fh-crew-item:hover::before {
-  transform: translateX(-50%) scaleX(3);
 }
 .fh-crew-item .mascot {
   transition: transform var(--t-hover) var(--ease-out);
@@ -1266,8 +1252,7 @@ a.fh-tick-text:hover {
     opacity: 1;
   }
   .fh-bar,
-  .fh-crew-item .mascot,
-  .fh-crew-item::before {
+  .fh-crew-item .mascot {
     transition: none;
   }
 }

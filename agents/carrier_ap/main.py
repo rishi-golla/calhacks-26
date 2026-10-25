@@ -5,7 +5,7 @@ from common.agent_support import child_envelope, evidence, finish, identifier, m
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
-from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
+from common.source_repository import SourceRepository, SourceUnavailable, source_fixtures_only
 
 
 class CarrierAPAgent(FreightAgent):
@@ -22,7 +22,7 @@ class CarrierAPAgent(FreightAgent):
         source = await SourceRepository().load(env)
         refs = evidence(source, env)
         if env.task_type == "answer_payment_status":
-            proposals = source.get("payment_proposals", []) if fixture_mode() else await rows(
+            proposals = source.get("payment_proposals", []) if source_fixtures_only() else await rows(
                 self.name, "payment_proposal", "case_id", env.case_id)
             return await finish(self, env, task_id, outcome="verified",
                                 findings={"payment_proposals": proposals,
@@ -69,7 +69,7 @@ class CarrierAPAgent(FreightAgent):
         invoice_id = source.get("invoice_id")
         if not invoice_id:
             raise SourceUnavailable("source invoice_id is required for a payment proposal")
-        holds = source.get("holds", []) if fixture_mode() else await rows(
+        holds = source.get("holds", []) if source_fixtures_only() else await rows(
             self.name, "hold", "invoice_id", invoice_id)
         if any(hold.get("status") == "active" for hold in holds):
             return await finish(self, env, task_id, outcome="hold", findings={"match": match,

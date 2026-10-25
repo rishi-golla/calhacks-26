@@ -435,16 +435,22 @@ function TaskBody({ node, trace, status, statuses, cursor, clockAt }: CardProps)
   );
 }
 
+const INTAKE_TITLES: Record<string, string> = {
+  accepted: "Routed", duplicate: "Duplicate", not_routed: "Not routed", triage: "Triage",
+};
+
 function IntakeBody({ node, clockAt, status }: CardProps) {
   const d = node.dispatch!;
+  const decision = str(d.status, "");
+  const agent = str(d.agent, "");
   return (
     <>
       <span className="ct-card-top">
-        <span className="ct-card-title">Routed</span>
+        <span className="ct-card-title">{INTAKE_TITLES[decision] ?? "Routed"}</span>
         <StatusBadge node={node} status={status} clockAt={clockAt} />
       </span>
-      <span className="ct-card-line" style={{ color: agentColor(str(d.agent)) }}>
-        → {agentLabel(str(d.agent))}
+      <span className="ct-card-line" style={{ color: agent ? agentColor(agent) : undefined }}>
+        {agent ? `→ ${agentLabel(agent)}` : decision === "not_routed" ? "No agent needed" : "Held for a person"}
       </span>
       <span className="ct-card-line fl-mute" title={str(d.reason, "")}>
         {str(d.reason, "routed")}

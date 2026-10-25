@@ -7,7 +7,7 @@ from common.agent_support import child_envelope, evidence, finish, identifier, m
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
-from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
+from common.source_repository import SourceRepository, SourceUnavailable, source_fixtures_only
 
 
 class ControllerAgent(FreightAgent):
@@ -15,7 +15,7 @@ class ControllerAgent(FreightAgent):
 
     async def approval(self, env, task_id, source, action, target_id, amount):
         approval_id = identifier(task_id, "approval:" + action + ":" + target_id)
-        stored = [] if fixture_mode() else await rows(self.name, "approval", "id", approval_id)
+        stored = [] if source_fixtures_only() else await rows(self.name, "approval", "id", approval_id)
         if stored:
             approval = stored[0]
             if approval.get("decision") == "rejected":
@@ -68,7 +68,7 @@ class ControllerAgent(FreightAgent):
             # Resolve every request before posting any, so a missing one cannot leave a partial batch.
             requests = []
             for request_id in request_ids:
-                if fixture_mode():
+                if source_fixtures_only():
                     recorded = [*source.get("journal_requests", []), *filter(None, [source.get("journal_request")])]
                     found = [item for item in recorded if item.get("id") == request_id][:1]
                 else:
@@ -116,7 +116,7 @@ class ControllerAgent(FreightAgent):
             hold_id = env.subject.get("hold_id")
             if not isinstance(hold_id, str) or not hold_id:
                 raise SourceUnavailable("release_hold requires a stored hold reference")
-            holds = source.get("holds", []) if fixture_mode() else await rows(self.name, "hold", "id", hold_id)
+            holds = source.get("holds", []) if source_fixtures_only() else await rows(self.name, "hold", "id", hold_id)
             holds = [hold for hold in holds if hold.get("id") == hold_id and hold.get("case_id") == env.case_id]
             if not holds:
                 raise SourceUnavailable("hold does not exist for this case")

@@ -5,7 +5,7 @@ from common.agent_support import child_envelope, evidence, finish, identifier, m
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
-from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode
+from common.source_repository import SourceRepository, SourceUnavailable, fixture_mode, source_fixtures_only
 
 
 class ShipperArAgent(FreightAgent):
@@ -54,7 +54,7 @@ class ShipperArAgent(FreightAgent):
         if env.task_type == "reconcile_customer_payment" and total > 0:
             if not source.get("period"):
                 raise SourceUnavailable("journal period is required")
-            existing = source.get("journal_requests", []) if fixture_mode() else await rows(
+            existing = source.get("journal_requests", []) if source_fixtures_only() else await rows(
                 self.name, "journal_request", "case_id", env.case_id)
             requests, posted, pending = [], [], []
             for deposit in matched:

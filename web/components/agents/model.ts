@@ -144,11 +144,11 @@ export function packetsFor(events: LiveEvent[], cases: Map<string, CaseView>, wa
       }
       case "lesson":
         if (isAgentId(e.agent) && e.agent !== "validator")
-          out.push({ from: "validator", to: e.agent, skill: "lesson", label: "Lesson", caseId: e.caseId, kind: "lesson", landing: "💡 learned a lesson" });
+          out.push({ from: "validator", to: e.agent, skill: "lesson", label: "Lesson", caseId: e.caseId, kind: "lesson", landing: "+ lesson learned" });
         break;
       case "instruction":
         if (isAgentId(e.agent) && e.agent !== "validator")
-          out.push({ from: "validator", to: e.agent, skill: "instructions", label: `Instructions v${e.version}`, caseId: e.caseId, kind: "lesson", landing: `💡 instructions v${e.version}` });
+          out.push({ from: "validator", to: e.agent, skill: "instructions", label: `Instructions v${e.version}`, caseId: e.caseId, kind: "lesson", landing: `+ instructions v${e.version}` });
         break;
       case "approval": {
         const by: AgentId = isAgentId(e.agent) ? e.agent : "controller";

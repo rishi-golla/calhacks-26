@@ -7,8 +7,6 @@
 
 .au {
   --rail-w: 348px;
-  /* Validator lessons: a warm gold no agent or priority uses. */
-  --lesson: #f2c14e;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--rail-w);
   height: calc(100dvh - var(--topbar));
@@ -113,89 +111,30 @@
 }
 
 /* ------------------------------ lessons ------------------------------ */
-/* Validator → learner, drawn only while one of them is focused: a gold dotted line whose dots drift toward the learner. */
-.au-lesson-edge,
-.au-lesson-flow {
-  fill: none;
-  stroke: var(--lesson);
-  stroke-linecap: round;
-}
-.au-lesson-edge {
-  stroke-width: 1.4;
-  opacity: 0.35;
-}
-.au-lesson-flow {
-  stroke-width: 2.4;
-  stroke-dasharray: 0.1 12;
-  opacity: 0.8;
-  animation: au-lesson-flow 2.4s linear infinite;
-}
+/* Validator → learner, drawn only while one of them is focused: an ordinary handoff line in the Validator's color. */
 .au-lesson {
   animation: au-edge-in 300ms var(--ease-out) both;
+}
+.au-lesson-edge {
+  fill: none;
+  stroke: var(--c);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 6;
+  stroke-linecap: round;
+  opacity: 0.7;
 }
 .au-edges.dimmed .au-lesson {
   opacity: 0.15;
 }
-@keyframes au-lesson-flow {
-  to {
-    stroke-dashoffset: -12.1;
-  }
-}
 .au-lesson-count {
   font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--ts));
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  fill: var(--lesson);
+  font-size: calc(10px * var(--ts));
+  fill: var(--text-mute);
   paint-order: stroke;
   stroke: var(--bg-0);
-  stroke-width: 5px;
+  stroke-width: 4px;
   text-anchor: middle;
   dominant-baseline: middle;
-  opacity: 0.95;
-}
-/* The light-bulb count on a node that has learned (or taught) lessons: quiet until a lesson lands. */
-.au-lessons {
-  position: absolute;
-  right: -18%;
-  top: -2%;
-  z-index: 4;
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
-  padding: 0 3px 0 1px;
-  height: calc(15px * var(--ts));
-  font-family: var(--font-mono);
-  font-weight: 600;
-  font-size: calc(9.5px * var(--ts));
-  color: var(--text-mute);
-  animation: au-node-in 400ms var(--ease-out) both;
-}
-.au-node.focus .au-lessons {
-  color: var(--lesson);
-}
-.au-lessons svg {
-  width: calc(11px * var(--ts));
-  height: calc(11px * var(--ts));
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.au-ticker[data-tone="lesson"] {
-  color: var(--lesson);
-  opacity: 1;
-}
-.au-pk-card.k-lesson {
-  padding: 1px;
-  background: var(--lesson);
-  border-left: 0;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
-}
-.au-pk-card.k-lesson + .au-pk-tag {
-  background: var(--lesson);
 }
 
 /* ------------------------------- nodes ------------------------------- */
@@ -521,7 +460,8 @@
 }
 .au-pk-card.k-phone,
 .au-pk-card.k-check,
-.au-pk-card.k-stamp {
+.au-pk-card.k-stamp,
+.au-pk-card.k-lesson {
   padding: calc(2px * var(--ts)) 1px;
 }
 .au-pk-card .au-pk-new {
@@ -1019,11 +959,11 @@
 .au-instr {
   margin-top: 10px;
   padding: 8px 10px;
-  border-left: 2px solid var(--lesson);
-  background: color-mix(in srgb, var(--lesson) 7%, transparent);
+  border-left: 2px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
 }
 .au-instr .fl-micro {
-  color: var(--lesson);
+  color: var(--text-mute);
 }
 .au-instr p {
   margin: 4px 0 0;
@@ -1038,7 +978,7 @@
 }
 .au-lesson-list li {
   padding: 8px 0 8px 10px;
-  border-left: 2px solid var(--lesson);
+  border-left: 2px solid var(--line);
   margin-bottom: 8px;
   animation: au-chip-in 360ms var(--ease-out) both;
 }
@@ -1098,7 +1038,7 @@
   text-decoration-color: var(--line);
 }
 .au-lesson-list .foot .hot {
-  color: var(--lesson);
+  color: var(--text-dim);
 }
 .au-lesson-more {
   margin-top: 2px;
@@ -1121,8 +1061,7 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .au-spin,
-  .au-lesson-flow {
+  .au-spin {
     animation: none;
   }
 }

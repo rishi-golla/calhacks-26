@@ -34,8 +34,6 @@ type NodeHandle = {
   flash?: HTMLElement | null;
   bump?: HTMLElement | null;
   ticker?: HTMLElement | null;
-  /** The lesson badge, when the node has learned something. */
-  lesson?: HTMLElement | null;
 };
 
 type Packet = {
@@ -61,8 +59,6 @@ type Packet = {
 const quintOut = (t: number) => 1 - Math.pow(1 - t, 5);
 /** After landing, a packet is absorbed into the node over this long. */
 const ABSORB_MS = 240;
-/** How long a lesson ticker line holds before routine activity replaces it. */
-const LESSON_TICKER_MS = 1_800;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 const ICON: Record<PacketKind, string> = {
@@ -141,18 +137,14 @@ export class PacketEngine {
     }
   }
 
-  /** Short activity line under a node (latest tool call, document, outcome). `tone` restyles it (e.g. a lesson). */
-  ticker(id: NodeId, text: string, tone = "") {
+  /** Short activity line under a node (latest tool call, document, outcome). */
+  ticker(id: NodeId, text: string) {
     const el = this.nodes.get(id)?.ticker;
     if (!el) return;
     const now = performance.now();
-    const since = now - (this.lastTicker.get(id) ?? 0);
-    if (since < 280) return;
-    // A lesson line holds a little longer than routine tool and document lines.
-    if (!tone && el.dataset.tone === "lesson" && since < LESSON_TICKER_MS) return;
+    if (now - (this.lastTicker.get(id) ?? 0) < 280) return;
     this.lastTicker.set(id, now);
     el.textContent = text;
-    el.dataset.tone = tone;
     if (!this.reduced) el.animate([{ opacity: 0.25, transform: "translateY(3px)" }, { opacity: 1, transform: "none" }], { duration: 320, easing: "cubic-bezier(.23,1,.32,1)" });
   }
 
@@ -161,20 +153,6 @@ export class PacketEngine {
     this.flash(id, strong);
   }
 
-  /** Glow a node's lesson badge: it just learned or recalled a lesson. */
-  glowLesson(id: NodeId) {
-    const el = this.nodes.get(id)?.lesson;
-    if (!el || this.reduced) return;
-    el.animate(
-      [
-        { transform: "scale(1)" },
-        { transform: "scale(1.2)", color: "#f2c14e", offset: 0.25 },
-        { transform: "scale(1)", color: "#f2c14e", offset: 0.6 },
-        { transform: "scale(1)" },
-      ],
-      { duration: 1400, easing: "cubic-bezier(.23,1,.32,1)" },
-    );
-  }
 
   emit(specs: PacketSpec[]) {
     if (!specs.length) return;
@@ -186,7 +164,7 @@ export class PacketEngine {
       if (vis === "hide" || !animate) {
         if (!animate && vis !== "hide") {
           this.flash(s.to, false);
-          if (s.landing) this.ticker(s.to, s.landing, s.kind === "lesson" ? "lesson" : "");
+          if (s.landing) this.ticker(s.to, s.landing);
         }
         continue;
       }
@@ -231,8 +209,7 @@ export class PacketEngine {
       p.edge = edge;
       p.to = s.to;
       p.start = now + i * 55;
-      // Lessons fly slower than handoffs, so they read as a separate event.
-      p.dur = (this.duration + (i % 4) * 60) * (kind === "lesson" ? 1.6 : 1);
+      p.dur = this.duration + (i % 4) * 60;
       p.count = g.n;
       p.arrived = false;
       p.arrivedAt = 0;
@@ -247,8 +224,8 @@ export class PacketEngine {
       p.card.style.setProperty("--from", s.from === "entry" ? "#ecedf4" : agentColor(s.from));
       p.el.style.setProperty("--to", agentColor(s.to));
       p.tag.textContent = g.skills.size > 1 && !s.label ? `${skillLabel(skill)} +${g.skills.size - 1}` : (s.label ?? skillLabel(skill));
-      // Dense traffic: drop the text tags and keep the cards, so the map stays readable. Lessons keep theirs.
-      p.tag.style.display = this.live.length > 14 && kind !== "lesson" ? "none" : "";
+      // Dense traffic: drop the text tags and keep the cards, so the map stays readable.
+      p.tag.style.display = this.live.length > 14 ? "none" : "";
       p.badge.textContent = `×${g.n}`;
       p.badge.style.display = g.n > 1 ? "" : "none";
       p.el.style.opacity = "0";
@@ -291,11 +268,7 @@ export class PacketEngine {
     p.arrived = true;
     p.arrivedAt = now;
     if (!p.dim) this.flash(p.to, p.count > 1);
-    if (!p.dim && p.kind === "lesson") {
-      this.glowLesson(p.to);
-      const text = p.landing;
-      if (text) this.ticker(p.to, text, "lesson");
-    }
+    if (!p.dim && p.landing) this.ticker(p.to, p.landing);
   }
 
   private flash(id: NodeId, strong: boolean) {

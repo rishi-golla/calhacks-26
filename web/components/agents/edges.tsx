@@ -6,8 +6,8 @@
  * its own path solid and dims the rest.
  *
  * Lesson lines are separate and on demand: focusing Settlement Quality Review
- * or an agent it has taught draws a gold line between them, with a slow flow
- * toward the learner and the agent's lesson count at the midpoint.
+ * or an agent it has taught draws a dashed line between them in the
+ * Validator's color, with the agent's lesson count at the midpoint.
  */
 import { memo, type CSSProperties } from "react";
 import { agentColor, type AgentId, type NodeId } from "@/lib/agents";
@@ -48,9 +48,8 @@ function EdgesImpl({ stats, focus, path, hideHuman, stretch, lessons }: Props) {
       {!path && lessons.filter(({ agent }) => focus === "validator" || focus === agent).map(({ agent, count }) => {
         const c = edgeCurve("validator", agent);
         return (
-          <g key={`lesson:${agent}`} className="au-lesson">
+          <g key={`lesson:${agent}`} className="au-lesson" style={{ "--c": agentColor("validator") } as CSSProperties}>
             <path d={c.d} className="au-lesson-edge" />
-            <path d={c.d} className="au-lesson-flow" />
             <text className="au-lesson-count" x={c.mid.x} y={c.mid.y}>
               {count} {count === 1 ? "lesson" : "lessons"}
             </text>

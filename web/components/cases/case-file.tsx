@@ -68,7 +68,7 @@ export function CaseFile({ caseId, simulated }: { caseId: string; simulated: boo
       <span className="fl-section" style={{ "--accent": "var(--lilac)" } as CSSProperties}>
         Case file
       </span>
-      <span className="fl-micro cf-summary">{summary}</span>
+      {(narrow || !ready) && <span className="fl-micro cf-summary">{summary}</span>}
     </>
   );
 
@@ -102,7 +102,7 @@ function Sec({ title, count, children }: { title: string; count?: number; childr
     <section className="cf-sec">
       <h3 className="ct-sec-title">
         {title}
-        {count !== undefined && <span className="fl-mono fl-mute">{count}</span>}
+        {count !== undefined && count > 1 && <span className="fl-mono fl-mute">{count}</span>}
       </h3>
       {children}
     </section>
@@ -119,11 +119,10 @@ function FileBody({ file }: { file: File }) {
             {file.documents.map((d) => (
               <li key={d.ref} className="cf-doc">
                 <span className="cf-kind">
-                  {d.label}
-                  {d.kind === "pod" && d.signed !== undefined && <span className={`fl-chip outline ${d.signed ? "ok" : "bad"} ct-mini-chip`}>{d.signed ? "signed" : "unsigned"}</span>}
+                  <EvidenceChip evidenceRef={d.ref} label={d.label} />
+                  {d.kind === "pod" && d.signed === false && <span className="fl-chip outline bad ct-mini-chip">unsigned</span>}
                   {d.amount !== undefined && <span className="fl-num cf-amount">{fmtMoney(d.amount)}</span>}
                 </span>
-                <EvidenceChip evidenceRef={d.ref} />
               </li>
             ))}
             {file.missing.map((m) => (
@@ -140,30 +139,22 @@ function FileBody({ file }: { file: File }) {
         )}
       </Sec>
 
-      <Sec title="Emails" count={file.emails.length}>
-        {file.emails.length ? (
+      {(file.emails.length > 0 || file.otherRefs.length > 0) && (
+        <Sec title="Emails" count={file.emails.length}>
           <div className="cf-chips">
-            {file.emails.map((r) => (
+            {[...file.emails, ...file.otherRefs].map((r) => (
               <EvidenceChip key={r} evidenceRef={r} />
             ))}
           </div>
-        ) : (
-          <p className="cf-none">None on file.</p>
-        )}
-        {file.otherRefs.length > 0 && (
-          <div className="cf-chips">
-            {file.otherRefs.map((r) => (
-              <EvidenceChip key={r} evidenceRef={r} />
-            ))}
-          </div>
-        )}
-      </Sec>
+        </Sec>
+      )}
 
+      {(file.bank.length > 0 || file.billed !== null) && (
       <Sec title="Bank lines" count={file.bank.length}>
         {file.bank.length ? (
           <ul className="cf-list">
             {file.bank.map((b, i) => (
-              <li key={b.id || i} className="cf-bank">
+              <li key={b.id || i} className="cf-bank" title={b.id ? `Bank line ${b.id}` : undefined}>
                 <div className="cf-bank-top">
                   <span className="fl-num cf-bank-amount">{money(b.amount)}</span>
                   <span className="fl-mono fl-mute">{day(b.postedAt)}</span>
@@ -172,7 +163,6 @@ function FileBody({ file }: { file: File }) {
                 <div className="cf-ids fl-mono">
                   {b.invoiceId && <span title={b.unapplied ? "Candidate invoice" : "Applied to invoice"}>{b.invoiceId}</span>}
                   {b.remittanceRef && <span title="Remittance reference">ref {b.remittanceRef}</span>}
-                  {b.id && <span title="Bank line">{b.id}</span>}
                 </div>
               </li>
             ))}
@@ -180,7 +170,7 @@ function FileBody({ file }: { file: File }) {
         ) : (
           <p className="cf-none">No deposits yet.</p>
         )}
-        {file.billed !== null && (
+        {file.billed !== null && (file.bank.length !== 1 || (short !== null && short !== 0)) && (
           <div className="cf-total">
             Billed <span className="fl-num">{fmtMoney(file.billed)}</span> · received <span className="fl-num">{fmtMoney(file.deposited)}</span>
             {short !== null && short > 0 && (
@@ -191,8 +181,9 @@ function FileBody({ file }: { file: File }) {
           </div>
         )}
       </Sec>
+      )}
 
-      <Sec title="Key facts">
+      <Sec title="Facts">
         <Facts file={file} />
         {file.flags.length > 0 && (
           <div className="cf-chips">
@@ -205,12 +196,8 @@ function FileBody({ file }: { file: File }) {
         )}
       </Sec>
 
-      <div className="cf-raw">
-        <Json value={file.record} label="record_json" />
-        <p className="fl-micro cf-stamp" title="source_record row">
-          {file.recordId}
-          {file.updatedAt ? ` · ${date(file.updatedAt)}` : ""}
-        </p>
+      <div className="cf-raw" title={`${file.recordId}${file.updatedAt ? ` · ${date(file.updatedAt)}` : ""}`}>
+        <Json value={file.record} label="raw record" />
       </div>
     </>
   );

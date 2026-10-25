@@ -98,7 +98,7 @@ test("exposure follows ingest's truthiness and counts every deposit", () => {
   const [bank] = exposureWorkings("CASE-LD-9", { bank_change_requested: "true", invoice_amount: 0, bank_change: { next_payment_amount: 900 } }, 900, []);
   assert.deepEqual(bank.inputs, { next_payment_amount: 900 });
   assert.equal(recheckWorking(bank).status, "match");
-  assert.deepEqual(exposureWorkings("CASE-LD-9", { bank_change_requested: 0, invoice_id: "I", invoice_amount: 10, contract_rate: 10 }, 0, [])[0].label.startsWith("Exposure: billed"), true);
+  assert.deepEqual(exposureWorkings("CASE-LD-9", { bank_change_requested: 0, invoice_id: "I", invoice_amount: 10, contract_rate: 10 }, 0, [])[0].label.startsWith("Billed over"), true);
   const deposits = Array.from({ length: 13 }, () => ({ amount: 100 }));
   const [ar] = exposureWorkings("CASE-LD-1-AR", { shipper_invoice_amount: 2000, deposits }, 700, []);
   assert.equal(Object.keys(ar.inputs).length, 14);

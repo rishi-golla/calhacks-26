@@ -21,6 +21,7 @@ import json
 import logging
 import math
 import os
+import uuid
 from collections import Counter
 from datetime import UTC, datetime
 
@@ -70,10 +71,15 @@ def priority_rank(row: dict) -> int:
 
 
 def nack_reason(error: Exception) -> str:
-    """Exception type only (no server or destination text); a reducer rejection is marked as deterministic."""
+    """Exception type (no server or destination text); a reducer rejection is marked as deterministic.
+
+    A SourceUnavailable also names its code-authored reason in parentheses, so an operator can tell a missing
+    source record from a missing task history. The type stays the first word, which ``exhausted`` reads."""
     name = type(error).__name__
     if isinstance(error, SpacetimeHTTPError):
         return f"{name} {error.status_code}" + (" rejected" if error.status_code == REDUCER_REJECTED else "")
+    if isinstance(error, SourceUnavailable) and str(error):
+        return f"{name} ({str(error)[:160]})"
     return name
 
 
@@ -138,8 +144,12 @@ def require_credentials() -> None:
 
 
 class ReviewWorker:
-    def __init__(self, *, db=None, store=None, submit=None):
+    def __init__(self, *, db=None, store=None, submit=None, worker_id: str | None = None):
         self.db = db or SpacetimeClient(actor="router")
+        # Every worker authenticates as the router, and the module keys write receipts by identity and write_id.
+        # A claim write_id shared by two workers made the second claim a receipt replay that reported success, so
+        # both delivered the row (Oct 25: a second fleet ran the same tasks). This id keeps a claim this worker's.
+        self.worker_id = worker_id or uuid.uuid4().hex
         self.store = store or RuntimeStore()
         self.submit = submit or send_task
         self.max_review_claims = _count("DISPATCH_MAX_REVIEW_CLAIMS", "20", 0)
@@ -298,7 +308,7 @@ class ReviewWorker:
         attempt = str(int(row.get("attempts", 0)) + 1)
         try:
             await self.db.mutate("claim_outbox", {"id": row["id"], "lease_seconds": LEASE_SECONDS,
-                "write_id": stable_id("review-claim", row["id"], attempt)})
+                "write_id": stable_id("review-claim", row["id"], attempt, self.worker_id)})
         except Exception as error:  # noqa: BLE001 -- competing leases and outages retry on the next poll
             log.warning("outbox lease unavailable for %s: %s", row["id"], nack_reason(error))
             return False

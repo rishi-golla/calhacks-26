@@ -5,12 +5,12 @@
  * status flip flashes the row.
  */
 import Link from "next/link";
-import { useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState } from "react";
 import { ArrowUpRight } from "lucide-react";
 import { useOps } from "@/components/data-provider";
 import { Mascot } from "@/components/mascot";
 import { num, str, timestamp } from "@/lib/data";
-import { fmtAgo } from "@/lib/ops";
+import { fmtAgo, invoiceContractDelta } from "@/lib/ops";
 import { emptyNote, humanize, nick, usd, usdShort } from "./format";
 import { FreshTr, useSettled } from "./fresh";
 
@@ -29,21 +29,12 @@ const STATUS_CHIP: Record<string, string> = {
 };
 const statusLabel = (s: string) => (s === "awaiting_approval" ? "Needs approval" : humanize(s));
 
-function CaseLink({ caseId }: { caseId: string }) {
-  if (!caseId) return <span className="fh-mute">—</span>;
-  return (
-    <Link href={`/cases/${encodeURIComponent(caseId)}`} className="fh-case-link" aria-label={`Open ${caseId}`}>
-      <span className="fl-mono">{caseId}</span>
-      <ArrowUpRight size={12} />
-    </Link>
-  );
-}
-
-/** Row id; links to its case (the only case link left on phones). */
+/** Row id; the row's only link to its case (the case id itself is in the tooltip). */
 function IdCell({ id, caseId, title }: { id: string; caseId: string; title?: string }) {
   return caseId ? (
-    <Link href={`/cases/${encodeURIComponent(caseId)}`} className="fh-cell-main fl-mono fh-id-link" title={title ?? "Open case"}>
+    <Link href={`/cases/${encodeURIComponent(caseId)}`} className="fh-cell-main fl-mono fh-id-link" style={{ whiteSpace: "nowrap" }} title={title ?? `Open ${caseId}`} aria-label={`${id}, open ${caseId}`}>
       {id}
+      <ArrowUpRight size={12} aria-hidden style={{ display: "inline-block", marginLeft: 4, verticalAlign: "-1px", opacity: 0.6 }} />
     </Link>
   ) : (
     <span className="fh-cell-main fl-mono" title={title}>
@@ -73,6 +64,7 @@ export function InvoicesPanel() {
         .filter((i) => ["open", "held"].includes(str(i.status, "open")))
         .map((i) => {
           const id = str(i.id);
+          // Amount is what is still owed; the delta is the bill against its contract.
           const amount = num(i.amount) - num(i.paid_amount);
           const contract = num(i.contract_amount);
           return {
@@ -82,7 +74,8 @@ export function InvoicesPanel() {
             load: str(i.load_id),
             amount,
             contract,
-            delta: contract ? amount - contract : 0,
+            invoiced: num(i.amount),
+            delta: invoiceContractDelta(i),
             issuedAt: timestamp(i.issued_at),
             status: holds.has(id) ? "held" : str(i.status, "open"),
             held: holds.get(id) ?? 0,
@@ -109,15 +102,13 @@ export function InvoicesPanel() {
     [snapshot.payment_proposal, companies],
   );
 
+  const needApproval = proposals.filter((p) => p.status === "awaiting_approval").length;
   const rows = tab === "invoices" ? invoices : proposals;
   const visible = showAll ? rows : rows.slice(0, LIMIT);
 
   return (
     <section className="fl-panel fh-inv" aria-label="Invoices and payments">
       <header className="fl-panel-head">
-        <span className="fl-section" style={{ "--accent": "var(--aqua)" } as CSSProperties}>
-          Invoices & payments
-        </span>
         <div className="fl-tabs fh-inv-tabs" role="tablist">
           <button role="tab" aria-selected={tab === "invoices"} className={`fl-tab ${tab === "invoices" ? "active" : ""}`} onClick={() => setTab("invoices")}>
             Open invoices
@@ -133,21 +124,27 @@ export function InvoicesPanel() {
             <span>
               <b className="fl-num">{usd(finance.outstandingInvoices.amount)}</b> outstanding
             </span>
-            <span>
-              <b className="fl-num">{usdShort(finance.heldInvoices.amount)}</b> on hold
-            </span>
-            <span className={finance.overdueInvoices.count ? "hot" : ""}>
-              <b className="fl-num">{finance.overdueInvoices.count}</b> overdue 30d+
-            </span>
+            {finance.heldInvoices.amount > 0 && (
+              <span>
+                <b className="fl-num">{usdShort(finance.heldInvoices.amount)}</b> on hold
+              </span>
+            )}
+            {finance.overdueInvoices.count > 0 && (
+              <span className="hot" title="Over 30 days">
+                <b className="fl-num">{finance.overdueInvoices.count}</b> overdue
+              </span>
+            )}
           </>
         ) : (
           <>
             <span>
               <b className="fl-num">{usd(finance.paymentsProposed.amount)}</b> awaiting release
             </span>
-            <span>
-              <b className="fl-num">{proposals.filter((p) => p.status === "awaiting_approval").length}</b> need approval
-            </span>
+            {needApproval > 0 && (
+              <span className="hot">
+                <b className="fl-num">{needApproval}</b> need approval
+              </span>
+            )}
           </>
         )}
       </div>
@@ -160,38 +157,36 @@ export function InvoicesPanel() {
           <table className="fl-table fh-table">
             <thead>
               <tr>
-                <th>Invoice · carrier</th>
+                <th>Invoice</th>
                 <th className="num">Amount</th>
                 <th className="num fh-opt">Δ contract</th>
                 <th>Status</th>
-                <th className="fh-opt">Case</th>
               </tr>
             </thead>
             <tbody>
               {(visible as typeof invoices).map((r) => (
                 <FreshTr key={`${r.id}:${r.status}`} settled={settled}>
                   <td>
-                    <IdCell id={r.id} caseId={r.caseId} title={r.load ? `Load ${r.load} · open case` : undefined} />
-                    <span className="fh-cell-sub" suppressHydrationWarning>
-                      {r.carrier}
-                      {r.issuedAt ? ` · issued ${fmtAgo(r.issuedAt, now)}` : ""}
-                    </span>
+                    <IdCell
+                      id={r.id}
+                      caseId={r.caseId}
+                      title={[r.load && `Load ${r.load}`, r.issuedAt && `Issued ${fmtAgo(r.issuedAt, now)}`, r.caseId && `Open ${r.caseId}`].filter(Boolean).join(" · ") || undefined}
+                    />
+                    <span className="fh-cell-sub">{r.carrier}</span>
                   </td>
                   <td className="num">
                     <span className="fh-cell-main">{usd(r.amount)}</span>
                   </td>
                   <td
                     className={`num fh-opt ${r.delta > 0 ? "fh-hot" : r.delta < 0 ? "fh-ok" : "fh-mute"}`}
-                    title={r.contract ? `Contract ${usd(r.contract)}` : "No contract on file"}
+                    title={r.contract ? `Invoiced ${usd(r.invoiced)} against contract ${usd(r.contract)}` : "No contract on file"}
                   >
-                    {r.delta ? `${r.delta > 0 ? "+" : "−"}${usd(Math.abs(r.delta))}` : "—"}
+                    {r.delta ? `${r.delta > 0 ? "+" : "−"}${usd(Math.abs(r.delta))}` : null}
                   </td>
                   <td>
-                    <span className={`fl-chip ${STATUS_CHIP[r.status] ?? "outline"}`}>{statusLabel(r.status)}</span>
-                    {r.held > 0 && <span className="fh-cell-sub fh-hot">{usd(r.held)} held</span>}
-                  </td>
-                  <td className="fh-opt">
-                    <CaseLink caseId={r.caseId} />
+                    <span className={`fl-chip ${STATUS_CHIP[r.status] ?? "outline"}`} title={r.held > 0 ? `${usd(r.held)} held` : undefined}>
+                      {statusLabel(r.status)}
+                    </span>
                   </td>
                 </FreshTr>
               ))}
@@ -201,22 +196,18 @@ export function InvoicesPanel() {
           <table className="fl-table fh-table">
             <thead>
               <tr>
-                <th>Proposal · carrier</th>
+                <th>Proposal</th>
                 <th className="num">Amount</th>
                 <th>Status</th>
                 <th className="fh-opt">By</th>
-                <th className="fh-opt">Case</th>
               </tr>
             </thead>
             <tbody>
               {(visible as typeof proposals).map((r) => (
                 <FreshTr key={`${r.id}:${r.status}`} settled={settled}>
                   <td>
-                    <IdCell id={r.id} caseId={r.caseId} />
-                    <span className="fh-cell-sub" suppressHydrationWarning>
-                      {r.carrier}
-                      {r.at ? ` · ${fmtAgo(r.at, now)}` : ""}
-                    </span>
+                    <IdCell id={r.id} caseId={r.caseId} title={[r.at && `Proposed ${fmtAgo(r.at, now)}`, r.caseId && `Open ${r.caseId}`].filter(Boolean).join(" · ") || undefined} />
+                    <span className="fh-cell-sub">{r.carrier}</span>
                   </td>
                   <td className="num">
                     <span className="fh-cell-main">{usd(r.amount)}</span>
@@ -230,9 +221,6 @@ export function InvoicesPanel() {
                       <Mascot id={r.by} size={22} />
                       {nick(r.by)}
                     </span>
-                  </td>
-                  <td className="fh-opt">
-                    <CaseLink caseId={r.caseId} />
                   </td>
                 </FreshTr>
               ))}

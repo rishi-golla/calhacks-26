@@ -110,6 +110,33 @@
   animation: au-edge-in 300ms var(--ease-out) both;
 }
 
+/* ------------------------------ lessons ------------------------------ */
+/* Validator → learner, drawn only while one of them is focused: an ordinary handoff line in the Validator's color. */
+.au-lesson {
+  animation: au-edge-in 300ms var(--ease-out) both;
+}
+.au-lesson-edge {
+  fill: none;
+  stroke: var(--c);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 6;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+.au-edges.dimmed .au-lesson {
+  opacity: 0.15;
+}
+.au-lesson-count {
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--ts));
+  fill: var(--text-mute);
+  paint-order: stroke;
+  stroke: var(--bg-0);
+  stroke-width: 4px;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
 /* ------------------------------- nodes ------------------------------- */
 .au-node {
   position: absolute;
@@ -433,7 +460,8 @@
 }
 .au-pk-card.k-phone,
 .au-pk-card.k-check,
-.au-pk-card.k-stamp {
+.au-pk-card.k-stamp,
+.au-pk-card.k-lesson {
   padding: calc(2px * var(--ts)) 1px;
 }
 .au-pk-card .au-pk-new {
@@ -556,21 +584,17 @@
   background: var(--bg-0);
 }
 .au-metrics {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  display: flex;
   border-bottom: 1px solid var(--line);
 }
 .au-metric {
+  flex: 1 1 0;
   padding: 10px 12px 9px;
   border-right: 1px solid var(--line-soft);
-  border-bottom: 1px solid var(--line-soft);
   min-width: 0;
 }
-.au-metric:nth-child(2n) {
+.au-metric:last-child {
   border-right: 0;
-}
-.au-metric:nth-child(n + 3) {
-  border-bottom: 0;
 }
 .au-metric .v {
   font-family: var(--font-mono);
@@ -625,6 +649,13 @@
   width: 100%;
   padding: 7px 8px 7px 28px;
   font-size: 12px;
+}
+.au-search-count {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  translate: 0 -50%;
+  pointer-events: none;
 }
 .au-filters {
   display: grid;
@@ -922,6 +953,95 @@
   font-size: 10px;
   color: var(--text-mute);
   white-space: nowrap;
+}
+
+/* Panel: lessons learned / sent. */
+.au-instr {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+.au-instr .fl-micro {
+  color: var(--text-mute);
+}
+.au-instr p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+}
+.au-lesson-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.au-lesson-list li {
+  padding: 8px 0 8px 10px;
+  border-left: 2px solid var(--line);
+  margin-bottom: 8px;
+  animation: au-chip-in 360ms var(--ease-out) both;
+}
+.au-lesson-list .to {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c);
+  margin-bottom: 3px;
+}
+.au-lesson-list .txt {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  cursor: pointer;
+}
+.au-lesson-list .txt.open {
+  -webkit-line-clamp: unset;
+}
+.au-lesson-list .scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 5px;
+}
+.au-lesson-list .scope span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.au-lesson-list .foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mute);
+}
+.au-lesson-list .foot a {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+}
+.au-lesson-list .foot .hot {
+  color: var(--text-dim);
+}
+.au-lesson-more {
+  margin-top: 2px;
 }
 
 @media (max-width: 1100px) {

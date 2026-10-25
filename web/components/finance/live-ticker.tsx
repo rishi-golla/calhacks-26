@@ -206,9 +206,10 @@ export function LiveTicker() {
       </header>
       <div className="fh-ticker-body" onPointerEnter={() => setPaused(true)} onPointerLeave={resume}>
         {ticks.length === 0 ? (
-          <div className="fh-empty">
+          // A sleeping mascot says "quiet"; words only when the feed cannot be trusted (connecting, offline).
+          <div className="fh-empty" title="No recent activity">
             <Mascot id="intake" mood="sleeping" size={52} />
-            <div className="fl-label strong">{emptyNote(source, "Quiet for now")}</div>
+            {emptyNote(source, "") && <div className="fl-label strong">{emptyNote(source, "")}</div>}
           </div>
         ) : (
           <ol className="fh-ticker-list" ref={list} aria-live="polite" aria-relevant="additions">

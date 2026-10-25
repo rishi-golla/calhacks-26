@@ -2518,10 +2518,6 @@ button.ev-chip:focus-visible {
   color: var(--ev-mute);
   overflow-wrap: anywhere;
 }
-.wk-sym::before {
-  content: "ƒ ";
-  opacity: 0.7;
-}
 .wk-num {
   color: var(--ev-strong);
   font-variant-numeric: tabular-nums;
@@ -2902,6 +2898,28 @@ button.ev-chip:focus-visible {
 }
 .wk-advisories > .wk-check:first-of-type {
   border-top: 0;
+}
+.wk-checks > .wk-passed:first-child {
+  border-top: 0;
+  margin-top: 0;
+}
+.wk-passed > summary {
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.wk-passed-n {
+  color: var(--ev-ok);
+  font-weight: 600;
+}
+.wk-check.compact {
+  padding: 1px 0;
+  border-top: 0;
+}
+.wk-check.compact .wk-check-name {
+  font-weight: 400;
+  color: var(--ev-mute);
 }
 
 @media (max-width: 560px) {

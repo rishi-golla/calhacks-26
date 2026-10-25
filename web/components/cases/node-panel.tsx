@@ -4,24 +4,29 @@
  * documents, tool calls, outputs, communication, audit trail) or the case log.
  * Filtered by the replay cursor like the graph.
  */
+import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { ArrowDownRight, ArrowUpLeft, Phone, X } from "lucide-react";
+import { ApifyFinding, ApifyMark } from "@/components/apify";
 import { EvidenceChip } from "@/components/evidence";
 import { Mascot } from "@/components/mascot";
 import { CheckList, Workings } from "@/components/workings";
 import { agentColor, agentLabel, skillLabel } from "@/lib/agents";
+import { apifyEvidence, APIFY_TOOLS } from "@/lib/apify";
 import { json, num, str, timestamp, type Row } from "@/lib/data";
+import { idList, learnedLines, memoryNote, reviewRefs, type MemoryNote } from "@/lib/lessons";
 import { fmtMoney, type TimelineEvent } from "@/lib/ops";
 import {
   approvalRequestedAt,
   clock,
   dispatchEventType,
-  dispatchReason,
   eventLabel,
   isMilestone,
   maskPhone,
   nodeStatus,
+  routingReason,
   shortDur,
+  toolLabel,
   toolsAt,
   type CaseTrace,
   type NodeStatus,
@@ -45,24 +50,46 @@ function Section({ title, count, children }: { title: string; count?: number; ch
     <section className="ct-sec">
       <h3 className="ct-sec-title">
         {title}
-        {count !== undefined && <span className="fl-mono fl-mute">{count}</span>}
+        {count !== undefined && count > 1 && <span className="fl-mono fl-mute">{count}</span>}
       </h3>
       {children}
     </section>
   );
 }
 
-export function Json({ value, label }: { value: unknown; label?: string }) {
+/** Pretty-printed JSON, or null for an empty value. */
+function pretty(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = typeof value === "string" ? json<unknown>(value, value) : value;
-  if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.keys(parsed).length === 0) return null;
-  const pretty = typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2);
+  if (parsed && typeof parsed === "object" && Object.keys(parsed).length === 0) return null;
+  return typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2);
+}
+
+export function Json({ value, label }: { value: unknown; label: string }) {
+  const text = pretty(value);
+  if (text === null) return null;
   return (
     <details className="ct-json">
       <summary>
-        <span className="fl-micro">{label ?? "data"}</span>
+        <span className="fl-micro">{label}</span>
       </summary>
-      <pre>{pretty}</pre>
+      <pre>{text}</pre>
+    </details>
+  );
+}
+
+/** A row that opens to show its payload; a plain row when there is nothing to show. */
+function Expandable({ line, payload }: { line: ReactNode; payload: [string, unknown][] }) {
+  const parts = payload.map(([k, v]) => [k, pretty(v)] as const).filter((p): p is readonly [string, string] => p[1] !== null);
+  if (!parts.length) return <div className="ct-line">{line}</div>;
+  return (
+    <details className="ct-json ct-expand">
+      <summary className="ct-line">{line}</summary>
+      {parts.map(([k, text]) => (
+        <pre key={k} data-label={parts.length > 1 ? k : undefined}>
+          {text}
+        </pre>
+      ))}
     </details>
   );
 }
@@ -78,7 +105,7 @@ function NodeLink({ trace, id, onSelect, children }: { trace: CaseTrace; id: str
 }
 
 const nodeTitle = (n: TraceNode) =>
-  n.kind === "task" ? `${agentLabel(n.lane)} · ${skillLabel(n.task?.skill)}` : n.kind === "intake" ? "Intake & Routing" : "Human approval";
+  n.kind === "task" ? `${agentLabel(n.lane)} · ${skillLabel(n.task?.skill)}` : n.kind === "intake" ? "Routed" : "Human approval";
 
 type PanelProps = { trace: CaseTrace; node: TraceNode; cursor: number; onSelect: (id: string) => void; onClose: () => void };
 
@@ -88,7 +115,7 @@ export function NodeDetails({ trace, node, cursor, onSelect, onClose }: PanelPro
     <div className="ct-details" style={{ "--agent": agentColor(node.lane) } as CSSProperties}>
       <div className="ct-panel-head">
         <span className="fl-section" style={{ "--accent": agentColor(node.lane) } as CSSProperties}>
-          Node · {agentLabel(node.lane)}
+          {agentLabel(node.lane)}
         </span>
         <button className="fl-btn quiet small" onClick={onClose} aria-label="Close details">
           <X size={14} />
@@ -97,9 +124,11 @@ export function NodeDetails({ trace, node, cursor, onSelect, onClose }: PanelPro
       <div className="ct-details-hero">
         <Mascot id={node.lane} size={52} mood={status === "working" ? (node.lane === "voice_desk" ? "talking" : "working") : status === "waiting" || status === "pending" || status === "failed" ? "alert" : "idle"} />
         <div style={{ minWidth: 0 }}>
-          <div className="ct-details-title">{node.kind === "task" ? skillLabel(node.task?.skill) : nodeTitle(node)}</div>
-          {node.kind === "task" && <div className="fl-micro ct-details-sub">{node.task?.displayId}</div>}
-          {status && (
+          <div className="ct-details-title" title={node.kind === "task" ? node.task?.displayId : undefined}>
+            {node.kind === "task" ? skillLabel(node.task?.skill) : nodeTitle(node)}
+          </div>
+          {node.kind === "task" && status && <TaskMeta node={node} cursor={cursor} />}
+          {status && status !== "completed" && (
             <span className={`fl-chip outline ${TONE[status]}`} style={{ marginTop: 6 }}>
               {status === "waiting" ? "waiting for human" : status}
             </span>
@@ -134,6 +163,18 @@ function KV({ rows }: { rows: [string, ReactNode][] }) {
   );
 }
 
+/** One line under the title: when it ran, how long, which model, how sure. */
+function TaskMeta({ node, cursor }: { node: TraceNode; cursor: number }) {
+  const t = node.task!;
+  const done = node.end > 0 && node.end <= cursor;
+  const took = shortDur((done ? node.end : Math.min(cursor, Date.now())) - t.startedAt);
+  return (
+    <div className="fl-micro ct-details-sub" title={done ? `${clock(t.startedAt)} → ${clock(node.end)}` : `started ${clock(t.startedAt)}`}>
+      {[clock(t.startedAt), done ? took : `${took} so far`, t.model, done && t.confidence ? `${Math.round(t.confidence * 100)}% sure` : ""].filter(Boolean).join(" · ")}
+    </div>
+  );
+}
+
 function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
   const t = node.task!;
   const status = nodeStatus(node, cursor)!;
@@ -141,6 +182,8 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
   const incoming = trace.edges.find((e) => e.to === node.id && e.kind !== "decision");
   const outgoing = trace.edges.filter((e) => e.from === node.id && e.at <= cursor && e.kind !== "approval");
   const audit = (trace.auditByTask.get(node.id) ?? []).filter((a) => timestamp(a.ts) <= cursor);
+  // Tool calls already have their own section.
+  const auditShown = audit.filter((a) => a.kind !== "tool_call");
   const outboxAudit = audit.find((a) => a.reason_code === "REVIEW_OUTBOX" || a.reason_code === "TASK_RETRY");
   const tools = toolsAt(node, cursor);
   const docs = node.docs.filter((d) => d.at <= cursor);
@@ -149,6 +192,15 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
   const reviewsOf = trace.slice.review.filter((r) => r.target_task_id === node.id && timestamp(r.ts) <= cursor);
   const ownReview = t.agent === "validator" ? trace.slice.review.find((r) => str(r.id) === `REV-${node.id}` && timestamp(r.ts) <= cursor) : undefined;
   const artifact = done ? t.artifact : null;
+  const memory = new Map(trace.slice.agent_memory.map((m) => [str(m.id, ""), m]));
+  const loaded = idList(t.row.memory_ids);
+  const used = loaded.flatMap((id) => (memory.has(id) ? [memoryNote(memory.get(id)!)] : []));
+  const instrVersion = num(t.row.instr_version);
+  // What this task's review taught: lessons and instruction versions pointing at its review (live) or the task (sim).
+  const teachRefs = reviewRefs(node.id, t.artifact);
+  const taught =
+    t.agent === "validator" ? trace.slice.agent_memory.filter((m) => teachRefs.has(str(m.source_ref, "")) && timestamp(m.created_at) <= cursor).map(memoryNote) : [];
+  const published = t.agent === "validator" ? trace.slice.instruction_version.filter((v) => teachRefs.has(str(v.source_ref, "")) && timestamp(v.created_at) <= cursor) : [];
 
   return (
     <>
@@ -160,12 +212,12 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
               {agentLabel(trace.nodeById.get(incoming.from)?.lane)}
             </NodeLink>
             {incoming.kind === "dispatch"
-              ? ` routed ${skillLabel(incoming.skill)}`
+              ? " routed this"
               : incoming.kind === "review"
-                ? " output went to quality review"
+                ? " sent its output for review"
                 : incoming.kind === "retry"
                   ? " failed; retried"
-                  : ` delegated ${skillLabel(incoming.skill)}`}{" "}
+                  : " delegated this"}{" "}
             <span className="fl-mono fl-mute">{clock(incoming.at)}</span>
           </p>
         ) : outboxAudit ? (
@@ -175,78 +227,106 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
         ) : (
           <p className="ct-line fl-mute">No trigger recorded.</p>
         )}
-        {incoming?.kind === "dispatch" && (
-          <p className="ct-quote">{dispatchReason(str(trace.nodeById.get(incoming.from)?.dispatch?.reason, ""))}</p>
+        {incoming?.kind === "dispatch" && routingReason(str(trace.nodeById.get(incoming.from)?.dispatch?.reason, "")) && (
+          <p className="ct-quote">{routingReason(str(trace.nodeById.get(incoming.from)?.dispatch?.reason, ""))}</p>
         )}
       </Section>
 
-      <Section title="Timing">
-        <KV
-          rows={[
-            ["Started", <span key="s" className="fl-mono">{clock(t.startedAt)}</span>],
-            ["Ended", done ? <span className="fl-mono">{clock(node.end)}</span> : "—"],
-            ["Took", <span key="d" className="fl-mono">{shortDur((done ? node.end : Math.min(cursor, Date.now())) - t.startedAt)}{done ? "" : " so far"}</span>],
-            ["Model", t.model ? <span className="fl-mono">{t.model}</span> : "—"],
-            ["Confidence", done && t.confidence ? <span className="fl-mono">{t.confidence.toFixed(2)}</span> : "—"],
-          ]}
-        />
-      </Section>
+      {loaded.length > 0 && (
+        <Section title="Lessons used" count={loaded.length}>
+          {instrVersion > 0 && <p className="ct-line fl-mute">Ran on instructions v{instrVersion}.</p>}
+          <ul className="ct-lessons">
+            {used.map((m) => (
+              <MemoryItem key={m.id} note={m} caseId={trace.caseId} />
+            ))}
+          </ul>
+          {loaded.length > used.length && (
+            <p className="ct-line fl-mute">
+              {loaded.length - used.length} more {loaded.length - used.length === 1 ? "memory is" : "memories are"} no longer recorded.
+            </p>
+          )}
+        </Section>
+      )}
 
-      <Section title="Documents" count={docs.length}>
-        {docs.length ? (
+      {(taught.length > 0 || published.length > 0) && (
+        <Section title="Lessons written" count={taught.length}>
+          <ul className="ct-lessons">
+            {taught.map((m) => (
+              <MemoryItem key={m.id} note={m} caseId={trace.caseId} to={m.agent} />
+            ))}
+            {published.map((v) => (
+              <li key={str(v.id)} style={{ "--agent": agentColor(str(v.agent)) } as CSSProperties}>
+                <div className="who">
+                  → {agentLabel(str(v.agent))} · instructions v{num(v.version)}
+                </div>
+                {learnedLines(v.diff).map((line, i) => (
+                  <p key={i}>{line}</p>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {docs.length > 0 && (
+        <Section title="Documents" count={docs.length}>
           <ul className="ct-list">
             {docs.map((d) => (
               <li key={d.id}>
                 <div className="ct-line">
-                  {d.docRef ? <EvidenceChip evidenceRef={d.docRef} className="ct-doc-ref" /> : <span className="fl-mono fl-mute">no reference</span>}
-                  <span className="fl-micro">
-                    p{d.page || 1}
-                    {d.span ? ` · ${d.span}` : ""}
-                  </span>
+                  {d.docRef ? <EvidenceChip evidenceRef={d.docRef} className="ct-doc-ref" /> : <span className="fl-mono fl-mute">unreferenced</span>}
+                  {(d.page > 1 || d.span) && (
+                    <span className="fl-micro">
+                      {d.page > 1 ? `p${d.page}` : ""}
+                      {d.page > 1 && d.span ? " · " : ""}
+                      {d.span}
+                    </span>
+                  )}
                 </div>
-                <Json value={d.extracted} label="extracted" />
+                <Json value={d.extracted} label="fields" />
               </li>
             ))}
           </ul>
-        ) : (
-          <p className="ct-line fl-mute">No documents read{done ? "" : " yet"}.</p>
-        )}
-      </Section>
+        </Section>
+      )}
 
-      <Section title="Actions" count={tools.length}>
-        {tools.length ? (
-          <ul className="ct-list">
-            {tools.map(({ call, status: s }) => (
-              <li key={call.id}>
-                <div className="ct-line">
-                  <span className={`ct-tool-glyph ${s}`}>{s === "running" ? "…" : s === "completed" ? "✓" : "✗"}</span>
-                  <span className="fl-mono">{call.name}</span>
-                  <span className="fl-micro" style={{ marginLeft: "auto" }}>
-                    {s === "running" ? "running" : call.durationMs ? shortDur(call.durationMs) : s}
-                  </span>
-                </div>
-                <Json value={call.arguments} label="args" />
-                {s !== "running" && <Json value={call.result} label="result" />}
+      {tools.length > 0 && (
+        <Section title="Actions" count={tools.length}>
+          <ul className="ct-list actions">
+            {tools.map(({ call, status: s }) => {
+              const apify = apifyEvidence({ ...call, status: s === "running" ? "started" : call.status });
+              return (
+              <li key={call.id} className={apify ? "apify" : undefined}>
+                <Expandable
+                  line={
+                    <>
+                      <span className={`ct-tool-glyph ${s}`}>{s === "running" ? "…" : s === "completed" ? "✓" : "✗"}</span>
+                      {apify && <ApifyMark size={12} title="Called Apify" />}
+                      <span title={call.name}>{toolLabel(call.name)}</span>
+                      <span className="fl-micro" style={{ marginLeft: "auto" }}>
+                        {s === "running" ? "running" : call.durationMs ? shortDur(call.durationMs) : s === "completed" ? "" : s}
+                      </span>
+                    </>
+                  }
+                  payload={[
+                    ["args", call.arguments],
+                    ["result", s === "running" ? null : call.result],
+                  ]}
+                />
+                {apify && <ApifyFinding evidence={apify} />}
               </li>
-            ))}
+              );
+            })}
           </ul>
-        ) : (
-          <p className="ct-line fl-mute">No tool calls{done ? "" : " yet"}.</p>
-        )}
-      </Section>
+        </Section>
+      )}
 
       <Section title="Output">
         {done || status === "waiting" ? (
           <>
-            <KV
-              rows={[
-                ["Outcome", t.outcome ? <span className={`fl-chip outline ${TONE[status]}`}>{t.outcome.replaceAll("_", " ")}</span> : status],
-                ["Status", t.businessStatus.replaceAll("_", " ")],
-              ]}
-            />
+            <span className={`fl-chip outline ${TONE[status]}`}>{(t.outcome || t.businessStatus || status).replaceAll("_", " ")}</span>
             {str(t.artifact?.summary, "") && <p className="ct-quote">{str(t.artifact?.summary)}</p>}
             {artifact && <Workings items={(artifact.findings as Row | undefined)?.workings} />}
-            {artifact && <Json value={artifact.findings ?? artifact.checks} label="findings" />}
             {t.policyIds.length > 0 && (
               <div className="ct-chips">
                 {t.policyIds.map((p) => (
@@ -263,37 +343,27 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
                 ))}
               </div>
             )}
-            {artifact && <Json value={artifact} label="artifact" />}
+            {artifact && <Json value={artifact} label="raw output" />}
           </>
         ) : (
           <p className="ct-line fl-mute">Still working.</p>
         )}
       </Section>
 
-      <Section title="Links">
+      {(outgoing.length > 0 || approvals.length > 0 || calls.length > 0 || reviewsOf.length > 0 || ownReview) && (
+      <Section title="Handoffs">
         <ul className="ct-list compact">
-          {incoming && (
-            <li className="ct-line">
-              <ArrowUpLeft size={13} /> from{" "}
-              <NodeLink trace={trace} id={incoming.from} onSelect={onSelect}>
-                {agentLabel(trace.nodeById.get(incoming.from)?.lane)}
+          {handoffRows(outgoing, trace, cursor).map(({ e, child, s, n }) => (
+            <li key={e.id} className="ct-line">
+              <ArrowDownRight size={13} /> to{" "}
+              <NodeLink trace={trace} id={e.to} onSelect={onSelect}>
+                {agentLabel(child.lane)}
               </NodeLink>
+              {e.kind === "retry" ? <span className="fl-mute">retry</span> : e.kind !== "review" && <span className="fl-mute">{skillLabel(e.skill)}</span>}
+              {n > 1 && <span className="fl-mono fl-mute">×{n}</span>}
+              {s && s !== "completed" && <span className={`fl-chip outline ${TONE[s]} ct-mini-chip`}>{s}</span>}
             </li>
-          )}
-          {outgoing.map((e) => {
-            const child = trace.nodeById.get(e.to)!;
-            const s = nodeStatus(child, cursor);
-            return (
-              <li key={e.id} className="ct-line">
-                <ArrowDownRight size={13} /> to{" "}
-                <NodeLink trace={trace} id={e.to} onSelect={onSelect}>
-                  {agentLabel(child.lane)}
-                </NodeLink>
-                <span className="fl-mute">{e.kind === "review" ? "review" : e.kind === "retry" ? "retry" : skillLabel(e.skill)}</span>
-                {s && <span className={`fl-chip outline ${TONE[s]} ct-mini-chip`}>{s}</span>}
-              </li>
-            );
-          })}
+          ))}
           {approvals.map((a) => (
             <li key={str(a.id)} className="ct-line">
               <ArrowDownRight size={13} /> asked{" "}
@@ -303,9 +373,6 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
               to approve {str(a.action).replaceAll("_", " ")} <span className="fl-num">{fmtMoney(num(a.amount))}</span>
             </li>
           ))}
-          {!incoming && !outgoing.length && !approvals.length && !calls.length && !reviewsOf.length && !ownReview && (
-            <li className="ct-line fl-mute">No messages exchanged.</li>
-          )}
         </ul>
         {calls.map((c) => (
           <CallRecord key={str(c.id)} call={c} cursor={cursor} />
@@ -314,26 +381,51 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
           <ReviewRecord key={str(r.id)} review={r} trace={trace} onSelect={onSelect} own={r === ownReview} />
         ))}
       </Section>
+      )}
 
-      <Section title="Audit" count={audit.length}>
-        <ol className="ct-audit">
-          {audit.map((a) => (
-            <li key={str(a.id)}>
-              <span className="fl-mono fl-mute">{clock(timestamp(a.ts))}</span>
-              <span className="fl-mono ct-audit-code">{str(a.reason_code, str(a.kind))}</span>
-              <span className="ct-audit-text">{auditText(a)}</span>
-            </li>
-          ))}
-        </ol>
-      </Section>
+      {auditShown.length > 0 && (
+        <section className="ct-sec">
+          <details className="ct-json ct-audit-fold">
+            <summary>
+              <span className="fl-micro">audit · {auditShown.length}</span>
+            </summary>
+            <ol className="ct-audit">
+              {auditShown.map((a) => {
+                const code = str(a.reason_code, str(a.kind));
+                const text = auditText(a);
+                return (
+                  <li key={str(a.id)}>
+                    <span className="fl-mono fl-mute">{clock(timestamp(a.ts))}</span>
+                    <span className="ct-audit-text" title={code}>
+                      {text === code ? text.replaceAll("_", " ") : text}
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          </details>
+        </section>
+      )}
     </>
   );
 }
 
+/** Outgoing edges, identical ones (same agent, kind, skill and status) folded into one row with a count. */
+function handoffRows(edges: CaseTrace["edges"], trace: CaseTrace, cursor: number) {
+  const rows = new Map<string, { e: CaseTrace["edges"][number]; child: TraceNode; s: NodeStatus | null; n: number }>();
+  for (const e of edges) {
+    const child = trace.nodeById.get(e.to)!;
+    const s = nodeStatus(child, cursor);
+    const key = `${child.lane}|${e.kind}|${e.skill ?? ""}|${s}`;
+    const row = rows.get(key);
+    if (row) row.n++;
+    else rows.set(key, { e, child, s, n: 1 });
+  }
+  return [...rows.values()];
+}
+
 function auditText(a: Row) {
-  if (a.kind !== "tool_call") return str(a.summary, str(a.kind));
-  const body = json<Row>(a.summary, {});
-  return `${str(body.tool_name, "tool")} ${str(body.status, "")}${body.duration_ms ? ` · ${shortDur(num(body.duration_ms))}` : ""}`;
+  return str(a.summary, str(a.kind));
 }
 
 function CallRecord({ call, cursor }: { call: Row; cursor: number }) {
@@ -349,18 +441,53 @@ function CallRecord({ call, cursor }: { call: Row; cursor: number }) {
       </div>
       <KV
         rows={[
-          ["To", <span key="to" className="fl-mono">{str(call.to_masked, "") || maskPhone(str(call.intended_to, ""))}</span>],
-          ["Intended", str(call.intended_to, "") ? <span className="fl-mono">{maskPhone(str(call.intended_to))}</span> : ""],
+          [
+            "To",
+            <span key="to" className="fl-mono" title={str(call.intended_to, "") ? `intended ${maskPhone(str(call.intended_to))}` : undefined}>
+              {str(call.to_masked, "") || maskPhone(str(call.intended_to, ""))}
+            </span>,
+          ],
           ["Routed to", str(call.routed_to, "")],
           ["Persona", str(call.persona, "")],
-          ["Disclosure", call.disclosure_given ? "AI disclosure given" : ""],
-          ["Started", <span key="st" className="fl-mono">{clock(timestamp(call.started_at))}</span>],
-          ["Ended", finished ? <span className="fl-mono">{clock(ended)}</span> : ""],
+          [
+            "Time",
+            <span key="t" className="fl-mono">
+              {clock(timestamp(call.started_at))}
+              {finished ? ` → ${clock(ended)}` : ""}
+            </span>,
+          ],
         ]}
       />
+      {Boolean(call.disclosure_given) && <span className="fl-micro">AI disclosed</span>}
       {finished && <Json value={call.findings_json} label="findings" />}
       {finished && str(call.transcript_redacted, "") && <p className="ct-transcript">{str(call.transcript_redacted)}</p>}
     </div>
+  );
+}
+
+/** A memory the task loaded (or, with `to`, a lesson this review wrote for that agent). */
+function MemoryItem({ note: m, caseId, to }: { note: MemoryNote; caseId: string; to?: string }) {
+  return (
+    <li style={{ "--agent": agentColor(to ?? (m.byValidator ? "validator" : "human")) } as CSSProperties}>
+      <div className="who">
+        {to ? `→ ${agentLabel(to)}` : m.byValidator ? "Lesson from Settlement Quality Review" : "Note from a person"}
+        {!m.active && " · since retired"}
+      </div>
+      <p>{m.text}</p>
+      {m.scope.length > 0 && (
+        <div className="scope">
+          {m.scope.map((c) => (
+            <span key={c}>{c}</span>
+          ))}
+        </div>
+      )}
+      {!to && m.sourceCase && m.sourceCase !== caseId && (
+        <div className="foot">
+          learned on{" "}
+          <Link href={`/cases/${encodeURIComponent(m.sourceCase)}`}>{m.sourceCase.replace(/^CASE-/, "")}</Link> · {clock(m.at)}
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -370,7 +497,7 @@ function ReviewRecord({ review, trace, onSelect, own }: { review: Row; trace: Ca
   return (
     <div className="ct-record">
       <div className="ct-line">
-        <strong>Review verdict</strong>
+        <strong>Review</strong>
         <span className={`fl-chip outline ${verdict === "pass" ? "ok" : "warn"} ct-mini-chip`}>{verdict}</span>
         {own ? (
           trace.nodeById.has(str(review.target_task_id)) && (
@@ -381,9 +508,7 @@ function ReviewRecord({ review, trace, onSelect, own }: { review: Row; trace: Ca
               </NodeLink>
             </span>
           )
-        ) : (
-          <span className="fl-mute">by Settlement Quality Review</span>
-        )}
+        ) : null}
       </div>
       <CheckList checks={review.checks_json} />
       {Array.isArray(friction) && friction.length > 0 && <Json value={friction} label="friction" />}
@@ -394,38 +519,21 @@ function ReviewRecord({ review, trace, onSelect, own }: { review: Row; trace: Ca
 function IntakeDetails({ trace, node, onSelect }: PanelProps) {
   const d = node.dispatch!;
   const target = str(d.task_id, "");
-  const caseRow = trace.slice.case[0];
+  const reason = routingReason(str(d.reason, ""));
+  const meta = [str(d.status, ""), d.queue_ms !== undefined ? `queued ${num(d.queue_ms)} ms` : "", str(d.policy_version, "")].filter(Boolean).join(" · ");
   return (
-    <>
-      <Section title="Trigger">
-        <p className="ct-line">
-          <ArrowUpLeft size={13} /> New event for {trace.caseId}
-          {caseRow && <span className="fl-mono fl-mute"> opened {clock(timestamp(caseRow.opened_at))}</span>}
-        </p>
-      </Section>
-      <Section title="Routing">
-        <KV
-          rows={[
-            ["Skill", skillLabel(str(d.skill))],
-            ["Agent", agentLabel(str(d.agent))],
-            ["Status", str(d.status, "")],
-            ["Queue", d.queue_ms !== undefined ? <span className="fl-mono">{num(d.queue_ms)} ms</span> : ""],
-            ["Policy", str(d.policy_version, "")],
-            ["At", <span key="at" className="fl-mono">{clock(node.start)}</span>],
-          ]}
-        />
-        {dispatchReason(str(d.reason, "")) && <p className="ct-quote">{dispatchReason(str(d.reason))}</p>}
-      </Section>
-      <Section title="Links">
-        <p className="ct-line">
-          <ArrowDownRight size={13} /> to{" "}
-          <NodeLink trace={trace} id={target} onSelect={onSelect}>
-            {agentLabel(str(d.agent))}
-          </NodeLink>
-          <span className="fl-mute">{skillLabel(str(d.skill))}</span>
-        </p>
-      </Section>
-    </>
+    <Section title="Routing">
+      <p className="ct-line">
+        <ArrowDownRight size={13} />
+        <NodeLink trace={trace} id={target} onSelect={onSelect}>
+          {agentLabel(str(d.agent))}
+        </NodeLink>
+        <span className="fl-mute">{skillLabel(str(d.skill))}</span>
+        <span className="fl-mono fl-mute">{clock(node.start)}</span>
+      </p>
+      {reason && <p className="ct-quote">{reason}</p>}
+      {meta && <p className="fl-micro" style={{ marginTop: 8 }}>{meta}</p>}
+    </Section>
   );
 }
 
@@ -450,10 +558,18 @@ function HumanDetails({ trace, node, cursor, onSelect }: PanelProps) {
             ["Amount", <span key="amt" className="fl-num">{fmtMoney(num(a.amount))}</span>],
             ["Target", <span key="tg" className="fl-mono">{str(a.target_id || a.invoice_id, "—")}</span>],
             ["Expires", <span key="ex" className="fl-mono">{clock(timestamp(a.expires_at))}</span>],
-            ["Decision", decided ? str(a.decision) : "pending"],
-            ["Decided", decided ? <span className="fl-mono">{clock(node.end)}</span> : ""],
-            ["Approver", decided ? str(a.approver_name || a.approver, "") : ""],
-            ["Code check", decided ? (a.code_ok ? "verified" : "not verified") : ""],
+            [
+              "Decision",
+              decided ? (
+                <span>
+                  {str(a.decision)} {str(a.approver_name || a.approver, "") && `by ${str(a.approver_name || a.approver)}`}{" "}
+                  <span className="fl-mono fl-mute">{clock(node.end)}</span>
+                </span>
+              ) : (
+                "pending"
+              ),
+            ],
+            ["Code", decided ? (a.code_ok ? "verified" : "not verified") : ""],
           ]}
         />
       </Section>
@@ -481,12 +597,28 @@ const KIND_GLYPH: Partial<Record<TimelineEvent["kind"], string>> = {
   policy: "⛔",
 };
 
+const apifyTool = (e: TimelineEvent) =>
+  e.kind === "tool_call" && str(json<Row>(e.row.summary, {}).tool_name, "") in APIFY_TOOLS;
+
+/** "Run workflow · 8.6s", or "… failed" when it did not complete. */
+function toolLogTitle(row: Row) {
+  const call = json<Row>(row.summary, {});
+  const status = str(call.status, "");
+  const dur = call.duration_ms ? shortDur(num(call.duration_ms)) : "";
+  return [toolLabel(str(call.tool_name, "tool")), status === "completed" ? "" : status, dur].filter(Boolean).join(" · ");
+}
+
 export function CaseLog({ trace, cursor, onSelect, onClose }: { trace: CaseTrace; cursor: number; onSelect: (id: string) => void; onClose: () => void }) {
   const edgeTasks = new Set(trace.edges.filter((e) => e.kind === "delegation").map((e) => e.to));
+  // A review's verdict shows on its task's completion row.
+  const reviewed = new Set(trace.timeline.filter((e) => e.kind === "task_completed").map((e) => e.taskId));
   const events = trace.timeline.filter((e) => {
     if (e.at > cursor) return false;
     if (e.kind === "delegation" && e.id.startsWith("audit:") && edgeTasks.has(e.taskId)) return false;
     if (e.kind === "tool_call" && / · started$/.test(e.title)) return false;
+    // Bookkeeping the log already shows another way.
+    if (e.id.startsWith("audit:") && e.row.kind === "add_review" && reviewed.has(e.taskId)) return false;
+    if (e.id.startsWith("audit:") && e.row.kind === "upsert_source_record") return false;
     return true;
   });
   const target = (e: TimelineEvent) => {
@@ -514,13 +646,15 @@ export function CaseLog({ trace, cursor, onSelect, onClose }: { trace: CaseTrace
             ? `${eventLabel(dispatchEventType(str(e.row.reason, "")))} · logged`
             : e.kind === "task_started"
               ? `started ${skillLabel(e.row.skill)}`
-              : e.title.replaceAll("_", " ");
-          const detail = milestone || e.kind === "task_started" ? "" : e.kind === "dispatch" ? dispatchReason(e.detail) : e.detail;
+              : e.kind === "tool_call"
+                ? toolLogTitle(e.row)
+                : e.title.replaceAll("_", " ");
+          const detail = milestone || e.kind === "task_started" || e.kind === "tool_call" ? "" : e.kind === "dispatch" ? routingReason(e.detail) : e.detail;
           const body = (
             <>
               <span className="fl-mono fl-mute ct-log-time">{clock(e.at)}</span>
               <span className="ct-log-glyph" style={{ color: agentColor(e.agent) }}>
-                {milestone ? "·" : (KIND_GLYPH[e.kind] ?? "·")}
+                {milestone ? "·" : apifyTool(e) ? <ApifyMark size={11} title="Apify" /> : (KIND_GLYPH[e.kind] ?? "·")}
               </span>
               <span className="ct-log-body">
                 <span className="ct-log-agent" style={{ color: agentColor(e.agent) }}>

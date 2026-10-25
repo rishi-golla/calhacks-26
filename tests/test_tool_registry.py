@@ -210,7 +210,7 @@ def test_collections_only_offers_the_workflows_reusable_cash_dependency():
 def test_external_tools_are_role_scoped_and_do_not_accept_arbitrary_targets():
     for role in AGENTS:
         tools = registry_for(context(role))
-        assert ("lookup_carrier_authority" in tools) == (role in {"verification", "risk"})
+        assert ("lookup_carrier_authority" in tools) == (role in {"verification", "risk", "carrier_ap"})
         assert ("inspect_company_website" in tools) == (role in {"verification", "documents", "shipper_ar"})
         for name in ("lookup_carrier_authority", "inspect_company_website"):
             if name in tools:
@@ -393,3 +393,16 @@ async def test_integration_availability_exposes_apify_configuration_and_deferred
     assert result["external_credit_and_sanctions"]["available"] is False
     assert result["bank_transfer"]["available"] is False
     assert "test-secret-do-not-display" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("skill,expected", [("process_carrier_invoice", ("lookup_carrier_authority",)),
+                                            ("propose_payment", ("lookup_carrier_authority",)),
+                                            ("answer_payment_status", ())])
+def test_carrier_settlement_checks_the_carrier_first_only_when_settling(skill, expected):
+    from common.tool_registry import first_calls
+    ctx = context("carrier_ap", skill)
+    registry = registry_for(ctx)
+    assert "lookup_carrier_authority" in registry
+    assert first_calls(ctx, registry) == expected
+    # A requirement is never imposed for a tool the role was not granted.
+    assert first_calls(ctx, {}) == ()

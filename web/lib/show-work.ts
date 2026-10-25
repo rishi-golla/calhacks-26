@@ -59,7 +59,7 @@ export function exposureWorkings(caseId: string, record: Row, stated: number, do
     if (value === null) return [];
     return [
       work({
-        label: "Exposure: the whole payment a bank change would redirect",
+        label: "Payment a bank change would redirect",
         formula: key,
         inputs: { [key]: value },
         result: stated,
@@ -80,7 +80,7 @@ export function exposureWorkings(caseId: string, record: Row, stated: number, do
     const formula = keys.join(" - ");
     return [
       work({
-        label: "Exposure: what the shipper has not paid, every deposit counted",
+        label: "Unpaid by the shipper, all deposits",
         formula: short >= 0 ? formula : `max(${formula}, 0)`,
         inputs,
         result: stated,
@@ -94,7 +94,7 @@ export function exposureWorkings(caseId: string, record: Row, stated: number, do
   const invoice = num(record.invoice_amount);
   const contract = num(record.contract_rate);
   if (!truthy(record.invoice_id) || invoice === null || contract === null) return [];
-  return [floored("Exposure: billed over contract, only the overage disputed", ["invoice_amount", invoice], ["contract_rate", contract], stated, cite(documents, "carrier_invoice", "rate_confirmation"), AT_OPEN)];
+  return [floored("Billed over contract", ["invoice_amount", invoice], ["contract_rate", contract], stated, cite(documents, "carrier_invoice", "rate_confirmation"), AT_OPEN)];
 }
 
 /* ------------------------------ case file ------------------------------ */

@@ -9,11 +9,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowLeft, ListOrdered, Network, Pause, Play, Radio, Rewind } from "lucide-react";
 import { useLiveEvents, useOps } from "@/components/data-provider";
+import { ApifyMark } from "@/components/apify";
 import { useSourceRecords } from "@/components/live-provider";
 import { ShowWork } from "@/components/show-work";
 import Backdrop from "@/components/fx/backdrop";
 import { Mascot } from "@/components/mascot";
 import { agentColor } from "@/lib/agents";
+import { apifyEvidence, APIFY_OUTCOME, type ApifyOutcome } from "@/lib/apify";
 import { isImportedId } from "@/lib/history";
 import { fmtMoney } from "@/lib/ops";
 import { exposureWorkings } from "@/lib/show-work";
@@ -22,7 +24,7 @@ import { CaseFile } from "./case-file";
 import { buildCaseFile } from "./case-file-model";
 import { CaseLog, NodeDetails } from "./node-panel";
 import { TraceGraph } from "./trace-graph";
-import { buildCaseTrace, caseKind, clock, dayClock, KIND_LABEL, layoutTrace, nodeStatus, shortDur, sideEffectAt, timer, type CaseTrace as Trace, type NodeStatus } from "./model";
+import { buildCaseTrace, caseKind, clock, dayClock, KIND_LABEL, layoutTrace, nodeStatus, shortDur, sideEffectAmountAt, sideEffectAt, timer, type CaseTrace as Trace, type NodeStatus } from "./model";
 import "./cases.css";
 
 type Speed = 1 | 4 | 16;
@@ -225,6 +227,15 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
   const status = c?.status ?? (trace.open ? "in_progress" : "resolved");
   const imported = c?.imported ?? isImportedId(caseId);
   const statusAtCursor = replay ? (c?.resolvedAt && c.resolvedAt <= cursor ? "resolved" : "in_progress") : status;
+  const apifyChecks = tasks.flatMap((n) =>
+    n.tools
+      .filter((call) => call.startedAt <= cursor)
+      .map((call) => ({ node: n.id, evidence: apifyEvidence({ ...call, status: call.endedAt && call.endedAt <= cursor ? call.status : "started" }) }))
+      .filter((x) => x.evidence),
+  );
+  const apifyTally = Object.entries(
+    apifyChecks.reduce<Partial<Record<ApifyOutcome, number>>>((acc, x) => ({ ...acc, [x.evidence!.outcome]: (acc[x.evidence!.outcome] ?? 0) + 1 }), {}),
+  ).map(([o, n]) => `${n} ${APIFY_OUTCOME[o as ApifyOutcome].label.toLowerCase()}`);
 
   return (
     <div className={`ct-page ${simulated ? "is-sim" : ""}`}>
@@ -239,6 +250,16 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
             </span>
             {c && <PriorityChip priority={c.priority} />}
             <StatusChip status={statusAtCursor} active={replay ? 0 : (c?.activeTasks ?? 0)} />
+            {apifyChecks.length > 0 && (
+              <button
+                className="fl-chip outline apify-case-chip"
+                onClick={() => selectFromPanel(apifyChecks[0].node)}
+                title={`Agents checked this case against public records through Apify: ${apifyTally.join(", ")}. Open the call.`}
+              >
+                <ApifyMark size={12} />
+                Apify · {apifyChecks.length} check{apifyChecks.length === 1 ? "" : "s"}
+              </button>
+            )}
             {replay && <span className="fl-chip outline agent">Replay</span>}
             {imported && (
               <span className="fl-chip outline ct-imported" title="From the brokerage's books before FreightLine ran. No agent worked this case.">
@@ -366,37 +387,36 @@ function SideEffects({ trace, cursor, onSelect }: { trace: Trace; cursor: number
     .filter((s) => s.kind !== "forecast")
     .map((s) => ({ s, status: sideEffectAt(s, cursor) }))
     .filter((x) => x.status);
+  if (!items.length) return null;
   return (
     <div className="ct-effects" aria-label="Ledger">
       <span className="fl-section ct-effects-label" style={{ "--accent": "var(--yellow)" } as CSSProperties}>
         Ledger
       </span>
-      {items.length === 0 ? (
-        <span className="fl-micro">{cursor === Infinity ? "None" : "None yet"}</span>
-      ) : (
-        <div className="ct-effects-list">
-          {items.map(({ s, status }) => {
-            const target = s.kind === "approval" ? `human:${String(s.row.id)}` : trace.nodeById.has(s.taskId) ? s.taskId : "";
-            const body = (
-              <>
-                <span className="fl-micro">{s.kind}</span>
-                <span className="ct-effect-label">{s.label}</span>
-                <span className="fl-num">{fmtMoney(s.amount)}</span>
-                <span className={`fl-chip outline ${EFFECT_TONE[status!] ?? ""} ct-mini-chip`}>{status!.replaceAll("_", " ")}</span>
-              </>
-            );
-            return target ? (
-              <button key={s.id} className="ct-effect fl-reveal" onClick={() => onSelect(target)} title={`${s.label} · ${clock(s.at)}`}>
-                {body}
-              </button>
-            ) : (
-              <span key={s.id} className="ct-effect fl-reveal" title={`${s.label} · ${clock(s.at)}`}>
-                {body}
-              </span>
-            );
-          })}
-        </div>
-      )}
+      <div className="ct-effects-list">
+        {items.map(({ s, status }) => {
+          const target = s.kind === "approval" ? `human:${String(s.row.id)}` : trace.nodeById.has(s.taskId) ? s.taskId : "";
+          const amount = sideEffectAmountAt(s, cursor);
+          const title = [s.label, clock(s.at), amount !== s.amount && `${fmtMoney(s.amount - amount)} of ${fmtMoney(s.amount)} released`].filter(Boolean).join(" · ");
+          const body = (
+            <>
+              {s.kind === "journal" && <span className="fl-micro">journal</span>}
+              <span className="ct-effect-label">{s.label}</span>
+              <span className="fl-num">{fmtMoney(amount)}</span>
+              <span className={`fl-chip outline ${EFFECT_TONE[status!] ?? ""} ct-mini-chip`}>{status!.replaceAll("_", " ")}</span>
+            </>
+          );
+          return target ? (
+            <button key={s.id} className="ct-effect fl-reveal" onClick={() => onSelect(target)} title={title}>
+              {body}
+            </button>
+          ) : (
+            <span key={s.id} className="ct-effect fl-reveal" title={title}>
+              {body}
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }

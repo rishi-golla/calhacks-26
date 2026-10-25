@@ -72,26 +72,47 @@ latency measurements. See [CLOUD.md](CLOUD.md) for connection and provisioning d
 
 ## Maincloud cutover
 
-**Status: not yet run on Maincloud.** The cutover code, env generation and verifier are in
-place; the republish, `provision` and the cloud checks below run after `main` carries the
-cloud-backbone tickets and the `release_hold` fix, following the sequence in
-[CLOUD.md](CLOUD.md). Nothing in this section is a cloud measurement unless its row says so.
+**Status: published, provisioned and verified on Maincloud on Oct 24, 2026 (22:00–22:20 PDT);
+the ASUS-driven checks remain.** The module was published from `main` twice with
+`--delete-data=never` (first 9bc5aef, then 0777544 after PR #25 merged; 47 module tests and a
+clean build each time). Row counts were identical before and after each publish (367 cases,
+206 invoices, 418 companies); `source_record` and the three new reducers appeared.
+`spacetime_cloud provision` reused the stored identities, found no missing `agent_config` row and
+opened 2028-01 to 2028-04 on top of the 15 periods already open. The Mac stack (main checkout,
+:9101–9109, gateway :9000, dispatch worker) was relaunched at 05:14 UTC through `load_live_env`
+with `SOURCE_DATA_BACKEND=spacetime`, `FIRST_HOP_TRANSPORT=spacetime`, `SOURCE_DATA_PATH` unset
+and `HUMAN_APPROVER_ID` set. The witty-raven fleet was repointed to a local database.
+
+**First real first hop on Maincloud, without the ASUS.** For the open case
+`CASE-LD-1025-1FF2EA39` its genuine source records (case, carrier and shipper company and
+contacts, `dataset:meta`, taken from the ingest export that opened it) were written as `ingest`,
+then `enqueue_first_hop` was called as `router` (`EVT-CUTOVER-1792905482`, P2). The outbox row
+went pending → processing → done in one attempt and the dispatch row queued → accepted
+**3.4 s after enqueue** (module timestamps; 1.2 s locally, the difference being the worker's
+cloud round trips). Carrier Settlement ran live: `openai/gpt-6-luna`, six tool calls beginning
+with `read_load_record` served from `source_record`, 15 audit rows, outcome `approve` at 0.8,
+completed 22 s after acceptance. The worker then delivered the resulting `review_output` to the
+Validator. No 530s and no `SourceUnavailable` occurred. Cosmetic verifier bug: the chain line
+"task … completed" prints the task's `started_at`, not its completion time.
 
 `make cloud-verify` (`scripts/cloud_verify.py`) prints the checklist from anonymous SELECTs
 and exits 1 when a check fails; `--readyz` adds the agents' readiness from the Mac.
 
 | Check | How | Maincloud result |
 |---|---|---|
-| `agent_config` has nine rows including `documents` | `cloud-verify` | not yet run |
-| nine `agent` rows, Mac `card_url`, `last_seen` advancing (15 s heartbeat) | `cloud-verify` (two reads 20 s apart; flags a card that moves between fleets) | not yet run |
-| accounting periods: current month plus 18 open | `cloud-verify` | not yet run |
-| a new simulator load yields `source_record` → `case` → `dispatch` queued → accepted → `task` / `delegation_edge`, in that order | `cloud-verify` case chain (newest routed case, or `--case`) | not yet run |
-| no `first_hop` row older than 60 s while the worker is up | `cloud-verify` | not yet run |
-| outbox backlog by kind with `last_error` | `cloud-verify` | not yet run |
-| dashboard on Maincloud shows the case within seconds | browser on `web/.env.local` pointed at Maincloud | not yet run |
-| every agent `/readyz` is 200 | `cloud-verify --readyz` on the Mac | not yet run |
-| enqueue-to-accept latency over at least 20 events | `cloud-verify` latency line (outbox `created_at` to accepted `dispatch.ts`, both module clock) | not yet run |
+| `agent_config` has nine rows including `documents` | `cloud-verify` | PASS, 9/9 (Oct 24 22:17 PDT) |
+| nine `agent` rows, Mac `card_url`, `last_seen` advancing (15 s heartbeat) | `cloud-verify` (two reads 20 s apart; flags a card that moves between fleets) | PASS, 9/9 at 127.0.0.1:9101–9109, all seen within 45 s |
+| accounting periods: current month plus 18 open | `cloud-verify` | PASS, 19/19 (2026-10 to 2028-04) |
+| a new simulator load yields `source_record` → `case` → `dispatch` queued → accepted → `task` / `delegation_edge`, in that order | `cloud-verify` case chain (newest routed case, or `--case`) | PASS for the synthetic first hop `--case CASE-LD-1025-1FF2EA39` (source records, enqueue, accepted +3.4 s, task, outbox done); the newest *simulator* case still shows direct-A2A dispatches and no source record until the ASUS ingest and router restart on `main` |
+| no `first_hop` row older than 60 s while the worker is up | `cloud-verify` | PASS, 0 |
+| outbox backlog by kind with `last_error` | `cloud-verify` | 170 not done: 169 `review_followup` pending + 1 processing, all `SourceUnavailable` (tasks from other hosts); inert under the worker's exhaustion rule |
+| dashboard on Maincloud shows the case within seconds | browser on `web/.env.local` pointed at Maincloud | PASS (22:25 PDT): a dashboard built from `main` with `web/.env.local` on Maincloud showed "Live", 9/9 agents online, and the case page for `CASE-LD-1025-1FF2EA39` with the first hop "Routed → Carrier Settlement · delivered by dispatch worker", the 22 s `process_carrier_invoice` task ending `approve`, and the Validator `review_output` ending `pass` |
+| every agent `/readyz` is 200 | `cloud-verify --readyz` on the Mac | PASS, 9/9 "200 live" |
+| enqueue-to-accept latency over at least 20 events | `cloud-verify` latency line (outbox `created_at` to accepted `dispatch.ts`, both module clock) | 1 event so far: 3.41 s; the 20-event figure waits for ASUS traffic |
 | 30-minute soak at two events per second (PRD) | simulator at that rate, then `cloud-verify --latency-window 30` | not yet run |
+
+Cloud SQL round trips during these runs: 97–152 ms median, 259–596 ms max, from the Cal Hacks
+network.
 
 **Local evidence (not cloud).** On the local server, the T5 run delivered `EVT-T5-live` from
 enqueue to `accepted` in **1.2 s** at the 1 s poll (outbox created 04:07:43.850Z, dispatch

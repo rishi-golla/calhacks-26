@@ -1065,3 +1065,76 @@
     animation: none;
   }
 }
+
+/* What the agent is doing right now: a pill above the mascot, replayed on each new step. */
+.au-doing {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px * var(--ts));
+  max-width: calc(200px * var(--ts));
+  padding: calc(3px * var(--ts)) calc(9px * var(--ts)) calc(3px * var(--ts)) calc(7px * var(--ts));
+  border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
+  border-radius: 999px;
+  background: rgba(4, 18, 27, 0.72);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: #fff;
+  font-family: var(--font-body);
+  font-size: calc(11px * var(--ts));
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+  translate: -50% 0;
+  animation: au-doing-in 260ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.au-doing > i {
+  flex: none;
+  width: calc(6px * var(--ts));
+  height: calc(6px * var(--ts));
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 6px var(--c);
+  animation: au-doing-dot 1.2s ease-in-out infinite;
+}
+.au-doing-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.au-doing-more {
+  flex: none;
+  padding: 0 calc(5px * var(--ts));
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-dim, rgba(255, 255, 255, 0.7));
+  font-size: calc(10px * var(--ts));
+  font-weight: 600;
+}
+.au-node.has-doing .au-ticker {
+  display: none;
+}
+.au-node.hidden .au-doing,
+.au-node.dim .au-doing {
+  opacity: 0.35;
+}
+@keyframes au-doing-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes au-doing-dot {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .au-doing,
+  .au-doing > i {
+    animation: none;
+  }
+}

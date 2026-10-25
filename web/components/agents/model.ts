@@ -3,9 +3,9 @@
  * case's path looks like, and how a batch of `LiveEvent`s becomes packets.
  * Pure functions over the snapshot.
  */
-import { isAgentId, type AgentId, type NodeId } from "@/lib/agents";
+import { AGENT_IDS, isAgentId, type AgentId, type NodeId } from "@/lib/agents";
 import { str, timestamp, type Snapshot } from "@/lib/data";
-import type { CaseView, LiveEvent } from "@/lib/ops";
+import { buildToolCalls, type AgentWorkload, type CaseView, type LiveEvent } from "@/lib/ops";
 import { edgeKey } from "./layout";
 import type { PacketSpec } from "./packet-engine";
 
@@ -157,6 +157,65 @@ export function packetsFor(events: LiveEvent[], cases: Map<string, CaseView>, wa
         break;
       }
     }
+  }
+  return out;
+}
+
+/* ------------------------------ activity ------------------------------ */
+
+/** Tool names whose plain-words form reads badly as "<verb>ing <rest>". */
+const TOOL_DOING: Record<string, string> = {
+  execute_current_skill: "Running workflow",
+  delegate_specialist: "Handing off",
+  integration_availability: "Checking integrations",
+  lookup_carrier_authority: "Looking up carrier authority",
+};
+const VERBS = new Set([
+  "read", "calculate", "match", "inspect", "check", "find", "audit", "verify", "review", "fetch", "search", "compute", "score",
+  "place", "send", "screen", "reconcile", "propose", "collect", "write", "parse", "draft", "email", "update", "post", "request",
+  "extract", "compare", "classify", "apply", "release", "notify", "chase", "list", "build", "record",
+]);
+
+/** "calculate_load_margin" → "Calculating load margin"; a name that does not start with a verb reads as plain words ("Friction review"). */
+export function toolDoing(name: string): string {
+  if (TOOL_DOING[name]) return TOOL_DOING[name];
+  const [verb, ...rest] = name.split("_");
+  const tail = rest.join(" ");
+  if (!VERBS.has(verb)) return `${name[0].toUpperCase()}${name.slice(1).replaceAll("_", " ")}`;
+  const ing = verb.endsWith("e") && !verb.endsWith("ee") ? `${verb.slice(0, -1)}ing` : `${verb}ing`;
+  return `${ing[0].toUpperCase()}${ing.slice(1)}${tail ? ` ${tail}` : ""}`;
+}
+
+/**
+ * What each working agent is doing right now, for the line above its mascot:
+ * the tool call it has open (newest first), "Thinking…" between tool calls,
+ * and how many other tasks it is working. Idle agents get nothing.
+ * Only the tool-call rows of live tasks are read, so this stays cheap per tick.
+ */
+export type Activity = { text: string; /** Other live tasks beyond the one shown. */ more: number };
+
+export function agentActivity(snapshot: Snapshot, workloads: Record<AgentId, AgentWorkload>): Partial<Record<AgentId, Activity>> {
+  const live = new Set<string>();
+  for (const id of AGENT_IDS) for (const t of workloads[id].activeTasks) live.add(t.taskId);
+  if (!live.size) return {};
+  const rows = snapshot.audit_event.filter((r) => r.kind === "tool_call" && live.has(str(r.task_id, "")));
+  const open = new Map<string, { name: string; status: string; at: number }>();
+  for (const c of buildToolCalls({ ...snapshot, audit_event: rows })) {
+    if (c.endedAt) continue;
+    const prev = open.get(c.taskId);
+    if (!prev || c.startedAt > prev.at) open.set(c.taskId, { name: c.name, status: c.status, at: c.startedAt });
+  }
+  const out: Partial<Record<AgentId, Activity>> = {};
+  for (const id of AGENT_IDS) {
+    const tasks = workloads[id].activeTasks;
+    if (!tasks.length) continue;
+    let best: { name: string; status: string; at: number } | undefined;
+    for (const t of tasks) {
+      const c = open.get(t.taskId);
+      if (c && (!best || c.at > best.at)) best = c;
+    }
+    const doing = !best ? "Thinking…" : best.status === "waiting" ? "Waiting" : toolDoing(best.name);
+    out[id] = { text: doing, more: tasks.length - 1 };
   }
   return out;
 }

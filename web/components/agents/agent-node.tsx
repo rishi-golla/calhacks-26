@@ -1,7 +1,8 @@
 "use client";
 /**
- * One node on the agent map: mascot, status ring, one line of counts, an
- * activity ticker (owned by the packet engine) and a short queue of case chips. Memoized; props are primitives so a 250 ms data
+ * One node on the agent map: mascot, status ring, one line of counts, what
+ * the agent is doing right now (above the mascot), an activity ticker (owned
+ * by the packet engine) and a short queue of case chips. Memoized; props are primitives so a 250 ms data
  * tick only re-renders the nodes whose numbers actually moved.
  */
 import { memo, useEffect, useRef, type CSSProperties } from "react";
@@ -17,6 +18,10 @@ export type NodeView = {
   id: NodeId;
   mood: Mood;
   bubble?: string;
+  /** What the agent is doing right now ("Calculating load margin"); absent when idle. */
+  doing?: string;
+  /** Other live tasks beyond the one `doing` describes. */
+  doingMore?: number;
   tone: NodeTone;
   /** Counters as [value, label] pairs flattened, e.g. "3|active|128|done". */
   counts: string;
@@ -49,7 +54,7 @@ const breathOffset = (id: string) => {
   return h % 4000;
 };
 
-function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, stretch, state, focus, order, selectedCase, onHover, onSelect, onCase }: Props) {
+function AgentNodeImpl({ id, mood, bubble, doing, doingMore = 0, tone, counts, chips, more, engine, stretch, state, focus, order, selectedCase, onHover, onSelect, onCase }: Props) {
   const meta = isAgentId(id) ? AGENT_META[id] : NODE_META[id as "intake" | "human"];
   const pos = nodePos(id);
   const size = MASCOT_SIZE[id];
@@ -78,7 +83,7 @@ function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, st
   } as CSSProperties;
 
   return (
-    <div className={`au-node ${tone} ${state} ${focus ? "focus" : ""} ${id === "human" ? "appear" : ""}`} style={style} data-node={id} data-stretch={stretch}>
+    <div className={`au-node ${tone} ${state} ${focus ? "focus" : ""} ${id === "human" ? "appear" : ""} ${doing ? "has-doing" : ""}`} style={style} data-node={id} data-stretch={stretch}>
       <button
         type="button"
         className="au-hit"
@@ -90,6 +95,18 @@ function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, st
         onClick={() => onSelect(id)}
       >
         <span className="au-fig" ref={bump}>
+          {/* Keyed by its text so each new step replays the entrance. */}
+          {doing && (
+            <span key={doing} className="au-doing" role="status">
+              <i aria-hidden />
+              <span className="au-doing-text">{doing}</span>
+              {doingMore > 0 && (
+                <b className="au-doing-more" aria-label={`and ${doingMore} more task${doingMore === 1 ? "" : "s"}`}>
+                  +{doingMore}
+                </b>
+              )}
+            </span>
+          )}
           <span className="au-glow" aria-hidden />
           <span className="au-spin" aria-hidden />
           <span className="au-ring" aria-hidden />

@@ -29,7 +29,7 @@ import { AgentPanel } from "./agent-panel";
 import { CaseRail, type RailMetrics } from "./case-rail";
 import { Edges, type LessonEdge } from "./edges";
 import { STAGE_H, STAGE_W, setStretch } from "./layout";
-import { casePath, edgeTraffic, matchesTab, packetsFor, shortCaseId, type KindTab } from "./model";
+import { agentActivity, casePath, edgeTraffic, matchesTab, packetsFor, shortCaseId, type KindTab } from "./model";
 import { PacketEngine } from "./packet-engine";
 import "./agents.css";
 
@@ -156,6 +156,7 @@ export default function AgentUniverse() {
   /* ---------- derived ---------- */
 
   const traffic = useMemo(() => [...edgeTraffic(snapshot, cases, now).values()], [snapshot, cases, now]);
+  const activity = useMemo(() => agentActivity(snapshot, workloads), [snapshot, workloads]);
   const handoffs5m = useMemo(() => traffic.reduce((s, e) => s + (e.from === "human" || e.to === "human" ? 0 : e.recent), 0), [traffic]);
 
   const toolCalls5m = useMemo(() => {
@@ -303,6 +304,7 @@ export default function AgentUniverse() {
     views.push({
       id: "intake",
       mood: transient.intake ?? (arriving ? "working" : "idle"),
+      doing: arriving ? "Routing" : undefined,
       tone: arriving ? "working" : "idle",
       counts: `${awaiting.length}|new`,
       ...chipsFor(awaiting.map((c) => c.caseId)),
@@ -318,7 +320,8 @@ export default function AgentUniverse() {
     views.push({
       id,
       mood,
-      bubble: mood === "talking" ? (liveCalls === 1 ? "On a call" : `${liveCalls} calls live`) : undefined,
+      doing: talking ? (liveCalls === 1 ? "On a call" : `${liveCalls} calls live`) : activity[id]?.text,
+      doingMore: talking ? 0 : (activity[id]?.more ?? 0),
       tone: toneFor(w.status, t),
       counts: `${w.active}|active|${w.done.toLocaleString()}|done${w.queued > 0 ? `|${w.queued}|queued` : ""}${w.stalled > 0 ? `|${w.stalled}|stalled` : ""}${lessonCount(id) > 0 ? `|${lessonCount(id)}|${id === "validator" ? "taught" : lessonCount(id) === 1 ? "lesson" : "lessons"}` : ""}`,
       ...chipsFor([...new Set(caseIds)]),

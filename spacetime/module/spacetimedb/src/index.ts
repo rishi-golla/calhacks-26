@@ -55,3 +55,5 @@ export const upsert_source_record = db.reducer(input, (ctx, { payload }) => run(
 export const ensure_agent_defaults = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'ensure_agent_defaults', ['admin'], op.ensureAgentDefaults));
 export const set_view_epoch = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'set_view_epoch', op.ANYONE, op.setViewEpoch));
 export const settle_cases = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'settle_cases', ['admin'], op.settleCases));
+export const import_history_batch = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'import_history_batch', ['admin'], op.importHistoryBatch));
+export const remove_imported_history = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'remove_imported_history', ['admin'], op.removeImportedHistory));

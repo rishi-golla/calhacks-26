@@ -53,6 +53,8 @@ import {
   readViewEpoch,
   scopeEvents,
   scopeSnapshot,
+  financeScope,
+  hasImportedHistory,
   showEarlierApplies,
   showEarlierValue,
   SHOW_EARLIER_KEY,
@@ -342,7 +344,8 @@ function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?:
   const caseList = useMemo(() => [...cases.values()].sort((a, b) => b.openedAt - a.openedAt), [cases]);
   const workloads = useMemo(() => buildWorkloads(snapshot, now, { since }), [snapshot, now, since]);
   const ops = useMemo(() => buildOpsMetrics(snapshot, cases, now), [snapshot, cases, now]);
-  const finance = useMemo(() => buildFinance(snapshot, now, { since }), [snapshot, now, since]);
+  const history = useMemo(() => hasImportedHistory(fullSnapshot), [fullSnapshot]);
+  const finance = useMemo(() => buildFinance(snapshot, now, financeScope(since, history)), [snapshot, now, since, history]);
   const attention = useMemo(() => buildAttention(snapshot, cases, now), [snapshot, cases, now]);
 
   const value = useMemo<OpsContext>(

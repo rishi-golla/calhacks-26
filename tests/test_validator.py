@@ -30,7 +30,8 @@ def test_cash_review_recomputes_values_and_missing_evidence_never_passes():
     review = deterministic_review(bundle)
     assert review.verdict == "issue"
     assert next(x for x in review.checks if x["name"] == "net_cash")["ok"] is False
-    assert review.lessons[0].scope == {"carrier_id": "carrier-varied", "skill": "assess_financial_impact"}
+    # A wrong net-cash figure is a method lesson: filed skill-wide, so every CFO assessment recalls it.
+    assert review.lessons[0].scope == {"skill": "assess_financial_impact"}
     bundle["artifact"]["evidence_refs"] = []
     assert deterministic_review(bundle).verdict == "issue"
 

@@ -37,6 +37,11 @@ FINANCIAL_AGENTS = {"carrier_ap", "shipper_ar", "controller", "cfo"}
 TERMINAL = {"completed", "failed", "canceled", "rejected"}
 ISSUE, ADVISORY = "issue", "advisory"
 # Checks that fail because the run or its evidence is missing, not because the agent decided wrongly.
+# Controls whose failure says something about this counterparty's records rather than the agent's method.
+CASE_SPECIFIC_CONTROLS = {"contract_tolerance", "duplicate_invoice_ids", "line_items_total", "hold_required",
+                          "hold_not_required", "short_pay_explained", "already_paid_in_full", "already_paid_flag",
+                          "awaiting_invoice_has_no_bill", "unverified_reason", "matched_deposit_ids", "unique_deposits",
+                          "approve_clear_of_duplicate_invoice"}
 RUN_FAILURES = {"target_terminal", "execution_completed", "source_available", "result_artifact",
                 "financial_source_complete"}
 TOLERANCE = Decimal(1) + Decimal(str(CONTRACT_TOLERANCE))
@@ -659,7 +664,11 @@ def deterministic_review(bundle: dict) -> ReviewOutput:
     judged = not any(item["name"] in RUN_FAILURES for item in failures)
     if failures and role in FINANCIAL_AGENTS and judged:
         # The same scope every reader derives (common.learning.memory_scope), so the lesson is found again.
-        scope = memory_scope(source, skill)
+        # A lesson about the agent's procedure (grounding, justification, bookkeeping) applies to every case of
+        # the skill; pinning it to this carrier and lane left 46 near-identical lessons that no new load recalled.
+        # Only a finding about this counterparty's own records keeps the narrow carrier/lane/claim scope.
+        case_specific = any(item["name"] in CASE_SPECIFIC_CONTROLS for item in failures)
+        scope = memory_scope(source if case_specific else None, skill)
         lessons.append(Lesson(agent=role, type="memory", scope=scope, text_or_diff=lesson_text(skill, failures),
                               confidence=0.9, evidence_refs=artifact.evidence_refs if artifact else []))
     return ReviewOutput(verdict="issue" if failures else "pass", checks=c.items, friction=friction,

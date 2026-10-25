@@ -26,8 +26,11 @@ def validator_lesson():
     bundle["artifact"]["findings"]["net_cash"] = 999.88
     lesson = deterministic_review(bundle).lessons[0]
     assert lesson.agent == "cfo" and lesson.type == "memory"
-    assert lesson.scope == {"carrier_id": "carrier-varied", "claim_type": "detention", "skill": SKILL}
-    return {"id": "lesson-carrier-varied", "agent": "cfo", "scope": json.dumps(lesson.scope),
+    # A wrong net-cash figure is a lesson about the method, so the Validator files it skill-wide. The
+    # read-path tests below still need a carrier-scoped row, so this fixture pins the scope itself.
+    assert lesson.scope == {"skill": SKILL}
+    scope = {"carrier_id": "carrier-varied", "claim_type": "detention", "skill": SKILL}
+    return {"id": "lesson-carrier-varied", "agent": "cfo", "scope": json.dumps(scope),
             "text": lesson.text_or_diff, "version": 1, "active": True}
 
 

@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Bell, Database, FlaskConical, Home, ListTree, Network, Play, RefreshCw, Zap } from "lucide-react";
+import { Activity, Bell, Database, FlaskConical, Home, ListTree, Network, Play, Receipt, RefreshCw, Zap } from "lucide-react";
 import { useOps, type DataMode } from "../data-provider";
 import { agentLabel } from "@/lib/agents";
 import { fmtAgo, fmtMoney, type AttentionItem } from "@/lib/ops";
@@ -12,6 +12,8 @@ import Intro from "./intro";
 
 const NAV = [
   { href: "/", label: "Finance", icon: Home, exact: true },
+  { href: "/invoices", label: "Invoices", icon: Receipt },
+  { href: "/operations", label: "Operations", icon: Activity },
   { href: "/agents", label: "Agents", icon: Network },
   { href: "/cases", label: "Cases", icon: ListTree },
   { href: "/demo", label: "Demo", icon: Play },
@@ -23,20 +25,12 @@ export default function Shell({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const title = NAV.find((n) => (n.exact ? pathname === n.href : pathname.startsWith(n.href)))?.label ?? "FreightLine";
   return (
-    <div className="fl">
+    <div className="fl theme-mono theme-glass">
       <Intro onDone={() => setReady(true)} />
       <div className="fl-shell" style={{ opacity: ready ? 1 : 0, transition: "opacity 400ms var(--ease-out)" }}>
         <aside className="fl-rail">
           <Link href="/" className="fl-brand" aria-label="FreightLine home">
-            <span className="fl-brand-mark" aria-hidden>
-              <i />
-              <i />
-              <i />
-            </span>
-            <span className="fl-brand-name">
-              FreightLine
-              <small>GOLDEN GATE FREIGHT</small>
-            </span>
+            <span className="fl-brand-name">FreightLine</span>
           </Link>
           <nav className="fl-nav" aria-label="Main">
             {NAV.map((item) => {

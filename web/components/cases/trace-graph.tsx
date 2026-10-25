@@ -10,9 +10,11 @@
  */
 import { memo, useMemo, useState, type CSSProperties } from "react";
 import { FileText } from "lucide-react";
+import { ApifyMark } from "@/components/apify";
 import { Mascot, type Mood } from "@/components/mascot";
 import { agentColor, agentLabel, NODE_META, skillLabel } from "@/lib/agents";
 import { fmtMoney } from "@/lib/ops";
+import { apifyEvidence, APIFY_OUTCOME, isApifyCall } from "@/lib/apify";
 import { str } from "@/lib/data";
 import {
   clock,
@@ -230,6 +232,17 @@ export const TraceGraph = memo(function TraceGraph(props: GraphProps) {
                 })}
                 {toolsAt(n, cursor).map(({ call, status: s }) => {
                   const y = layout.anchorY.get(`tc:${call.id}`) ?? layout.yOf(call.startedAt);
+                  const apify = apifyEvidence({ ...call, status: s === "running" ? "started" : call.status });
+                  if (apify)
+                    return (
+                      <g key={call.id} className={`ct-tick apify ${s}`}>
+                        <ApifyMark size={11} x={lane.lineX - 5.5} y={y - 5.5} />
+                        <title>
+                          Apify · {apify.check} · {APIFY_OUTCOME[apify.outcome].label}
+                          {call.durationMs ? ` · ${shortDur(call.durationMs)}` : ""}
+                        </title>
+                      </g>
+                    );
                   return (
                     <rect key={call.id} x={lane.lineX - 3.5} y={y - 3.5} width={7} height={7} className={`ct-tick tool ${s}`} style={{ fill: s === "failed" ? "#e40014" : color }}>
                       <title>
@@ -405,7 +418,10 @@ function StatusBadge({ node, status, clockAt }: { node: TraceNode; status: NodeS
 function TaskBody({ node, trace, status, statuses, cursor, clockAt }: CardProps) {
   const t = node.task!;
   const tools = toolsAt(node, cursor);
-  const shown = tools.slice(-3);
+  // The latest three calls, but an Apify call never hides behind "+N earlier": it is the external evidence.
+  const pinned = new Set(tools.filter(({ call }) => isApifyCall(call)).slice(-2));
+  const tail = new Set(tools.slice(-(3 - pinned.size)));
+  const shown = tools.filter((t) => pinned.has(t) || tail.has(t));
   const hidden = tools.length - shown.length;
   const docs = node.docs.filter((d) => d.at <= cursor).length;
   const pendingChildren = trace.edges
@@ -441,7 +457,8 @@ function TaskBody({ node, trace, status, statuses, cursor, clockAt }: CardProps)
         {hidden > 0 && <span className="ct-tool more">+{hidden} earlier</span>}
         {shown.length ? (
           shown.map(({ call, status: s }) => (
-            <span key={call.id} className={`ct-tool ${s}`}>
+            <span key={call.id} className={`ct-tool ${s} ${isApifyCall(call) ? "apify" : ""}`} title={isApifyCall(call) ? "Called Apify" : undefined}>
+              {isApifyCall(call) && <ApifyMark size={10} />}
               <span className="ct-tool-name">{call.name}</span>
               <span className="ct-tool-glyph">{s === "running" ? "…" : s === "completed" ? "✓" : "✗"}</span>
               <span className="ct-tool-dur">{s === "running" ? shortDur(clockAt - call.startedAt) : call.durationMs ? shortDur(call.durationMs) : ""}</span>

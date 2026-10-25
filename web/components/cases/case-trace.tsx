@@ -9,9 +9,11 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowLeft, ListOrdered, Network, Pause, Play, Radio, Rewind } from "lucide-react";
 import { useLiveEvents, useOps } from "@/components/data-provider";
+import { ApifyMark } from "@/components/apify";
 import Backdrop from "@/components/fx/backdrop";
 import { Mascot } from "@/components/mascot";
 import { agentColor } from "@/lib/agents";
+import { apifyEvidence, APIFY_OUTCOME, type ApifyOutcome } from "@/lib/apify";
 import { isImportedId } from "@/lib/history";
 import { fmtMoney } from "@/lib/ops";
 import { PriorityChip, StatusChip } from "./case-explorer";
@@ -214,6 +216,15 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
   const status = c?.status ?? (trace.open ? "in_progress" : "resolved");
   const imported = c?.imported ?? isImportedId(caseId);
   const statusAtCursor = replay ? (c?.resolvedAt && c.resolvedAt <= cursor ? "resolved" : "in_progress") : status;
+  const apifyChecks = tasks.flatMap((n) =>
+    n.tools
+      .filter((call) => call.startedAt <= cursor)
+      .map((call) => ({ node: n.id, evidence: apifyEvidence({ ...call, status: call.endedAt && call.endedAt <= cursor ? call.status : "started" }) }))
+      .filter((x) => x.evidence),
+  );
+  const apifyTally = Object.entries(
+    apifyChecks.reduce<Partial<Record<ApifyOutcome, number>>>((acc, x) => ({ ...acc, [x.evidence!.outcome]: (acc[x.evidence!.outcome] ?? 0) + 1 }), {}),
+  ).map(([o, n]) => `${n} ${APIFY_OUTCOME[o as ApifyOutcome].label.toLowerCase()}`);
 
   return (
     <div className={`ct-page ${simulated ? "is-sim" : ""}`}>
@@ -228,6 +239,16 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
             </span>
             {c && <PriorityChip priority={c.priority} />}
             <StatusChip status={statusAtCursor} active={replay ? 0 : (c?.activeTasks ?? 0)} />
+            {apifyChecks.length > 0 && (
+              <button
+                className="fl-chip outline apify-case-chip"
+                onClick={() => selectFromPanel(apifyChecks[0].node)}
+                title={`Agents checked this case against public records through Apify: ${apifyTally.join(", ")}. Open the call.`}
+              >
+                <ApifyMark size={12} />
+                Apify · {apifyChecks.length} check{apifyChecks.length === 1 ? "" : "s"}
+              </button>
+            )}
             {replay && <span className="fl-chip outline agent">Replay</span>}
             {imported && (
               <span className="fl-chip outline ct-imported" title="From the brokerage's books before FreightLine ran. No agent worked this case.">

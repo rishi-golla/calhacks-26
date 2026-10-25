@@ -239,6 +239,8 @@ export type ToolCallView = {
   startedAt: number;
   endedAt: number;
   model: string;
+  /** `evidence_refs` of the call's audit rows (e.g. `apify://runs/<id>`), which survive a trimmed result. */
+  evidenceRefs?: string[];
 };
 
 export type TimelineEvent = {
@@ -440,6 +442,7 @@ export function buildToolCalls(snapshot: Snapshot, taskId?: string): ToolCallVie
       startedAt: prev ? Math.min(prev.startedAt, at) : at,
       endedAt: ["completed", "failed", "blocked"].includes(status) ? at : (prev?.endedAt ?? 0),
       model: str(body.model, str(row.model_used, "")),
+      evidenceRefs: [...new Set([...(prev?.evidenceRefs ?? []), ...asStringArray(row.evidence_refs)])],
     };
     if (prev && at < prev.startedAt) view.status = prev.status;
     calls.set(id, view);

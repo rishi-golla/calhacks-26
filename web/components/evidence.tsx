@@ -18,7 +18,9 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ExternalLink, FileText, Mail, X } from "lucide-react";
+import { ApifyRunLink } from "@/components/apify";
 import { DecryptBlock } from "@/components/decrypt-block";
+import { apifyRunId } from "@/lib/apify";
 import { compactValue, documentKindLabel, evidenceUrl, extractedFields, parseEvidenceRef } from "@/lib/evidence";
 
 /** Nearest themed ancestor; the trace drawer first so the agent accent carries into the viewer. */
@@ -28,6 +30,8 @@ export function EvidenceChip({ evidenceRef, className = "" }: { evidenceRef: str
   const parsed = parseEvidenceRef(evidenceRef);
   const [host, setHost] = useState<Element | null>(null);
   const button = useRef<HTMLButtonElement>(null);
+  const apifyRun = apifyRunId(evidenceRef);
+  if (apifyRun) return <ApifyRunLink runId={apifyRun} className={`ev-chip ${className}`} />;
   if (!parsed.previewable)
     return (
       <span className={`ev-chip static ${className}`} title="no preview for this source">

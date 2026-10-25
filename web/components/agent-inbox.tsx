@@ -62,6 +62,8 @@ import {
 } from "@/lib/agent-inbox";
 import { markMessagesRead, type ReadMarkers } from "@/lib/inbox-read-state";
 import { useLive } from "./live-provider";
+import { apifyEvidence, APIFY_OUTCOME } from "@/lib/apify";
+import { ApifyFinding, ApifyMark } from "./apify";
 import { EvidenceChip } from "./evidence";
 import { CheckList, Workings } from "./workings";
 import "./agent-inbox.css";
@@ -204,6 +206,7 @@ function Message({
   openDetails: (message: AgentMessage) => void;
   filterCase: (id: string) => void;
 }) {
+  const apify = message.toolCall ? apifyEvidence({ ...message.toolCall, evidenceRefs: message.evidenceRefs }) : null;
   return (
     <article
       className={`ai-message ai-message-${message.kind}`}
@@ -251,8 +254,14 @@ function Message({
           <h3>{message.title}</h3>
           {message.toolCall ? (
             <div className="ai-tool-summary" aria-live="polite">
+              {apify ? <ApifyMark size={13} title="Called Apify" /> : null}
               <code>{message.toolCall.name}</code>
               <ToolStatus status={message.toolCall.status} />
+              {apify && apify.outcome !== "running" ? (
+                <span className={`ai-source-tag apify ${APIFY_OUTCOME[apify.outcome].tone}`}>
+                  Apify · {APIFY_OUTCOME[apify.outcome].label}
+                </span>
+              ) : null}
               {message.toolCall.durationMs !== undefined ? <span className="ai-tool-duration">
                 {durationLabel(message.toolCall.durationMs)}
               </span> : null}
@@ -342,6 +351,7 @@ export default function AgentInbox({
     ? allMessages.find((message) => message.id === inspectedMessage.id) || inspectedMessage
     : null;
   const inspectedId = details?.id;
+  const detailsApify = details?.toolCall ? apifyEvidence({ ...details.toolCall, evidenceRefs: details.evidenceRefs }) : null;
   const inspectedRecord =
     details?.details && typeof details.details === "object" && !Array.isArray(details.details)
       ? (details.details as Record<string, unknown>)
@@ -1008,6 +1018,7 @@ export default function AgentInbox({
               </>
             ) : null}
           </dl>
+          {details.toolCall && detailsApify ? <ApifyFinding evidence={detailsApify} /> : null}
           {details.toolCall ? <section className="ai-tool-data" aria-label="Tool input and output">
             <h3>Arguments</h3>
             <pre>{JSON.stringify(details.toolCall.arguments, null, 2)}</pre>

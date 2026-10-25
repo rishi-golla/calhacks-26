@@ -182,12 +182,14 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
         return tools
 
     for turn_index in range(MAX_TURNS):
-        async def infer_turn(artifact=artifact, turn_index=turn_index):
+        turn_tools = offered(artifact, turn_index)
+
+        async def infer_turn(artifact=artifact, turn_index=turn_index, turn_tools=turn_tools):
             # An incomplete turn executed nothing, so asking again is safe; the provider cuts a turn short
             # for its own reasons (output budget, an undocumented message cap) a few percent of the time.
             for attempt in range(INCOMPLETE_TURN_RETRIES + 1):
                 try:
-                    return await model_turn(config, system, history, offered(artifact, turn_index),
+                    return await model_turn(config, system, history, turn_tools,
                                             evidence_refs=sorted(refs), require_tool=artifact is None)
                 except ProviderError as error:
                     if attempt >= INCOMPLETE_TURN_RETRIES or not str(error).startswith("tool response incomplete"):
@@ -220,13 +222,15 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
                 raise ProviderError("model tool call budget exhausted")
             await _audit(agent, env, task_id, call, status="started", model=model)
 
-            async def execute_call(call=call, artifact=artifact):
+            async def execute_call(call=call, artifact=artifact, allowed=frozenset(t["name"] for t in turn_tools)):
                 started = time.monotonic()
                 status = "completed"
                 canonical_artifact = None
                 spec = registry.get(call["name"])
                 if spec is None:
                     result, status = {"error": "tool_not_permitted", "executed": False}, "blocked"
+                elif call["name"] not in allowed:
+                    result, status = {"error": "tool_not_offered_this_turn", "executed": False}, "blocked"
                 elif call["name"] == "execute_current_skill" and artifact is not None:
                     result, status = {"error": "assigned_skill_already_completed", "executed": False}, "blocked"
                 else:

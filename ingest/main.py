@@ -710,6 +710,29 @@ class DirectoryWatch:
             self.task.cancel()
 
 
+async def _consume_once(r, db: sqlite3.Connection, exporter: source_export.Exporter,
+                        mirror: spacetime_mirror.Mirror, watch: "DirectoryWatch") -> None:
+    """One pass: drain this consumer's unacked entries, flush the export, then block briefly for new arrivals."""
+    watch.check()
+    while True:
+        pending = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: "0"}, count=10)
+        entries = [entry for _stream, batch in pending or [] for entry in batch]
+        if not entries:
+            break
+        failed = False
+        for entry_id, values in entries:
+            if not await _process_entry(r, db, entry_id, values, exporter, mirror):
+                failed = True
+        if failed:
+            await asyncio.sleep(1)
+    # Catch up on state that opened no case (documents, deposits, TMS) before blocking for more.
+    exporter.flush(db)
+    response = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: ">"}, count=10, block=2000)
+    for _stream, entries in response or []:
+        for entry_id, values in entries:
+            await _process_entry(r, db, entry_id, values, exporter, mirror)
+
+
 async def main() -> None:
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     db = connect()
@@ -724,25 +747,17 @@ async def main() -> None:
         except redis.ResponseError as exc:
             if "BUSYGROUP" not in str(exc):
                 raise
+        backoff = 1.0
         while True:
-            watch.check()
-            while True:
-                pending = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: "0"}, count=10)
-                entries = [entry for _stream, batch in pending or [] for entry in batch]
-                if not entries:
-                    break
-                failed = False
-                for entry_id, values in entries:
-                    if not await _process_entry(r, db, entry_id, values, exporter, mirror):
-                        failed = True
-                if failed:
-                    await asyncio.sleep(1)
-            # Catch up on state that opened no case (documents, deposits, TMS) before blocking for more.
-            exporter.flush(db)
-            response = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: ">"}, count=10, block=2000)
-            for _stream, entries in response or []:
-                for entry_id, values in entries:
-                    await _process_entry(r, db, entry_id, values, exporter, mirror)
+            # A Redis hiccup (read timeout, dropped connection) must not end the consumer: entries it was
+            # handling stay unacked in the group and are redelivered, so the iteration is safe to repeat.
+            try:
+                await _consume_once(r, db, exporter, mirror, watch)
+                backoff = 1.0
+            except redis.RedisError as exc:
+                log.warning("ingest consumer %s; retrying in %.0fs", type(exc).__name__, backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
     finally:
         watch.stop()
         db.close()

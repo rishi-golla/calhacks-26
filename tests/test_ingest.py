@@ -635,3 +635,42 @@ def test_offline_40_loads_follow_w1_routing_contract(world, tmp_path, monkeypatc
     assert found_routing_numbers
     assert all(bank.aba_valid(number) for number in found_routing_numbers)
     assert all(10 <= len(number) <= 12 for number in found_account_numbers)
+
+
+async def test_consumer_survives_a_redis_read_timeout():
+    """The loop retries with backoff instead of exiting; unacked entries are redelivered by the group."""
+    import sqlite3
+
+    import redis.exceptions
+
+    from ingest import main as ingest_main
+    calls = []
+    sleeps = []
+
+    async def consume(*_args):
+        calls.append(1)
+        if len(calls) == 1:
+            raise redis.exceptions.TimeoutError("Timeout reading from localhost:6379")
+        raise asyncio.CancelledError  # end the test after the retry
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+
+    class Client:
+        async def xgroup_create(self, *_a, **_k):
+            pass
+
+        async def aclose(self):
+            pass
+
+    original = (ingest_main._consume_once, ingest_main.asyncio.sleep, ingest_main.redis.from_url, ingest_main.connect)
+    ingest_main._consume_once = consume
+    ingest_main.asyncio.sleep = sleep
+    ingest_main.redis.from_url = lambda *_a, **_k: Client()
+    ingest_main.connect = lambda: sqlite3.connect(":memory:")
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await ingest_main.main()
+    finally:
+        ingest_main._consume_once, ingest_main.asyncio.sleep, ingest_main.redis.from_url, ingest_main.connect = original
+    assert len(calls) == 2 and sleeps == [1.0]

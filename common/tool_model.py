@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
 
@@ -13,6 +14,9 @@ from common.providers import Assessment, ProviderConfig, ProviderConfigurationEr
 MAX_INPUT_BYTES = 350_000
 MAX_RESPONSE_BYTES = 200_000
 MAX_ARGUMENT_BYTES = 12_000
+# Reasoning models spend output tokens before the visible answer; 1,800 left about a third of live tool turns
+# incomplete on gpt-6-luna. The budget bounds cost per turn, not correctness, so it is an operator setting.
+MAX_OUTPUT_TOKENS = max(256, min(32_000, int(os.getenv("TOOL_MAX_OUTPUT_TOKENS", "8000"))))
 
 
 def strict_json(text: str) -> Any:
@@ -50,7 +54,7 @@ async def model_turn(config: ProviderConfig, system: str, history: list[dict], t
         "model": config.model, "store": False, "instructions": system,
         "input": history, "tools": tools,
         "tool_choice": "required" if require_tool else ("auto" if tools else "none"),
-        "parallel_tool_calls": False, "max_output_tokens": 1800,
+        "parallel_tool_calls": False, "max_output_tokens": MAX_OUTPUT_TOKENS,
         "include": ["reasoning.encrypted_content"],
         "text": {"format": {"type": "json_schema", "name": "freight_tool_assessment",
                             "strict": True, "schema": schema}},
@@ -68,7 +72,10 @@ async def model_turn(config: ProviderConfig, system: str, history: list[dict], t
     if len(json.dumps(result, allow_nan=False).encode()) > MAX_RESPONSE_BYTES:
         raise ProviderError("tool response exceeds size limit")
     if result.get("status") != "completed":
-        raise ProviderError("tool response incomplete")
+        details = result.get("incomplete_details") if isinstance(result.get("incomplete_details"), dict) else {}
+        reason = details.get("reason")
+        raise ProviderError(f"tool response incomplete ({reason})" if isinstance(reason, str) and reason else
+                            "tool response incomplete")
     output = result.get("output")
     if not isinstance(output, list) or any(not isinstance(item, dict) for item in output):
         raise ProviderError("invalid tool response output")

@@ -31,7 +31,9 @@ DATABASE = "at350-freightops"
 PUBLISHER = "c2005175965c7ab35b8367adc2064a7bc96cacb0b0b796ddf81377fc02b50f1f"
 FIXTURE_HUMAN = "human:operator"
 ACTORS = (*SERVICES, FIXTURE_HUMAN)
-ADMIN_REDUCERS = {"grant_role", "set_period", "ensure_agent_defaults", "settle_cases"}
+# import_history_batch / remove_imported_history: scripts.seed_history (HIST- rows only, enforced by the module).
+ADMIN_REDUCERS = {"grant_role", "set_period", "ensure_agent_defaults", "settle_cases",
+                  "import_history_batch", "remove_imported_history"}
 PERIODS_AHEAD = 18
 # Observed Maincloud round trips reach 1 s; the client's 5 s default is too tight under load.
 CLOUD_TIMEOUT_SECONDS = 15

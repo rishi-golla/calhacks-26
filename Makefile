@@ -8,7 +8,7 @@ EVALUATOR_INTERVAL_S ?= 30
 ENV_FILE ?= .env
 export ENV_FILE
 RUN := $(PY) -m scripts.with_env --
-.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo w2-check world sim ingest source verify-data review-worker evaluator cloud-verify live-agents live-demo live-gateway
+.PHONY: setup infra harness agents gateway router web test lint demo spacetime-setup spacetime-start spacetime-build spacetime-publish spacetime-generate spacetime-test spacetime-demo seed-history w2-check world sim ingest source verify-data review-worker evaluator cloud-verify live-agents live-demo live-gateway
 
 setup:            ## create venv + install
 	python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -69,6 +69,8 @@ spacetime-test:    ## real reducers against a fresh local test database
 	$(PY) -m scripts.spacetime_smoke --server $(SPACETIME_URL)
 spacetime-demo:    ## explicitly seed labeled W2 demonstration data
 	$(PY) -m scripts.spacetime_demo --server $(SPACETIME_URL) --database $(SPACETIME_DB)
+seed-history:      ## import ~90 days of resolved company history (admin); HISTORY_ARGS="--dry-run|--docs|--undo|--seed N|--days N|--loads N"
+	$(PY) -m scripts.seed_history --server $(SPACETIME_URL) --database $(SPACETIME_DB) $(HISTORY_ARGS)
 w2-check:          ## Python, module, and production dashboard checks
 	$(MAKE) lint test
 	cd spacetime/module/spacetimedb && npm test

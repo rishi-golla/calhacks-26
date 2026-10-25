@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -47,6 +48,14 @@ PEER_REFUSALS = (InvalidParamsError, InvalidRequestError, MethodNotFoundError, U
 CLOSED_DEPENDENCY_STATES = frozenset({"failed", "canceled", "rejected"})
 # A reserved child that its service never admitted is closed this long after its delegation deadline.
 RESERVATION_GRACE_S = 60.0
+_PRIVATE = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|\+?\d[\d ()-]{6,}\d|\b(?:sk|pk)-[A-Za-z0-9_-]{8,}\b")
+
+
+def refusal_text(error: Exception) -> str:
+    """A peer's refusal as safe, bounded text. Its first line only: a validation error's later lines echo the
+    refused input, which can carry case facts. Contact details and keys are redacted all the same."""
+    lines = str(error).splitlines()
+    return _PRIVATE.sub("[redacted]", lines[0] if lines else type(error).__name__)[:150]
 
 
 def minimal_state_projection(payload: dict, target: str) -> dict:
@@ -670,11 +679,11 @@ class FreightAgent(AgentExecutor):
     async def refuse_dependency(self, dependency: dict, error: Exception) -> ChildFailed:
         """The child's service refused this delegation, so it will never run: close the reservation (the child's
         service then records its reserved row as failed) and report the refusal to the parent's workflow."""
-        reason = f"{dependency['target']} refused the delegation: {str(error)[:150]}"
+        reason = f"{dependency['target']} refused the delegation: {refusal_text(error)}"
         await self.store.close_dependency(dependency["id"], "rejected",
                                           [{"error": "delegation_refused", "detail": reason}])
         log.warning("%s delegation %s was refused by %s: %s", self.name, dependency["child_id"],
-                    dependency["target"], str(error)[:150])
+                    dependency["target"], refusal_text(error))
         return ChildFailed("rejected", reason)
 
     async def fanout(self, envelopes: list[TaskEnvelope], meta: DelegationMeta,

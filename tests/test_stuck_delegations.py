@@ -305,3 +305,10 @@ async def test_failed_task_rows_say_why(tmp_path, dashboard):
         fallback = minimal_state_projection({**failed, "write_id": "w"}, "target")
         assert fallback["artifact_json"]["findings"] == {"details_omitted": True, "error": "TimeoutError",
                                                          "detail": "task deadline of 300s exceeded"}
+
+
+def test_a_refusal_keeps_only_its_first_line_and_no_contact_details():
+    from common.runtime import refusal_text
+    error = InvalidParamsError(message="1 validation error for TaskEnvelope\nsubject\n  input_value={'phone': 'x'}")
+    assert refusal_text(error) == "1 validation error for TaskEnvelope"
+    assert refusal_text(ValueError("call +1 415 555 0123 or a@b.com")) == "call [redacted] or [redacted]"

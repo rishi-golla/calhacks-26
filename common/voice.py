@@ -258,9 +258,24 @@ async def call_preflight(env: TaskEnvelope, meta: DelegationMeta) -> str | None:
     return None
 
 
+def attempt_id_for(task_id: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"freightops:call:{task_id}"))
+
+
+async def call_attempt_exists(task_id: str) -> bool:
+    """Whether this task already recorded a call attempt (prepared, dialed or finished). Such a call is resumed by
+    start_call, never re-decided by call_preflight."""
+    store = CallStore()
+    try:
+        await store.initialize()
+        return await store.get(attempt_id_for(task_id)) is not None
+    finally:
+        await store.close()
+
+
 async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> tuple[str, CallResult | None]:
     request = _requested_call(env, meta)
-    attempt_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"freightops:call:{task_id}"))
+    attempt_id = attempt_id_for(task_id)
     if mode() == "live":
         replay_store = CallStore()
         try:
@@ -317,11 +332,11 @@ async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> t
                 **({"team_demo_authorized": True} if hours_grant else {}),
             })
         except SpacetimeHTTPError as error:
-            from common.runtime import projection_rejected
-            if not projection_rejected(error.status_code):
-                raise
-            # W2 refused to queue this call (routing allowlist, one call per company per hour, directory, human
-            # takeover). Nothing was dialed; the same attempt would be refused again, so it ends unreached.
+            from common.spacetime_client import REDUCER_REFUSED_STATUS
+            if error.status_code != REDUCER_REFUSED_STATUS:
+                raise  # authorization or endpoint trouble can be repaired: the prepared attempt retries
+            # W2's reducer refused to queue this call (routing allowlist, one call per company per hour, directory,
+            # human takeover). Nothing was dialed; the same attempt would be refused again, so it ends unreached.
             reason = getattr(error, "reason", "") or f"SpacetimeDB HTTP {error.status_code}"
             result = CallResult(reached=False, intended_to=routed.intended_to, routed_to=routed.routed_to,
                                 findings={"end_reason": "ledger_refused", "reason": reason[:200],

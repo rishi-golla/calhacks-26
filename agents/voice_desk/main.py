@@ -5,7 +5,7 @@ from common.outreach import OutreachBlocked
 from common.runtime import FreightAgent
 from common.server import serve
 from common.source_repository import NotInDirectory, SourceRepository, SourceUnavailable
-from common.voice import CallRefused, call_preflight, redact_transcript, start_call
+from common.voice import CallRefused, call_attempt_exists, call_preflight, redact_transcript, start_call
 
 
 def not_reachable(reason: str) -> ResultArtifact:
@@ -22,8 +22,11 @@ class VoiceDeskAgent(FreightAgent):
         from common.providers import mode
         if mode() == "live":
             if env.task_type == "place_call":
-                # Recorded once, so a resumed call wait never re-decides reachability mid-call.
-                blocked = await self.step(task_id, "call_preflight", lambda: call_preflight(env, meta))
+                # Decided once, before any attempt: a call already started (including one parked before this check
+                # existed) resumes through start_call instead of being re-decided mid-call.
+                async def preflight():
+                    return None if await call_attempt_exists(task_id) else await call_preflight(env, meta)
+                blocked = await self.step(task_id, "call_preflight", preflight)
                 if blocked:
                     return not_reachable(blocked)
             from common.tool_loop import run_tool_loop

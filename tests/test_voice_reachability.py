@@ -161,3 +161,42 @@ async def test_verification_without_a_possible_callback_is_unverified(monkeypatc
         assert result.findings["bank_details_changed"] is False and "P-004" in result.policy_ids
     finally:
         await agent.store.close()
+
+
+@pytest.mark.parametrize("status", [401, 403, 400])
+async def test_a_repairable_ledger_refusal_keeps_the_attempt_retryable(configured, monkeypatch, status):
+    env, _ = configured
+    monkeypatch.setattr(voice.SpacetimeClient, "mutate", AsyncMock(side_effect=SpacetimeHTTPError(status, mutation=True)))
+    with pytest.raises(SpacetimeHTTPError):
+        await voice.start_call(env, META, "task")
+    store = voice.CallStore()
+    try:
+        row = await store.get(voice.attempt_id_for("task"))
+        assert row["status"] == "prepared" and not row["result"]
+    finally:
+        await store.close()
+
+
+async def test_a_started_call_is_resumed_not_re_decided(configured, monkeypatch, tmp_path):
+    """A call parked before the preflight existed has no cached decision: it must resume, even after hours."""
+    env, targets = configured
+    targets.append({"phone": ROUTED, "enabled": True})
+    store = voice.CallStore()
+    await store.initialize()
+    await store.prepare(voice.attempt_id_for("task"), env, "task", {"intended_to": "x", "routed_to": ROUTED}, "tok")
+    await store.set(voice.attempt_id_for("task"), status="ringing", provider_id="ac_test")
+    await store.close()
+
+    def closed(_company):
+        raise voice.CallRefused("outreach is outside the configured calling hours")
+    monkeypatch.setattr(voice, "check_call_window", closed)
+    # The tool loop stands in for the resumed workflow (start_call replays the ringing attempt).
+    tool_loop = AsyncMock(return_value=not_reachable("resumed"))
+    monkeypatch.setattr("common.tool_loop.run_tool_loop", tool_loop)
+    agent = VoiceDeskAgent(store=RuntimeStore(f"sqlite+aiosqlite:///{tmp_path}/runtime.sqlite3"))
+    try:
+        await agent.handle(env, META, "task", None)
+        tool_loop.assert_awaited_once()
+        assert (await agent.store.get_step("task", "call_preflight"))["value"] is None
+    finally:
+        await agent.store.close()

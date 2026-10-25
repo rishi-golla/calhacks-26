@@ -14,7 +14,7 @@ const primaryKeys: Record<string, string> = {
   change_set: 'id', cell_change: 'id', doc_read: 'id', review: 'id', agent_memory: 'id', instruction_version: 'id',
   flag: 'id', company: 'id', contact: 'id', delegation_edge: 'id', invoice: 'id', accounting_period: 'period',
   principal: 'identity', cash_forecast: 'id', journal_request: 'id', routing_outbox: 'id', memory_revision: 'id',
-  demo_target: 'phone', approval_secret: 'approval_id', write_receipt: 'id', chain_head: 'name',
+  demo_target: 'phone', approval_secret: 'approval_id', write_receipt: 'id', chain_head: 'name', source_record: 'id',
 };
 const identities: Record<string, string> = {};
 ['admin', 'human', 'controller', 'carrier_ap', 'shipper_ar', 'cfo', 'risk', 'verification', 'voice_desk', 'validator', 'documents', 'ingest', 'harness', 'evaluator', 'router', 'stranger'].forEach((name, i) => identities[name] = (i + 1).toString(16).padStart(64, '0'));
@@ -495,4 +495,270 @@ test('dispatch records remote admission, retries and triage with router-only aut
   }
   h.run('router', 'record_dispatch', ['router'], op.recordDispatch, { ...payload, event_id: 'triage' });
   assert.equal(h.row('dispatch', 'triage').status, 'accepted');
+});
+
+const router = (h: Harness, action: string, handler: Parameters<typeof op.execute>[4], payload: Payload) =>
+  h.run('router', action, ['router'], handler, payload);
+function firstHop(overrides: Payload = {}): Payload {
+  const base: Payload = {
+    event_id: 'event-1', case_id: 'CASE-1', agent: 'carrier_ap', skill: 'process_carrier_invoice',
+    envelope: { task_type: 'process_carrier_invoice', case_id: 'CASE-1', subject: { invoice_id: 'INV-CASE-1' }, priority: 'P1' },
+    queue_ms: 120, policy_version: 'first-hop-v1', reason: 'Known invoice event',
+  };
+  return { ...base, ...overrides };
+}
+const enqueueHop = (h: Harness, payload: Payload) => router(h, 'enqueue_first_hop', op.enqueueFirstHop, payload);
+const dispatch = (h: Harness, payload: Payload) => router(h, 'record_dispatch', op.recordDispatch, payload);
+
+test('first hop writes its outbox row and queued dispatch in one router change set', () => {
+  const h = new Harness(); h.open();
+  for (const actor of ['ingest', 'harness', 'carrier_ap', 'admin', 'stranger']) {
+    assert.throws(() => h.run(actor, 'enqueue_first_hop', ['router'], op.enqueueFirstHop, { ...firstHop(), write_id: `first_hop:${actor}` }), /role|provisioned/);
+  }
+  const count = h.rows('change_set').length;
+  enqueueHop(h, { ...firstHop(), write_id: 'first_hop:event-1' });
+  const { event_id, case_id, skill, agent, envelope, queue_ms, policy_version } = firstHop();
+  assert.deepEqual(h.row('routing_outbox', 'first_hop:event-1'), {
+    id: 'first_hop:event-1', kind: 'first_hop', target_agent: 'carrier_ap', case_id: 'CASE-1', task_id: '',
+    payload_json: canonical({ event_id, case_id, skill, agent, envelope, queue_ms, policy_version }),
+    status: 'pending', attempts: 0, created_at: h.row('routing_outbox', 'first_hop:event-1').created_at,
+    updated_at: h.row('routing_outbox', 'first_hop:event-1').created_at, claimed_by: '', lease_expires_at: '', last_error: '',
+  });
+  const row = h.row('dispatch', 'event-1');
+  assert.equal(row.status, 'queued');
+  assert.equal(row.task_id, '');
+  assert.equal(row.agent, 'carrier_ap');
+  assert.equal(row.reason, 'Known invoice event');
+  assert.equal(row.queue_ms, 120);
+  assert.equal(h.rows('change_set').length, count + 1);
+  const change = h.rows('change_set').at(-1) as Row;
+  assert.equal(change.case_id, 'CASE-1');
+  assert.equal(change.action, 'enqueue_first_hop');
+  assert.equal(change.write_id, 'first_hop:event-1');
+  assert.equal(change.agent, 'router');
+  const sheets = new Set(h.rows('cell_change').filter(x => x.change_set_id === change.id).map(x => x.sheet));
+  assert.deepEqual([...sheets].sort(), ['dispatch', 'routing_outbox']);
+  assert.equal(h.rows('audit_event').at(-1)?.change_set_id, change.id);
+});
+
+test('first hop replays as a no-op and rejects changed contents for the same event', () => {
+  const h = new Harness(); h.open();
+  const payload = enqueueHop(h, { ...firstHop(), write_id: 'first_hop:event-1' });
+  const count = h.rows('change_set').length;
+  enqueueHop(h, payload);
+  assert.equal(h.rows('change_set').length, count);
+  assert.throws(() => enqueueHop(h, { ...payload, queue_ms: 121 }), /write_id was reused/);
+  assert.throws(() => enqueueHop(h, { ...payload, write_id: 'first_hop:event-1:again', agent: 'risk', skill: 'investigate_charge',
+    envelope: { task_type: 'investigate_charge', case_id: 'CASE-1' } }), /different contents/);
+  assert.throws(() => enqueueHop(h, { ...payload, write_id: 'first_hop:event-1:again', queue_ms: 999 }), /different contents/);
+  // The same contents under a new write ID re-observes the queued event without a second outbox row.
+  enqueueHop(h, { ...payload, write_id: 'first_hop:event-1:again' });
+  assert.equal(h.rows('routing_outbox').filter(x => x.kind === 'first_hop').length, 1);
+  assert.equal(h.row('dispatch', 'event-1').status, 'queued');
+});
+
+test('first hop refuses missing and human-owned cases, foreign skills and mismatched envelopes', () => {
+  const h = new Harness(); h.open();
+  assert.throws(() => enqueueHop(h, firstHop({ case_id: 'CASE-MISSING', envelope: { task_type: 'process_carrier_invoice', case_id: 'CASE-MISSING' } })), /case does not exist/);
+  const invalid: [Payload, RegExp][] = [
+    [{ skill: 'investigate_charge', envelope: { task_type: 'investigate_charge', case_id: 'CASE-1' } }, /does not belong/],
+    [{ agent: 'router' }, /agent must be one of/],
+    [{ agent: 'documents' }, /does not belong/],
+    [{ envelope: { task_type: 'propose_payment', case_id: 'CASE-1' } }, /envelope case and task type/],
+    [{ envelope: { task_type: 'process_carrier_invoice', case_id: 'CASE-2' } }, /envelope case and task type/],
+    [{ envelope: [] }, /envelope must be a JSON object/],
+    [{ envelope: 'not an object' }, /envelope must be a JSON object/],
+    [{ queue_ms: -1 }, /u32/],
+    [{ policy_version: '' }, /policy_version/],
+    [{ reason: '' }, /reason/],
+  ];
+  for (const [overrides, error] of invalid) assert.throws(() => enqueueHop(h, firstHop(overrides)), error);
+  h.run('human', 'update_case', ['human'], op.updateCase, { case_id: 'CASE-1', status: 'human_owned' });
+  assert.throws(() => enqueueHop(h, firstHop()), /human_owned/);
+  assert.equal(h.rows('routing_outbox').filter(x => x.kind === 'first_hop').length, 0);
+  assert.equal(h.rows('dispatch').length, 0);
+});
+
+test('first hop cannot re-queue an accepted event and leaves no outbox row when refused', () => {
+  const h = new Harness(); h.open();
+  dispatch(h, { event_id: 'event-1', case_id: 'CASE-1', agent: 'carrier_ap', skill: 'process_carrier_invoice', task_id: 'task-1',
+    status: 'accepted', reason: 'Direct A2A', queue_ms: 5, policy_version: 'first-hop-v1' });
+  assert.throws(() => enqueueHop(h, firstHop()), /cannot return to queued/);
+  assert.equal(h.rows('routing_outbox').length, 0);
+  assert.equal(h.row('dispatch', 'event-1').status, 'accepted');
+  // A triage record can still be resolved into a first hop.
+  dispatch(h, { event_id: 'event-2', status: 'triage', reason: 'unknown event', queue_ms: 0, policy_version: 'first-hop-v1' });
+  enqueueHop(h, firstHop({ event_id: 'event-2' }));
+  assert.equal(h.row('dispatch', 'event-2').status, 'queued');
+  assert.equal(h.row('routing_outbox', 'first_hop:event-2').status, 'pending');
+});
+
+test('the dispatch worker claims a first hop, records acceptance and acknowledges it', () => {
+  const h = new Harness(); h.open();
+  enqueueHop(h, firstHop());
+  router(h, 'claim_outbox', op.claimOutbox, { id: 'first_hop:event-1' });
+  const accepted = { event_id: 'event-1', case_id: 'CASE-1', agent: 'carrier_ap', skill: 'process_carrier_invoice',
+    task_id: 'task-1', status: 'accepted', reason: 'Delivered by dispatch worker', queue_ms: 0, policy_version: 'worker' };
+  dispatch(h, accepted);
+  router(h, 'ack_outbox', op.ackOutbox, { id: 'first_hop:event-1', success: true });
+  const row = h.row('dispatch', 'event-1');
+  assert.equal(row.status, 'accepted');
+  assert.equal(row.task_id, 'task-1');
+  assert.equal(row.queue_ms, 120);
+  assert.equal(row.policy_version, 'first-hop-v1');
+  assert.equal(h.row('routing_outbox', 'first_hop:event-1').status, 'done');
+  // The worker re-sending after a lost lease records the same task as a duplicate observation.
+  dispatch(h, accepted);
+  assert.equal(h.row('dispatch', 'event-1').status, 'duplicate');
+  assert.equal(h.row('dispatch', 'event-1').task_id, 'task-1');
+});
+
+test('dispatch status transitions: queued may advance, accepted may not return, duplicates need no task', () => {
+  const h = new Harness();
+  const route = { case_id: 'CASE-1', agent: 'carrier_ap', skill: 'process_carrier_invoice', reason: 'Known invoice event', queue_ms: 120, policy_version: 'first-hop-v1' };
+  dispatch(h, { ...route, event_id: 'queued', status: 'queued' });
+  assert.equal(h.row('dispatch', 'queued').status, 'queued');
+  for (const [patch, error] of [
+    [{ task_id: 'task-1' }, /queued dispatch cannot carry a task/], [{ agent: '' }, /requires case, agent and skill/],
+    [{ case_id: '' }, /requires case, agent and skill/], [{ skill: 'investigate_charge' }, /does not belong/],
+  ] as [Payload, RegExp][]) {
+    assert.throws(() => dispatch(h, { ...route, event_id: 'queued', status: 'queued', ...patch }), error);
+  }
+  assert.throws(() => dispatch(h, { ...route, event_id: 'queued', status: 'triage' }), /route is immutable/);
+  assert.throws(() => dispatch(h, { ...route, event_id: 'queued', status: 'accepted', task_id: 'task-1', agent: 'risk', skill: 'investigate_charge' }), /route is immutable/);
+  assert.throws(() => dispatch(h, { ...route, event_id: 'queued', status: 'accepted' }), /requires a task/);
+  // A re-delivered event that is still queued stays queued: its outbox row will still be delivered.
+  dispatch(h, { ...route, event_id: 'queued', status: 'duplicate', reason: 're-delivered event', queue_ms: 999 });
+  assert.equal(h.row('dispatch', 'queued').status, 'queued');
+  assert.equal(h.row('dispatch', 'queued').queue_ms, 120);
+  dispatch(h, { ...route, event_id: 'queued', status: 'accepted', task_id: 'task-1', queue_ms: 0 });
+  assert.equal(h.row('dispatch', 'queued').status, 'accepted');
+  assert.equal(h.row('dispatch', 'queued').queue_ms, 120);
+  assert.throws(() => dispatch(h, { ...route, event_id: 'queued', status: 'queued' }), /cannot return to queued/);
+  assert.throws(() => dispatch(h, { ...route, event_id: 'queued', status: 'accepted', task_id: 'task-2' }), /task is immutable/);
+  // A duplicate observation without a task keeps the accepted task.
+  dispatch(h, { ...route, event_id: 'queued', status: 'duplicate', reason: 're-delivered event' });
+  assert.equal(h.row('dispatch', 'queued').status, 'duplicate');
+  assert.equal(h.row('dispatch', 'queued').task_id, 'task-1');
+  assert.throws(() => dispatch(h, { ...route, event_id: 'queued', status: 'queued' }), /cannot return to queued/);
+  // A separate duplicate event gets its own row; its task may be unknown while the original is queued.
+  dispatch(h, { ...route, event_id: 'resent', status: 'duplicate', reason: 'invoice re-sent' });
+  assert.equal(h.row('dispatch', 'resent').status, 'duplicate');
+  assert.equal(h.row('dispatch', 'resent').task_id, '');
+  assert.throws(() => dispatch(h, { event_id: 'resent-2', status: 'duplicate', reason: 'no route', queue_ms: 0, policy_version: 'v1' }), /requires case, agent and skill/);
+  dispatch(h, { ...route, event_id: 'resent', status: 'accepted', task_id: 'task-9' });
+  assert.equal(h.row('dispatch', 'resent').status, 'duplicate');
+  assert.equal(h.row('dispatch', 'resent').task_id, 'task-9');
+});
+
+const sourceRecord = (h: Harness, payload: Payload) => h.run('ingest', 'upsert_source_record', ['ingest'], op.upsertSourceRecord, payload);
+function record(id: string, kind: string, value: unknown): Payload {
+  const record_json = canonical(value);
+  return { id, kind, record_json, digest: hash(record_json) };
+}
+
+test('source records verify their digest, shape and id, and chain case records under the case', () => {
+  const h = new Harness();
+  for (const actor of ['router', 'carrier_ap', 'admin', 'stranger']) {
+    assert.throws(() => h.run(actor, 'upsert_source_record', ['ingest'], op.upsertSourceRecord, record('case:CASE-1', 'case', { load_id: 'L' })), /role|provisioned/);
+  }
+  const caseRecord = record('case:CASE-1', 'case', { load_id: 'LOAD-1', documents: [{ id: 'POD-1' }] });
+  assert.throws(() => sourceRecord(h, { ...caseRecord, digest: hash('{}') }), /digest does not match/);
+  assert.throws(() => sourceRecord(h, { ...caseRecord, record_json: `${caseRecord.record_json} ` }), /digest does not match/);
+  const invalid: [Payload, RegExp][] = [
+    [record('contacts:C-1', 'contacts', { id: 'CT-1' }), /contacts record_json must be a JSON array/],
+    [record('case:CASE-1', 'case', [{ id: 'x' }]), /case record_json must be a JSON object/],
+    [record('company:C-1', 'company', []), /company record_json must be a JSON object/],
+    [record('dataset:meta', 'dataset', 'scalar'), /dataset record_json must be a JSON object/],
+    [record('dataset:meta', 'dataset', null), /dataset record_json must be a JSON object/],
+    [record('company:C-1', 'case', { id: 'C-1' }), /must be <kind>:<key>/],
+    [record('case:', 'case', {}), /must be <kind>:<key>/],
+    [record('vendor:V-1', 'vendor', {}), /kind must be one of/],
+    [{ ...record('case:CASE-1', 'case', {}), case_id: 'CASE-2' }, /derived from its id/],
+    [{ id: 'case:CASE-1', kind: 'case', record_json: '{not json', digest: hash('{not json') }, /valid JSON/],
+  ];
+  for (const [payload, error] of invalid) assert.throws(() => sourceRecord(h, payload), error);
+  assert.equal(h.rows('source_record').length, 0);
+
+  sourceRecord(h, caseRecord);
+  sourceRecord(h, record('contacts:C-1', 'contacts', [{ id: 'CT-1', name: 'AP desk' }]));
+  sourceRecord(h, record('company:C-1', 'company', { id: 'C-1', name: 'Carrier' }));
+  sourceRecord(h, record('dataset:meta', 'dataset', { generated_at: '2026-10-24T00:00:00Z', schema: 'w4-source-v1' }));
+  const stored = h.row('source_record', 'case:CASE-1');
+  assert.deepEqual(stored, { id: 'case:CASE-1', kind: 'case', case_id: 'CASE-1', record_json: caseRecord.record_json,
+    digest: caseRecord.digest, updated_at: stored.updated_at });
+  assert.equal(h.row('source_record', 'contacts:C-1').case_id, '');
+  const changes = h.rows('change_set').filter(x => x.action === 'upsert_source_record');
+  assert.deepEqual(changes.map(x => x.case_id), ['CASE-1', '', '', '']);
+});
+
+test('source records skip an unchanged digest without a change set and update a changed one', () => {
+  const h = new Harness();
+  const first = sourceRecord(h, { ...record('case:CASE-1', 'case', { load_id: 'LOAD-1' }), write_id: 'ingest:upsert_source_record:case:CASE-1:a' });
+  const updated_at = h.row('source_record', 'case:CASE-1').updated_at;
+  const counts = () => [h.rows('change_set').length, h.rows('audit_event').length, h.rows('cell_change').length];
+  const before = counts();
+  // A cache-cold mirror resends the same record under another write ID: a no-op apart from its receipt.
+  const resent = sourceRecord(h, { ...first, write_id: 'ingest:upsert_source_record:case:CASE-1:cold' });
+  assert.deepEqual(counts(), before);
+  assert.equal(h.row('source_record', 'case:CASE-1').updated_at, updated_at);
+  const receipt = h.row('write_receipt', `${identities.ingest}:${resent.write_id}`);
+  assert.equal(receipt.change_set_id, '');
+  sourceRecord(h, resent);
+  assert.deepEqual(counts(), before);
+  const changed = record('case:CASE-1', 'case', { load_id: 'LOAD-1', documents: [{ id: 'INV-1' }] });
+  assert.throws(() => sourceRecord(h, { ...changed, write_id: resent.write_id }), /write_id was reused/);
+  sourceRecord(h, changed);
+  assert.equal(h.row('source_record', 'case:CASE-1').digest, changed.digest);
+  assert.equal(h.row('source_record', 'case:CASE-1').record_json, changed.record_json);
+  assert.equal(h.rows('change_set').length, before[0] + 1);
+  const change = h.rows('change_set').at(-1) as Row;
+  const columns = h.rows('cell_change').filter(x => x.change_set_id === change.id).map(x => x.column).sort();
+  assert.deepEqual(columns, ['digest', 'record_json', 'updated_at']);
+});
+
+test('ensure_agent_defaults fills missing agents once and leaves configured agents alone', () => {
+  const h = new Harness();
+  const ensure = (actor = 'admin') => h.run(actor, 'ensure_agent_defaults', ['admin'], op.ensureAgentDefaults, {});
+  const count = h.rows('change_set').length;
+  ensure();
+  assert.equal(h.rows('change_set').length, count, 'a database initialised with every agent is already complete');
+  h.data.agent_config.delete('documents');
+  h.run('human', 'set_agent_model', ['human'], op.setAgentModel, { agent: 'risk', model: 'gpt-local', enabled: false });
+  for (const actor of ['human', 'router', 'documents', 'stranger']) assert.throws(() => ensure(actor), /role|provisioned/);
+  ensure();
+  assert.deepEqual(h.row('agent_config', 'documents'), { agent: 'documents', model: 'auto', enabled: true });
+  assert.deepEqual(h.row('agent_config', 'risk'), { agent: 'risk', model: 'gpt-local', enabled: false });
+  assert.equal(h.rows('agent_config').length, 9);
+  const change = h.rows('change_set').at(-1) as Row;
+  assert.equal(change.action, 'ensure_agent_defaults');
+  assert.deepEqual(h.rows('cell_change').filter(x => x.change_set_id === change.id).map(x => x.row_key), ['documents', 'documents', 'documents']);
+  const after = h.rows('change_set').length;
+  ensure();
+  assert.equal(h.rows('change_set').length, after);
+});
+
+test('first-hop, source and default writes keep every change and audit chain verifiable', () => {
+  const h = new Harness(); h.open();
+  sourceRecord(h, record('case:CASE-1', 'case', { load_id: 'LOAD-CASE-1' }));
+  sourceRecord(h, record('company:C-1', 'company', { id: 'C-1' }));
+  enqueueHop(h, firstHop());
+  dispatch(h, { event_id: 'event-1', case_id: 'CASE-1', agent: 'carrier_ap', skill: 'process_carrier_invoice', task_id: 'task-1',
+    status: 'accepted', reason: 'delivered', queue_ms: 0, policy_version: 'worker' });
+  h.data.agent_config.delete('documents');
+  h.run('admin', 'ensure_agent_defaults', ['admin'], op.ensureAgentDefaults, {});
+  for (const scope of new Set(h.rows('change_set').map(row => row.case_id))) {
+    let parent = '';
+    for (const row of h.rows('change_set').filter(row => row.case_id === scope).sort((a, b) => Number(a.sequence) - Number(b.sequence))) {
+      assert.equal(hash(String(row.hash_body)), row.hash);
+      assert.equal(JSON.parse(String(row.hash_body)).parent_hash, parent);
+      parent = String(row.hash);
+    }
+    let previous = '';
+    for (const row of h.rows('audit_event').filter(row => row.case_id === scope).sort((a, b) => Number(a.sequence) - Number(b.sequence))) {
+      assert.equal(hash(String(row.hash_body)), row.hash);
+      assert.equal(row.prev_hash, previous);
+      previous = String(row.hash);
+    }
+  }
 });

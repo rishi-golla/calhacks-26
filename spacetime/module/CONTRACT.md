@@ -2,7 +2,7 @@
 
 The module is pinned to SpacetimeDB 2.10.2. Build with `cd spacetime/module/spacetimedb && npm ci && npm run check && npm run build`. All business reducers take one argument, `payload: string`, containing a JSON object. HTTP callers send `[JSON.stringify(payload)]` to `POST /v1/database/freightops/call/<reducer>` with their own Bearer token. The reducer exports use snake_case names. Bindings may camel-case these names.
 
-Every payload requires a unique `write_id`. Retry the **same payload and write_id** after a timeout. Same identity + write_id + same canonical payload is a no-op; changed content is rejected. Errors roll back the entire reducer. Codes rejected during an approval decision are the deliberate exception: the failed attempt is committed and the public approval `last_error` explains why it remains pending.
+Every payload requires a unique `write_id`. Retry the **same payload and write_id** after a timeout. Same identity + write_id + same canonical payload is a no-op; changed content is rejected. A request that already matches stored state (`upsert_source_record` with an unchanged digest, `ensure_agent_defaults` with nothing missing) commits only its receipt, with no change set or audit event. Errors roll back the entire reducer. Codes rejected during an approval decision are the deliberate exception: the failed attempt is committed and the public approval `last_error` explains why it remains pending.
 
 All legacy money fields (`amount`, `exposure_usd`, `debit`, `credit`, `paid_amount`, `contract_amount`) are **USD**, accept at most two decimals, and use integer cents for control checks and sums. `$9,400` is `9400`. Timestamps are UTC ISO strings. Missing optional strings are `""`; JSON-valued columns such as `scope`, `artifact_json`, `findings_json`, and `checks_json` are canonical JSON strings.
 
@@ -32,11 +32,14 @@ Authentication comes only from the actual SpacetimeDB sender identity. The init 
 | `set_demo_target` | admin | `phone` (E.164), `label`, `enabled` |
 | `add_precedent` | controller | `id`, `carrier_id`, `claim_type`, `lane`, `pattern_json`, `outcome`, `source_case` |
 | `log_llm_call` | harness | `id`, `agent` (nine agent IDs, `router`, or `ingest`), `model`, `latency_ms`, `tokens`, `route_reason`, `ensemble_agreement` |
-| `record_dispatch` | router | `event_id`, `case_id`, `skill`, `agent`, `task_id`, `status` (`accepted`, `triage`, `not_routed`, `duplicate`), `reason`, `queue_ms`, `policy_version` |
+| `record_dispatch` | router | `event_id`, `case_id`, `skill`, `agent`, `task_id`, `status` (`queued`, `accepted`, `triage`, `not_routed`, `duplicate`), `reason`, `queue_ms`, `policy_version`; transitions below |
+| `enqueue_first_hop` | router | `event_id`, `case_id` (must exist and not be `human_owned`), `agent`, `skill` (owned by `agent`), `envelope` (TaskEnvelope object whose `case_id` and `task_type` match), `queue_ms`, `policy_version`, `reason`; writes the `first_hop` outbox row and a `queued` dispatch atomically |
 | `set_metric` | evaluator | `name`, `value` |
 | `set_agent_model` | human | `agent`, `model`, `enabled` (default true) |
+| `ensure_agent_defaults` | admin | none; inserts `{model: auto, enabled: true}` for every agent missing from `agent_config` and leaves existing rows alone |
 | `upsert_forecast` | cfo | `id`, `case_id`, `period`, `category`, `amount` (signed), `confidence`, `assumptions_json` |
 | `upsert_company` | ingest | `id`, `kind`, `name`, optional `usdot`, `mc`, `phone`, `website`, `source_url` |
+| `upsert_source_record` | ingest | `id` (`case:<case_id>`, `company:<id>`, `contacts:<company_id>` or `dataset:meta`), `kind` (`case`, `company`, `contacts`, `dataset`, matching the id prefix), `record_json` (object, or array for `contacts`), `digest` (SHA-256 hex of `record_json` exactly as sent) |
 | `upsert_contact` | ingest | `id`, `company_id`, `name`, optional `title`, `phone`, `email`, `linkedin_url`, `source` (`fmcsa`, `sec_edgar`, `own_key`, `context_dev`, `website`, `fixture`), `source_url`, `confidence`, `alternates_json` |
 | `add_review` | validator | `id`, `target_task_id`, `case_id`, `verdict` (`pass` or `issue`), `checks_json`, `friction_json`, `actions` |
 | `upsert_memory` | validator, human | `id`, `agent`, `scope` (object with carrier_id/lane/claim_type/skill only), `text`, `source_ref`, `active` |
@@ -61,7 +64,7 @@ Human takeover blocks new agent business mutations and delegation on that case. 
 
 New calls normally allow one attempt per company per hour, including failed attempts. An authenticated Voice service may send `team_demo_authorized: true` only after validating the server-owned, expiring operator grant for that exact task and destination. W2 accepts the exception only for an owned `place_call` task in case `SYN-CARTESIA-TEAM-CALL`, company `DEMO-TEAM`, outbound direction and verification persona. The company must retain `source_url = operator://explicit-team-demo-destination`, and its phone, the directory-resolved intended phone and the routed phone must all match an enabled demo target. A new authorized call must start `queued`; any existing `queued`, `ringing` or `in_progress` call for that company blocks it atomically regardless of age. Completed, no-answer, failed or cancelled calls allow another explicitly authorized demo immediately. Same-call updates remain idempotent and cannot restart terminal calls. New accepted demo calls record audit reason `operator_team_demo_call`. The flag is a trusted service assertion, never model or browser input; directory, ownership, disabled-agent and allowlist controls remain in force. Ordinary calls and calls without this authorization retain the hourly limit. No database schema or A2A envelope fields change.
 
-Outbox kinds are `review_output` and `review_flag` for the Validator, and `review_followup` for the original task's agent. Dispatch using the row's `target_agent`. Followup payloads include `target_task_id`, `case_id`, `agent`, `actions` (`reopen_case` / `rerun_task`), and `review_id`; only one corrective request is queued per original task to bound retry loops. Human-owned cases do not receive automatic corrective followups. Acknowledge delivery after successful handoff; revised output and execution status belong to a new task. Delivery acknowledgement is not evidence that execution completed.
+Outbox kinds are `review_output` and `review_flag` for the Validator, `review_followup` for the original task's agent, and `first_hop` for the agent the router selected (see below). Dispatch using the row's `target_agent`. Followup payloads include `target_task_id`, `case_id`, `agent`, `actions` (`reopen_case` / `rerun_task`), and `review_id`; only one corrective request is queued per original task to bound retry loops. Human-owned cases do not receive automatic corrective followups. Acknowledge delivery after successful handoff; revised output and execution status belong to a new task. Delivery acknowledgement is not evidence that execution completed.
 
 Instruction history is append-only except for the active marker. A normal row (`reverts_version = 0`) contains a diff relative to the preceding effective version. A revert row creates a new version whose effective content is the **fully reconstructed content of `reverts_version`**. Its copied `diff` is display context only; W3 must not apply that copied patch to the latest text. Reconstruct versions in ascending order, preserving the effective text for each version, and use the target snapshot for revert rows. Policy code, approval thresholds, tool permissions and delegation allowlists remain outside this version stream and are never mutable through lesson reducers.
 
@@ -87,15 +90,22 @@ modules do not enforce the new precondition. This change adds no tables or A2A e
 
 `dispatch` is a public table keyed by `event_id`, with the `record_dispatch` fields
 above and a server-generated `ts` for the latest observation. Only the `router`
-role can write it. Accepted/duplicate records require a case, matching agent/skill,
-and the accepted remote A2A task ID. These references need not already exist in
-SpacetimeDB; this reducer records intake evidence and grants no task ownership.
-Triage and not-routed records may leave unresolved references empty.
+role can write it. Queued, accepted and duplicate records require a case and a
+matching agent/skill; accepted records also require the accepted remote A2A task ID,
+queued records must not carry one, and duplicates may leave it empty when the router
+no longer knows it. These references need not already exist in SpacetimeDB; this
+reducer records intake evidence and grants no task ownership. Triage and not-routed
+records may leave unresolved references empty.
 
-Exact `write_id` retries are no-ops. A new observation of an accepted event becomes
-`duplicate`, retains the original queue time and policy version, and cannot change
-the accepted case/agent/skill/task or downgrade to triage. A triage record can later
-be updated after resolution. `ts` changes on each new observation; this is one row
+Exact `write_id` retries are no-ops. Once an event is routed (queued, accepted or
+duplicate) its case/agent/skill are immutable, it cannot downgrade to triage, and
+later observations retain the original queue time and policy version. `queued →
+accepted` sets the task; `accepted → queued` is rejected. A duplicate observation of
+a still-queued event leaves it `queued`, because its outbox row will still be
+delivered. A new observation of an accepted event becomes `duplicate` and keeps its
+task, so a duplicate sent without `task_id` inherits it; a supplied task must match.
+A separate duplicate event (its own `event_id`) gets its own `duplicate` row, and its
+task may be empty. A triage record can later be updated after resolution. `ts` changes on each new observation; this is one row
 per event, not a retry-count table. Changes also enter the standard audit trail.
 
 The repository router writes before Redis acknowledgment when `SPACETIME_DISABLED=0`,
@@ -116,3 +126,42 @@ spacetime publish --module-path spacetime/module/spacetimedb --server https://ma
 ```
 
 The module change does not enable telemetry on a disabled router or deploy the UI.
+
+### First hop through the outbox
+
+`enqueue_first_hop` replaces the router's direct A2A push. In one transaction it checks
+the case exists and is not `human_owned`, that `skill` belongs to `agent`, and that the
+envelope describes the same case and skill. It then inserts `routing_outbox` row
+`first_hop:<event_id>` (`kind = first_hop`, `target_agent = agent`, `task_id = ""`,
+`payload_json = canonical({event_id, case_id, skill, agent, envelope, queue_ms,
+policy_version})`) and upserts the event's `dispatch` row as `queued` with an empty task.
+The change set and audit event chain under the case. Use `first_hop:<event_id>` as the
+write ID and resend the identical payload on retry: an identical replay is a no-op and
+changed contents are rejected. Under another write ID, identical contents re-observe the
+queued event without a second outbox row; different contents, or an event already
+accepted, are rejected.
+
+The dispatch worker claims the row with `claim_outbox`, rebuilds the TaskEnvelope from
+`payload_json.envelope`, sends it with idempotency key `event:<event_id>`, records
+`record_dispatch` with `status = accepted` and the task ID, then calls `ack_outbox`.
+`claim_outbox` and `ack_outbox` are unchanged and kind-agnostic.
+
+### Source records
+
+`source_record` is a public table, one row per record agents read in place of
+`source.json`: `id` (as above), `kind`, `case_id` (derived from the id for `kind = case`,
+otherwise `""`), `record_json`, `digest`, `updated_at`. `upsert_source_record` parses
+`record_json` and requires an object, or an array for `contacts`. It also recomputes
+SHA-256 over the exact UTF-8 string and rejects a mismatch. It does not re-canonicalize,
+so the sender's serialization is authoritative. A supplied `case_id` must equal the
+derived one. Case records chain under their case and the others under the system chain.
+An unchanged digest is a no-op with no change set. Source records may be written before
+`open_case` and are accepted for `human_owned` cases, since they are evidence, not agent
+decisions. The data is synthetic and deliberately unredacted.
+
+### Agent defaults
+
+`init` seeds `agent_config` once. A database initialised before an agent joined `AGENTS`
+lacks that row; `ensure_agent_defaults` (admin) inserts the missing defaults. It is
+idempotent and never re-enables a disabled agent or resets a chosen model, so
+provisioning can call it after every publish.

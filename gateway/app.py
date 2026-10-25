@@ -84,16 +84,22 @@ async def lifespan(app):
     app.state.calls = store
     app.state.demo_calls = DemoCallStore(RuntimeStore(engine=store.engine))
     await app.state.demo_calls.initialize()
-    # Burst announcements go to the simulator's `raw` stream; the loads keep streaming inside this process.
+    # Burst announcements go to the simulator's `raw` stream; the loads keep streaming inside this process, and
+    # loads a previous gateway left mid-lifecycle are resumed from their saved progress (sim.generator).
     app.state.raw = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+    from sim.generator import resume_inflight_loop
     worker = asyncio.create_task(reconcile_calls(store)) if mode() == "live" else None
+    # On by default only for the live gateway, so a test or fixture process never streams another one's loads.
+    resume = os.getenv("SIM_RESUME_INFLIGHT", "1" if mode() == "live" else "0") == "1"
+    resumer = asyncio.create_task(resume_inflight_loop(app.state.raw)) if resume else None
     try:
         yield
     finally:
-        if worker:
-            worker.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await worker
+        for task in (worker, resumer):
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         await app.state.raw.aclose()
         await store.close()
 

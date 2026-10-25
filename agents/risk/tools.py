@@ -59,7 +59,7 @@ def audit_charges(source: dict) -> dict:
 
 def charge_workings(source: dict, audit: dict) -> list[dict]:
     """How each accessorial was tested against the recorded terms and GPS, with the documents used."""
-    from common.workings import refs_for, working
+    from common.workings import input_name, refs_for, unique_name, working
     items = []
     dwell, free = audit.get("gps_dwell_min"), audit.get("free_time_min")
     claimed = audit.get("detention_hours_claimed") or 0
@@ -83,16 +83,17 @@ def charge_workings(source: dict, audit: dict) -> list[dict]:
         items.append(working("Detention timing evidence", "gps_dwell_min and free_time_min recorded",
                              {"gps_dwell_min": dwell, "free_time_min": free}, False, unit="bool",
                              basis="a detention claim needs GPS dwell and contracted free time"))
-    unsupported = {}
-    for item in source.get("line_items", []):
+    unsupported: dict[str, float] = {}
+    for index, item in enumerate(source.get("line_items", []), start=1):
         kind = str(item.get("kind", "")).lower()
         if f"unsupported_{kind}" in audit["unsupported_charges"]:
-            unsupported[kind] = number(money(item.get("amount")))
+            name = unique_name(input_name(kind, index), unsupported, index)
+            unsupported[name] = number(money(item.get("amount")))
             reason = ("no receipt attached" if item.get("receipt_required") and not item.get("receipt_ref")
                       else "within free time" if kind == "detention" else "not approved")
-            items.append(working(f"Unsupported {kind.replace('_', ' ')}", f"{kind} amount ({reason})",
-                                 {kind: unsupported[kind], "receipt_ref": item.get("receipt_ref")},
-                                 unsupported[kind], evidence_refs=refs_for(source, "invoice_amount"), basis="P-001"))
+            items.append(working(f"Unsupported {kind.replace('_', ' ')}", f"{name} ({reason})",
+                                 {name: unsupported[name], "receipt_ref": item.get("receipt_ref")},
+                                 unsupported[name], evidence_refs=refs_for(source, "invoice_amount"), basis="P-001"))
     items.append(working("Unsupported charges total", " + ".join(unsupported) if unsupported else "0",
                          unsupported, audit["unsupported_amount"], evidence_refs=refs_for(source, "invoice_amount"),
                          basis="P-001"))

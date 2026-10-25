@@ -12,6 +12,7 @@ render them without knowing the domain. Nothing here is an authorization or a de
 """
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Any
 
@@ -26,6 +27,23 @@ DOCUMENT_KIND_FOR_INPUT = {
     "gps_dwell_min": "pod", "pod_signed": "pod", "receipt_ref": "lumper_receipt",
 }
 
+
+
+def input_name(raw: Any, index: int) -> str:
+    """A formula identifier (letters, digits, underscores) so the dashboard can substitute and recompute."""
+    name = re.sub(r"[^a-z0-9_]+", "_", str(raw).lower()).strip("_")
+    if not name or name[0].isdigit():
+        name = f"line_{index}"
+    return name
+
+
+def unique_name(name: str, taken: dict | set, index: int) -> str:
+    """`name`, or `name_<index>`, or `name_<index>_2`... until it collides with nothing already shown."""
+    candidate, attempt = name, 1
+    while candidate in taken:
+        attempt += 1
+        candidate = f"{name}_{index}" if attempt == 2 else f"{name}_{index}_{attempt - 1}"
+    return candidate
 
 
 def plain(value: Any) -> Any:

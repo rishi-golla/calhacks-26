@@ -107,6 +107,17 @@ export function isWithinDir(root: string, candidate: string, sep = "/"): boolean
   return candidate === root || candidate.startsWith(base);
 }
 
+/**
+ * The evidence route answers only the dashboard's own pages. Browsers send `Sec-Fetch-Site`
+ * on every fetch, iframe and link navigation; `same-origin` is the dashboard, `none` is the
+ * address bar (a person opening a PDF they were shown). Anything else, or a client that sends
+ * no header at all (scripts, curl), is refused. This is hotlink and scripted-scrape protection,
+ * not authentication: the dashboard itself has no login, so deploy it on a trusted network.
+ */
+export function isAllowedFetchSite(secFetchSite: string | null): boolean {
+  return secFetchSite === "same-origin" || secFetchSite === "none";
+}
+
 /** Human label for the kind of a ground-truth document (`rate_confirmation` -> "Rate confirmation"). */
 export function documentKindLabel(type: unknown, parsed: ParsedEvidence): string {
   if (typeof type === "string" && type.trim()) {

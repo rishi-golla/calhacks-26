@@ -8,6 +8,8 @@ from agents.cfo.main import CfoAgent
 from agents.controller.main import ControllerAgent
 from agents.shipper_ar.main import ShipperArAgent
 from agents.validator.tools import deterministic_review
+from common.envelope import DelegationMeta, TaskEnvelope
+from common.runtime_store import RuntimeStore
 from common.workings import UNITS, document_ref, refs_for, working
 from tests.test_brokerage_workflows import fixture_environment, invoice, run_handler  # noqa: F401
 
@@ -107,3 +109,40 @@ async def test_validator_checks_carry_their_own_recomputation():
     assert {"delta", "contract_tolerance", "payment_proposal_amount", "approve_clear_of_above_tolerance"} <= set(with_work)
     assert with_work["delta"]["result"] == 24.5 and set(with_work["delta"]) == WORKING_KEYS
     assert with_work["payment_proposal_amount"]["formula"] == "invoice_amount - paid_amount"
+
+
+async def test_controller_posts_positional_journal_lines_from_the_sql_api():
+    source = invoice()
+    source["journal_requests"] = [{"id": "JR-1", "case_id": source["case_id"], "requested_by": "shipper_ar",
+                                   "period": "2026-10", "lines": [["cash", 100.0, 0.0], ["accounts_receivable", 0.0, 100.0]]}]
+    store_env = TaskEnvelope(task_type="approve_entry", case_id=source["case_id"],
+                             subject={**source, "request_ids": ["JR-1"]})
+    agent = ControllerAgent(store=RuntimeStore("sqlite+aiosqlite:///:memory:"))
+    try:
+        result = await agent.handle(store_env, DelegationMeta(case_id=source["case_id"], from_agent="router"),
+                                    "task-journal", None)
+    finally:
+        await agent.store.close()
+    assert result.outcome == "approve"
+    entry = result.findings["workings"][0]
+    assert entry["result"] == {"debits": 100.0, "credits": 100.0, "balanced": True}
+    assert entry["inputs"]["cash_1"] == {"debit": 100.0, "credit": 0.0}
+
+
+def test_input_names_never_collide_or_round_the_ceiling():
+    from agents.carrier_ap.tools import line_inputs, match_workings, three_way_match
+    from agents.risk.tools import audit_charges, charge_workings
+    names = line_inputs([{"kind": "extra-stop", "amount": 1}, {"kind": "extra stop", "amount": 2},
+                         {"kind": "extra_stop_2", "amount": 3}])
+    assert names == {"extra_stop": 1.0, "extra_stop_2": 2.0, "extra_stop_2_3": 3.0}
+    source = invoice(1020.34, 1000.33)
+    source["line_items"] = [{"kind": "linehaul", "amount": 1020.34}]
+    items = {w["label"]: w for w in match_workings(source, three_way_match(source))}
+    assert items["Within tolerance"]["result"] is False
+    assert items["Within tolerance"]["inputs"]["ceiling"] == 1020.3366
+    source = invoice(1700, 1200)
+    source.update(line_items=[{"kind": "linehaul", "amount": 1200},
+                              {"kind": "lumper", "amount": 250, "receipt_required": True, "receipt_ref": None},
+                              {"kind": "lumper", "amount": 250, "receipt_required": True, "receipt_ref": None}])
+    totals = {w["label"]: w for w in charge_workings(source, audit_charges(source))}["Unsupported charges total"]
+    assert totals["inputs"] == {"lumper": 250.0, "lumper_3": 250.0} and totals["result"] == 500

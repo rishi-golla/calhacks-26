@@ -3,7 +3,17 @@ from decimal import Decimal
 
 from agents.controller.card import DESCRIPTIONS
 from agents.risk.tools import audit_charges, charge_workings
-from common.agent_support import child_envelope, evidence, finish, identifier, money, mutate, number, rows
+from common.agent_support import (
+    child_envelope,
+    evidence,
+    finish,
+    identifier,
+    journal_lines,
+    money,
+    mutate,
+    number,
+    rows,
+)
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
@@ -59,7 +69,7 @@ class ControllerAgent(FreightAgent):
                 "paid_amount": number(paid), "already_paid": paid >= money(source["invoice_amount"])},
                 evidence_refs=refs)
         if env.task_type == "reconcile":
-            lines = source.get("journal_lines", [])
+            lines = journal_lines(source.get("journal_lines", []))
             debit = sum((money(line.get("debit", 0)) for line in lines), Decimal(0))
             credit = sum((money(line.get("credit", 0)) for line in lines), Decimal(0))
             return await finish(self, env, task_id, outcome="verified" if lines and debit == credit else "unverified",
@@ -94,12 +104,13 @@ class ControllerAgent(FreightAgent):
                     entry.update(outcome="reject", reason="requester is approver")
                     policy_ids.add("P-005")
                 else:
-                    debit = sum((money(line.get("debit", 0)) for line in request["lines"]), Decimal(0))
-                    credit = sum((money(line.get("credit", 0)) for line in request["lines"]), Decimal(0))
-                    workings.append(journal_working(f"Entry {request['id'][:12]} balances", request["lines"], debit, credit))
+                    lines = journal_lines(request["lines"])
+                    debit = sum((money(line.get("debit", 0)) for line in lines), Decimal(0))
+                    credit = sum((money(line.get("credit", 0)) for line in lines), Decimal(0))
+                    workings.append(journal_working(f"Entry {request['id'][:12]} balances", lines, debit, credit))
                     journal = await mutate(self, env, task_id, "post_journal_entry", {
                         "id": identifier(request["id"], "journal"), "request_id": request["id"],
-                        "lines": request["lines"], "period": request["period"],
+                        "lines": lines, "period": request["period"],
                         "requested_by": request["requested_by"],
                     })
                     entry.update(outcome="approve" if journal.get("decision", "allow") == "allow" else "reject",

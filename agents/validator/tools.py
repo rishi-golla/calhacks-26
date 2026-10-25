@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from agents.carrier_ap.tools import deposit_inputs, duplicate_invoices, match_workings, three_way_match
 from agents.documents.tools import check_packet
 from agents.risk.tools import audit_charges, charge_workings
-from common.agent_support import identifier, matched_deposit_total, money
+from common.agent_support import identifier, journal_lines, matched_deposit_total, money
 from common.envelope import Friction, Lesson, ResultArtifact, ReviewOutput
 from common.learning import apply_instruction_patch
 from common.policy import APPROVAL_THRESHOLD_USD, CONTRACT_TOLERANCE
@@ -167,20 +167,6 @@ class Checks:
         return [item for item in self.items if not item["ok"] and item["severity"] == severity]
 
 
-def journal_lines(lines) -> list[dict]:
-    """Journal lines as dicts; the SQL API returns stored JournalLine rows positionally."""
-    if not isinstance(lines, list):
-        return []
-    out = []
-    for line in lines:
-        if isinstance(line, list) and len(line) == 3:
-            line = dict(zip(("account", "debit", "credit"), line, strict=True))
-        if not isinstance(line, dict):
-            raise SourceUnavailable("journal line must be an object")
-        out.append(line)
-    return out
-
-
 def totals(lines) -> tuple[Decimal, Decimal, list[dict]]:
     items = journal_lines(lines)
     debit = sum((money(x.get("debit", 0)) for x in items), Decimal(0))
@@ -287,7 +273,11 @@ def review_carrier_ap(c: Checks, artifact: ResultArtifact, source: dict, skill: 
     approval = findings.get("approval")
     decided = approval[-1] if isinstance(approval, list) and approval and isinstance(approval[-1], dict) else None
     human_rejected = outcome == "reject" and decided is not None and decided.get("outcome") == "reject"
-    pending_approval = outcome == "unverified" and (invoice > THRESHOLD or approval is not None)
+    # Above the threshold an agent may stop only because approval is genuinely pending: a human decision
+    # it waited on, or a proposal the policy returned as needs_approval. A bare "unverified" is not that.
+    proposal_receipt = findings.get("payment_proposal") if isinstance(findings.get("payment_proposal"), dict) else {}
+    pending_approval = outcome == "unverified" and invoice > THRESHOLD and (
+        approval is not None or proposal_receipt.get("decision") == "needs_approval")
     if outcome == "approve":
         for name, blocked in blockers.items():
             c.add(f"approve_clear_of_{name}", not blocked, False, blocked, basis=BLOCKER_BASIS[name],
@@ -306,6 +296,9 @@ def review_carrier_ap(c: Checks, artifact: ResultArtifact, source: dict, skill: 
                     basis="pay invoice minus paid, never the disputed delta (P-001)", work=balance_work)
             c.add("payment_proposal_invoice", recorded.get("invoice_id") == source.get("invoice_id"),
                   source.get("invoice_id"), recorded.get("invoice_id"), basis="proposal binds to this invoice")
+            c.add("payment_proposal_open", recorded.get("status") not in {"canceled", "cancelled", "rejected"},
+                  "proposed or paid", recorded.get("status", "proposed"),
+                  basis="an approve whose proposal was withdrawn paid nothing")
             if invoice > THRESHOLD:
                 approval_checks(c, source, recorded.get("approval_id"), requested_by="carrier_ap")
     elif outcome in {"hold", "reject", "unverified"}:

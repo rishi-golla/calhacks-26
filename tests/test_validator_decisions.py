@@ -274,3 +274,41 @@ def test_positional_journal_lines_from_the_sql_api_are_accepted():
     review = deterministic_review(bundle(src, approve(src)))
     assert review.verdict == "pass"
     assert failed(review, ADVISORY) == {"ledger_entries_balanced"}
+
+
+def test_unverified_above_threshold_needs_real_approval_evidence():
+    src = source(invoice_amount=9400, contract_rate=9400, line_items=[{"kind": "linehaul", "amount": 9400}])
+    bare = ResultArtifact(outcome="unverified", evidence_refs=REFS, findings={"match": match(src)}).model_dump()
+    assert "decision_justified" in failed(deterministic_review(bundle(src, bare)))
+    policy_stopped = dict(bare, findings={"match": match(src), "payment_proposal": {
+        "executed": False, "decision": "needs_approval", "policy_ids": ["P-003"], "simulated": True}})
+    assert deterministic_review(bundle(src, policy_stopped)).verdict == "pass"
+
+
+def test_withdrawn_proposal_does_not_count_as_a_payment():
+    src = source()
+    artifact = approve(src)
+    src["payment_proposals"] = [{"id": identifier(TASK, "payment_proposal"), "invoice_id": "INV-1", "amount": 2000,
+                                 "status": "cancelled"}]
+    assert "payment_proposal_open" in failed(deterministic_review(bundle(src, artifact)))
+    src["payment_proposals"][0]["status"] = "proposed"
+    assert deterministic_review(bundle(src, artifact)).verdict == "pass"
+
+
+def test_fabricated_approval_reference_is_not_an_approval():
+    src = source(invoice_amount=9400, contract_rate=9400, line_items=[{"kind": "linehaul", "amount": 9400}])
+    artifact = approve(src)
+    artifact["findings"]["payment_proposal"]["proposed_payload"]["approval_id"] = "APR-FAKE"
+    src["approvals"] = []
+    assert "approval_resolved" in failed(deterministic_review(bundle(src, artifact)))
+    del src["approvals"]
+    assert "approval_resolved" in failed(deterministic_review(bundle(src, artifact)), ADVISORY)
+
+
+def test_positional_journal_lines_in_requests_are_summed():
+    src = source(journal_requests=[{"id": "JR-1", "case_id": "CASE-1", "requested_by": "shipper_ar",
+                                    "period": "2026-10", "lines": [["cash", 100.0, 0.0], ["ar", 0.0, 100.0]]}])
+    posted = ResultArtifact(outcome="approve", evidence_refs=REFS, findings={"entries": [
+        {"request_id": "JR-1", "outcome": "approve"}]}).model_dump()
+    review = deterministic_review(bundle(src, posted, "controller", "approve_entry"))
+    assert review.verdict == "pass"

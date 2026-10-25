@@ -1,12 +1,11 @@
 """Deterministic carrier-settlement checks against a source bundle."""
-import re
 from datetime import datetime
 from decimal import Decimal
 
 from agents.documents.tools import check_packet
 from common.agent_support import money, number
 from common.policy import CONTRACT_TOLERANCE
-from common.workings import document_ref, refs_for, working
+from common.workings import document_ref, input_name, refs_for, unique_name, working
 
 
 def duplicate_invoices(source: dict) -> list[str]:
@@ -45,21 +44,11 @@ def three_way_match(subject: dict) -> dict:
             "reason": "invoice exceeds the agreed rate tolerance" if above_tolerance else "source matching"}
 
 
-def input_name(raw: str, index: int) -> str:
-    """A formula identifier (letters, digits, underscores) so the dashboard can substitute and recompute."""
-    name = re.sub(r"[^a-z0-9_]+", "_", str(raw).lower()).strip("_")
-    if not name or name[0].isdigit():
-        name = f"line_{index}"
-    return name
-
-
 def line_inputs(line_items: list[dict]) -> dict[str, float]:
     """One named input per invoice line; repeated kinds get a position suffix."""
     inputs: dict[str, float] = {}
     for index, item in enumerate(line_items, start=1):
-        name = input_name(item.get("kind") or item.get("desc") or f"line_{index}", index)
-        if name in inputs:
-            name = f"{name}_{index}"
+        name = unique_name(input_name(item.get("kind") or item.get("desc") or f"line_{index}", index), inputs, index)
         inputs[name] = number(money(item.get("amount"), signed=True))
     return inputs
 
@@ -80,10 +69,10 @@ def match_workings(source: dict, match: dict) -> list[dict]:
                 {"invoice_amount": invoice, "contract_rate": contract}, invoice - contract,
                 evidence_refs=both, basis="three-way match"),
         working("Tolerance ceiling", "contract_rate * (1 + tolerance)",
-                {"contract_rate": contract, "tolerance": CONTRACT_TOLERANCE}, ceiling.quantize(Decimal("0.01")),
+                {"contract_rate": contract, "tolerance": CONTRACT_TOLERANCE}, ceiling,
                 evidence_refs=refs_for(source, "contract_rate"), basis="P-001"),
-        working("Within tolerance", "invoice_amount <= ceiling",
-                {"invoice_amount": invoice, "ceiling": ceiling.quantize(Decimal("0.01"))},
+        # The exact ceiling, not a rounded one: $1,020.34 is over a $1,020.3366 ceiling.
+        working("Within tolerance", "invoice_amount <= ceiling", {"invoice_amount": invoice, "ceiling": ceiling},
                 not match["above_tolerance"], unit="bool", evidence_refs=both, basis="P-001"),
     ]
     line_items = source.get("line_items", [])

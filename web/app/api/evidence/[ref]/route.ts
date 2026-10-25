@@ -3,7 +3,7 @@ import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { NextRequest, NextResponse } from "next/server";
-import { isWithinDir, resolveEvidenceRequest } from "@/lib/evidence";
+import { isAllowedFetchSite, isWithinDir, resolveEvidenceRequest } from "@/lib/evidence";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,7 +25,7 @@ const MAX_BYTES = 25 * 1024 * 1024;
 const NO_STORE = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
 
 type Located =
-  | { ok: false; status: 400 | 404; error: string }
+  | { ok: false; status: 400 | 403 | 404; error: string }
   | { ok: true; path: string; headers: Record<string, string> };
 
 /**
@@ -33,6 +33,9 @@ type Located =
  * follows a path outside the configured folder, never echoes a filesystem path in an error.
  */
 async function locate(request: NextRequest, context: { params: Promise<{ ref: string }> }): Promise<Located> {
+  if (process.env.EVIDENCE_PREVIEWS === "off") return { ok: false, status: 404, error: "document previews are disabled" };
+  if (!isAllowedFetchSite(request.headers.get("sec-fetch-site")))
+    return { ok: false, status: 403, error: "evidence is served to the dashboard only" };
   // Next has already percent-decoded the segment; anything still escaped fails validation.
   const { ref } = await context.params;
   const resolved = resolveEvidenceRequest(ref, request.nextUrl.searchParams.get("view"));
@@ -69,7 +72,7 @@ async function locate(request: NextRequest, context: { params: Promise<{ ref: st
   }
 }
 
-const fail = (status: 400 | 404, error: string) => NextResponse.json({ error }, { status, headers: NO_STORE });
+const fail = (status: 400 | 403 | 404, error: string) => NextResponse.json({ error }, { status, headers: NO_STORE });
 
 /** GET /api/evidence/doc:<REF>?view=pdf|json and /api/evidence/mail:<MAIL-ID>: stream the file read-only. */
 export async function GET(request: NextRequest, context: { params: Promise<{ ref: string }> }) {

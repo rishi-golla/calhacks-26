@@ -95,3 +95,13 @@ test("extracted fields skip bookkeeping keys and render nested values compactly"
   assert.equal(compactValue(1160.5), "1,160.5");
   assert.deepEqual(extractedFields(null), []);
 });
+
+import { isAllowedFetchSite } from "./evidence";
+
+test("evidence is served to the dashboard's own pages and address-bar navigations only", () => {
+  assert.equal(isAllowedFetchSite("same-origin"), true);
+  assert.equal(isAllowedFetchSite("none"), true);
+  assert.equal(isAllowedFetchSite("same-site"), false);
+  assert.equal(isAllowedFetchSite("cross-site"), false);
+  assert.equal(isAllowedFetchSite(null), false);
+});

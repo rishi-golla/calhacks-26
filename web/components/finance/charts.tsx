@@ -2,7 +2,7 @@
 /**
  * Inline-SVG charts for the finance home. No chart library: sparklines are a
  * single path, the cash chart is three stacked layers (axes, a line layer
- * revealed with `fl-draw`, and a hover/live-dot overlay), and the forecast
+ * revealed with `fl-draw`, and a hover/live-dot overlay), and the cash flow
  * bars are divs scaled with `transform` so updates animate on the compositor.
  */
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
@@ -201,17 +201,18 @@ export function LineChart({
   );
 }
 
-/* ---------------------------- forecast bars ---------------------------- */
+/* ---------------------------- cash flow bars ---------------------------- */
 
-/** Inflow up, outflow down from a zero line; bar opacity follows confidence. */
-export function ForecastBars({ rows }: { rows: FinanceMetrics["forecast"] }) {
+/** Monthly cash in up, cash out down from a zero line; months with forecasts fade with their confidence. */
+export function CashFlowBars({ rows }: { rows: FinanceMetrics["forecast"] }) {
   const max = Math.max(1, ...rows.flatMap((r) => [r.inflow, r.outflow]));
-  const label = `Cash forecast by period: ${rows.map((r) => `${periodLabel(r.period)} net ${signedShort(r.net)}`).join(", ")}`;
+  const label = `Cash flow by month: ${rows.map((r) => `${periodLabel(r.period)}${r.projected ? " (with forecast)" : ""} net ${signedShort(r.net)}`).join(", ")}`;
   return (
     <div className="fh-fc" role="img" aria-label={label}>
       {rows.map((r, i) => {
         const alpha = 0.35 + 0.65 * Math.max(0, Math.min(1, r.confidence));
-        const title = `${periodLabel(r.period)}: inflow ${usdShort(r.inflow)}, outflow ${usdShort(r.outflow)}, net ${signedShort(r.net)}, ${Math.round(r.confidence * 100)}% confidence`;
+        const basis = r.projected ? `includes forecast, ${Math.round(r.confidence * 100)}% confidence` : "posted";
+        const title = `${periodLabel(r.period)}: in ${usdShort(r.inflow)}, out ${usdShort(r.outflow)}, net ${signedShort(r.net)} (${basis})`;
         return (
           <div className="fh-fc-col" key={r.period} style={{ "--i": i } as CSSProperties} title={title}>
             <div className="fh-fc-plot">
@@ -224,7 +225,10 @@ export function ForecastBars({ rows }: { rows: FinanceMetrics["forecast"] }) {
               <i className="fh-fc-net" style={{ top: `${50 - (r.net / max) * 50}%` }} />
             </div>
             <div className={`fh-fc-value fl-num ${r.net >= 0 ? "ok" : "hot"}`}>{signedShort(r.net)}</div>
-            <div className="fh-fc-meta">{periodLabel(r.period)}</div>
+            <div className="fh-fc-meta">
+              {periodLabel(r.period)}
+              {r.projected && " · est"}
+            </div>
           </div>
         );
       })}

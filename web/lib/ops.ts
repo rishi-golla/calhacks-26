@@ -662,7 +662,8 @@ export type FinanceMetrics = {
   /** Open invoices issued more than 30 days ago. */
   overdueInvoices: { count: number; amount: number };
   paymentsProposed: { count: number; amount: number };
-  forecast: { period: string; inflow: number; outflow: number; net: number; confidence: number }[];
+  /** Monthly cash flow ("YYYY-MM"): ledger actuals for past months, plus agent forecasts from this month on. */
+  forecast: CashFlowMonth[];
   /** Daily series over the last 30 days. */
   trends: { cash: TrendPoint[]; revenue: TrendPoint[]; ap: TrendPoint[]; ar: TrendPoint[] };
   /** Lower bound of the 30-day and month-to-date totals (a "Start fresh" epoch), or null for the plain windows. */
@@ -697,6 +698,87 @@ const ACCOUNT_ALIASES: Record<string, string> = {
   purchased_transportation: "expense",
   accessorial_expense: "expense",
 };
+
+export type CashFlowMonth = {
+  period: string;
+  inflow: number;
+  outflow: number;
+  net: number;
+  /** 1 for ledger actuals; forecast confidence, weighted by amount, where forecasts are part of the month. */
+  confidence: number;
+  /** True when any of the month comes from forecasts rather than posted cash. */
+  projected: boolean;
+};
+
+const PAST_MONTHS = 5;
+const AHEAD_MONTHS = 2;
+
+/** "YYYY-MM" of a UTC month, `offset` months from `t`'s. */
+function monthKey(t: number, offset = 0) {
+  const d = new Date(t);
+  const m = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + offset, 1));
+  return m.toISOString().slice(0, 7);
+}
+
+/**
+ * Cash in and out per month: posted cash lines for up to PAST_MONTHS back (from the first month with any),
+ * and this month's actuals plus the agents' `cash_forecast` rows for this month through AHEAD_MONTHS ahead.
+ * Forecast periods outside that window (a sim clock that ran ahead, stale history) are left out.
+ */
+function cashFlowByMonth(entries: { at: number; lines: LedgerLine[] }[], forecasts: Row[], now: number): CashFlowMonth[] {
+  const current = monthKey(now);
+  const first = monthKey(now, -PAST_MONTHS);
+  const last = monthKey(now, AHEAD_MONTHS);
+  const months = new Map<string, { inflow: number; outflow: number; fcAmount: number; fcWeighted: number }>();
+  const slot = (key: string) => {
+    let s = months.get(key);
+    if (!s) months.set(key, (s = { inflow: 0, outflow: 0, fcAmount: 0, fcWeighted: 0 }));
+    return s;
+  };
+  for (const e of entries) {
+    const key = monthKey(e.at);
+    // The imported history's opening entry funds cash from equity; it is a balance, not a month's flow.
+    if (key < first || e.lines.some((l) => str(l.account).toLowerCase() === "opening_balance_equity")) continue;
+    for (const line of e.lines) {
+      if (ACCOUNT_ALIASES[str(line.account).toLowerCase()] !== "cash") continue;
+      const s = slot(key);
+      s.inflow += num(line.debit);
+      s.outflow += num(line.credit);
+    }
+  }
+  for (const f of forecasts) {
+    // Periods are months ("2026-10") or ISO week starts ("2026-10-26").
+    const key = str(f.period, "").slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(key) || key < current || key > last) continue;
+    const s = slot(key);
+    const amt = num(f.amount);
+    if (amt >= 0) s.inflow += amt;
+    else s.outflow -= amt;
+    s.fcAmount += Math.abs(amt);
+    s.fcWeighted += Math.abs(amt) * Math.max(0, Math.min(1, num(f.confidence)));
+  }
+  if (!months.size) return [];
+  const start = [...months.keys()].sort()[0];
+  const out: CashFlowMonth[] = [];
+  for (let i = -PAST_MONTHS; i <= AHEAD_MONTHS; i++) {
+    const key = monthKey(now, i);
+    if (key < start) continue;
+    const s = months.get(key);
+    // Months after this one only appear when an agent forecast something for them.
+    if (key > current && !s) continue;
+    const v = s ?? { inflow: 0, outflow: 0, fcAmount: 0, fcWeighted: 0 };
+    const total = v.inflow + v.outflow;
+    out.push({
+      period: key,
+      inflow: v.inflow,
+      outflow: v.outflow,
+      net: v.inflow - v.outflow,
+      confidence: total ? (total - v.fcAmount + v.fcWeighted) / total : 1,
+      projected: v.fcAmount > 0,
+    });
+  }
+  return out;
+}
 
 /**
  * `since` (a "Start fresh" epoch, with rows already scoped to it): cash comes
@@ -787,20 +869,7 @@ export function buildFinance(snapshot: Snapshot, now: number, { since, ledgerCas
   const overdue = open.filter((i) => now - timestamp(i.issued_at) > 30 * day);
   const sum = (rows: Row[], field = "amount") => rows.reduce((s, r) => s + num(r[field]) - (field === "amount" ? num(r.paid_amount) : 0), 0);
   const proposals = snapshot.payment_proposal.filter((p) => ["proposed", "awaiting_approval"].includes(str(p.status)));
-  // Forecast grouped by period.
-  const byPeriod = new Map<string, { inflow: number; outflow: number; conf: number[] }>();
-  for (const f of snapshot.cash_forecast) {
-    const key = str(f.period, "");
-    const slot = byPeriod.get(key) ?? { inflow: 0, outflow: 0, conf: [] };
-    const amt = num(f.amount);
-    if (amt >= 0) slot.inflow += amt;
-    else slot.outflow += -amt;
-    slot.conf.push(num(f.confidence));
-    byPeriod.set(key, slot);
-  }
-  const forecast = [...byPeriod.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([period, v]) => ({ period, inflow: v.inflow, outflow: v.outflow, net: v.inflow - v.outflow, confidence: v.conf.length ? v.conf.reduce((s, c) => s + c, 0) / v.conf.length : 0 }));
+  const forecast = cashFlowByMonth(entries, snapshot.cash_forecast, now);
   const metric = (name: string) => snapshot.metric.find((m) => m.name === name);
   const cashMetric = ledgerCash ? undefined : (metric("cash_position") ?? metric("cash_position_usd") ?? metric("cash_balance"));
   return {

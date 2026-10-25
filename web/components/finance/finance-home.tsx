@@ -4,19 +4,20 @@
  * back office that keeps it, in real time. Everything renders from `useOps()`
  * (live SpacetimeDB or the labeled browser simulation); nothing polls.
  *
- * Top to bottom: 4 KPI tiles → cash + forecast | needs attention →
- * operations → agent crew → invoices & payments | activity.
+ * Top to bottom: header → 4 KPI tiles → cash + forecast | needs attention.
+ * Operations and invoices live on their own routes (/operations, /invoices).
  */
 import { Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useOps } from "@/components/data-provider";
-import { AgentCrew } from "./agent-crew";
+import { AGENT_IDS } from "@/lib/agents";
+import { fmtAgo } from "@/lib/ops";
+import { fmtSince } from "@/lib/view-epoch";
+import { EpochNote } from "@/components/shell/view-epoch";
 import { AttentionQueue } from "./attention-queue";
 import { ForecastBars, LineChart, Sparkline } from "./charts";
 import { CountUp } from "./count-up";
 import { change, count, dayLabel, emptyNote, usd, usdShort } from "./format";
-import { InvoicesPanel } from "./invoices-table";
-import { LiveTicker } from "./live-ticker";
 import "./finance.css";
 
 const pct1 = (v: number) => `${v.toFixed(1)}%`;
@@ -26,26 +27,66 @@ const reveal = (i: number) => ({ "--delay": `${i * 70}ms` }) as CSSProperties;
 
 export default function FinanceHome() {
   return (
-    <div className="fl-page fh">
+    <div className="fl-page fh fh-overview">
+      <Header />
       <KpiTiles />
-      <div className="fh-row fh-row-main fl-reveal" style={reveal(1)}>
+      <div className="fh-row fh-row-main fl-reveal" style={reveal(2)}>
         <CashPanel />
         <AttentionQueue id="attention" />
-      </div>
-      <div className="fl-reveal" style={reveal(2)}>
-        <OpsStrip />
-      </div>
-      <div className="fl-reveal" style={reveal(3)}>
-        <AgentCrew />
-      </div>
-      <div className="fh-row fh-row-bottom fl-reveal" style={reveal(4)}>
-        <InvoicesPanel />
-        <LiveTicker />
       </div>
       <Suspense fallback={null}>
         <FocusFromQuery />
       </Suspense>
     </div>
+  );
+}
+
+/* ------------------------------- header ------------------------------- */
+
+function Header() {
+  const { source, simulated, ops, workloads, attention, now, lastUpdated } = useOps();
+  const total = AGENT_IDS.length;
+  const online = Math.min(total, ops.agentsOnline);
+  // Orphaned `working` rows are not in flight; nothing is advancing them.
+  const inFlight = Math.max(0, ops.tasksActive - AGENT_IDS.reduce((s, id) => s + workloads[id].stalled, 0));
+  const provenance = simulated ? "Simulated" : source === "live" ? "Live" : source === "fallback" ? "Snapshot" : source === "connecting" ? "Connecting" : "Offline";
+  return (
+    <header className="fh-header fl-reveal" style={reveal(0)}>
+      <div className="fh-header-id">
+        <div className="fl-section" style={{ "--accent": simulated ? "var(--lilac)" : "var(--teal)" } as CSSProperties}>
+          Financial health · {provenance}
+        </div>
+        <h1 className="fl-display fh-wordmark">
+          <span className="ln">
+            <span>Golden Gate Freight</span>
+          </span>
+        </h1>
+        <div className="fh-header-sub">
+          Autonomous back office · <span className="fl-num">{count(ops.casesActive)}</span> open cases ·{" "}
+          <span className="fl-num">{count(inFlight)}</span> tasks in flight
+        </div>
+      </div>
+      <div className="fh-header-status">
+        <div className="fh-chips">
+          {simulated && (
+            <span className="fl-chip agent outline" title="Rows are generated in this browser and are not recorded anywhere">
+              Simulated
+            </span>
+          )}
+          <span className={`fl-chip outline ${online === total ? "ok" : online > 0 ? "warn" : ""}`}>
+            <i className={`fl-dot ${online ? "pulse" : ""}`} />
+            {online}/{total} agents online
+          </span>
+          <a href="#attention" className={`fl-chip outline ${attention.length ? "hot" : source === "live" || simulated ? "ok" : ""}`}>
+            {attention.length} need attention
+          </a>
+        </div>
+        <div className="fl-micro" suppressHydrationWarning>
+          {lastUpdated ? `Updated ${fmtAgo(lastUpdated, now)}` : source === "connecting" ? "Connecting…" : "No updates yet"}
+        </div>
+        <EpochNote />
+      </div>
+    </header>
   );
 }
 
@@ -79,7 +120,10 @@ function Delta({ change: c, good }: { change: { abs: number; pct: number | null 
 }
 
 function KpiTiles() {
-  const { finance, snapshot, source } = useOps();
+  const { finance, snapshot, source, viewEpoch, now } = useOps();
+  // After "Start fresh" the tiles total ledger activity since the epoch, not all-time balances.
+  const since = viewEpoch.active && viewEpoch.epoch ? fmtSince(viewEpoch.epoch.since, now) : "";
+  const sinceDelta = since ? <span className="fh-delta flat">since {since}</span> : null;
   const hasLedger = snapshot.ledger_entry.length > 0;
   const series = useMemo(
     () => ({
@@ -101,7 +145,7 @@ function KpiTiles() {
       color: "var(--teal)",
       series: series.cash,
       good: "up",
-      delta: <Delta change={cashChange} good="up" />,
+      delta: sinceDelta ?? <Delta change={cashChange} good="up" />,
     },
     {
       key: "ap",
@@ -111,7 +155,7 @@ function KpiTiles() {
       color: "var(--aqua)",
       series: series.ap,
       good: "none",
-      delta: <Delta change={change(finance.trends.ap)} good="none" />,
+      delta: sinceDelta ?? <Delta change={change(finance.trends.ap)} good="none" />,
       foot: (
         <>
           <b className="fl-num">{count(finance.outstandingInvoices.count)}</b> open<span className="fh-long"> invoices</span> · <b className="fl-num">{count(finance.heldInvoices.count)}</b> held
@@ -126,8 +170,9 @@ function KpiTiles() {
       color: "var(--lilac)",
       series: series.ar,
       good: "none",
-      delta: <Delta change={change(finance.trends.ar)} good="none" />,
-      foot: dso ? (
+      delta: sinceDelta ?? <Delta change={change(finance.trends.ar)} good="none" />,
+      // Days of sales outstanding needs a 30-day revenue base, which an epoch does not give.
+      foot: dso && !since ? (
         <>
           DSO <b className="fl-num">{Math.round(dso)}</b> days
         </>
@@ -141,10 +186,10 @@ function KpiTiles() {
       color: "var(--yellow)",
       series: series.revenue,
       good: "up",
-      delta: <span className="fh-delta flat">30d {usdShort(finance.revenue30d)}</span>,
+      delta: sinceDelta ?? <span className="fh-delta flat">30d {usdShort(finance.revenue30d)}</span>,
       foot: (
         <>
-          Margin <b className="fl-num">{pct1(finance.grossMarginPct)}</b> · 30 days
+          Margin <b className="fl-num">{pct1(finance.grossMarginPct)}</b> · {since ? `since ${since}` : "30 days"}
         </>
       ),
     },
@@ -175,7 +220,7 @@ function KpiTiles() {
 /* ---------------------------- cash position ---------------------------- */
 
 function CashPanel() {
-  const { finance, snapshot, source } = useOps();
+  const { finance, snapshot, source, viewEpoch, now } = useOps();
   const [range, setRange] = useState<7 | 30>(30);
   const [hover, setHover] = useState<number | null>(null);
   const points = useMemo(() => finance.trends.cash.slice(-(range + 1)), [finance.trends.cash, range]);
@@ -188,6 +233,7 @@ function CashPanel() {
     <section className="fl-panel fh-cash" aria-label="Cash position">
       <header className="fl-panel-head">
         <span className="fl-section">Cash</span>
+        {viewEpoch.active && viewEpoch.epoch && <span className="fl-micro">Net since {fmtSince(viewEpoch.epoch.since, now)}</span>}
         <span className="fh-head-meta">
           {hovered && (
             <span className="fh-cash-hover fl-num">
@@ -240,7 +286,7 @@ function CashPanel() {
 
 /* ------------------------- autonomous operations ------------------------- */
 
-function OpsStrip() {
+export function OpsStrip() {
   const { ops, caseList, now } = useOps();
   const dayStart = new Date(now).setHours(0, 0, 0, 0);
   const today = useMemo(() => caseList.filter((c) => c.openedAt >= dayStart).length, [caseList, dayStart]);

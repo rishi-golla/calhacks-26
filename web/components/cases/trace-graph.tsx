@@ -16,6 +16,9 @@ import { fmtMoney } from "@/lib/ops";
 import { str } from "@/lib/data";
 import {
   clock,
+  dispatchReason,
+  eventLabel,
+  milestoneAt,
   nodeStatus,
   shortDur,
   timer,
@@ -82,6 +85,18 @@ export const TraceGraph = memo(function TraceGraph(props: GraphProps) {
   const statuses = useMemo(() => new Map(trace.nodes.map((n) => [n.id, nodeStatus(n, cursor)])), [trace, cursor]);
   const visible = trace.nodes.filter((n) => statuses.get(n.id));
   const headY = layout.yOf(clockAt);
+  // Lifecycle events: small ticks on the Intake lane, shown once the cursor passes them.
+  const intakeLane = layout.laneById.get("intake");
+  const ticks = intakeLane
+    ? trace.milestones.flatMap((m) => {
+        const text = milestoneAt(m, cursor);
+        const y = layout.anchorY.get(m.id);
+        if (!text || y === undefined) return [];
+        const seen = m.times.filter((t) => t <= cursor);
+        const when = seen.length > 1 ? `${clock(seen[0])}–${clock(seen[seen.length - 1])}` : clock(m.at);
+        return [{ m, y, text, title: `${m.type === "gps.ping" ? text : eventLabel(m.type)} · ${when} · logged, no agent needed` }];
+      })
+    : [];
 
   const edges = trace.edges.filter((e) => e.at <= cursor && statuses.get(e.from) && statuses.get(e.to));
   const edgeGeom = edges.map((e) => {
@@ -109,6 +124,8 @@ export const TraceGraph = memo(function TraceGraph(props: GraphProps) {
   const laneMood = (lane: string): { mood: Mood; asleep: boolean; label: string } => {
     const mine = trace.nodes.filter((n) => n.lane === lane);
     const seen = mine.filter((n) => statuses.get(n.id));
+    // Only lifecycle ticks so far: the router is following the load, nothing to route yet.
+    if (!seen.length && lane === "intake" && ticks.length) return { mood: "idle", asleep: false, label: "watching" };
     if (!seen.length) return { mood: "sleeping", asleep: true, label: "not yet" };
     const st = seen.map((n) => statuses.get(n.id)!);
     if (seen.some((n) => celebrating.has(n.id))) return { mood: "success", asleep: false, label: "done" };
@@ -238,6 +255,10 @@ export const TraceGraph = memo(function TraceGraph(props: GraphProps) {
               </g>
             );
           })}
+          {intakeLane &&
+            ticks.map((k) => (
+              <line key={k.m.id} x1={intakeLane.lineX - 4} x2={intakeLane.lineX + 4} y1={k.y} y2={k.y} className="ct-milestone-tick" />
+            ))}
           {showHead && <line x1={8} x2={layout.width - 8} y1={headY} y2={headY} className={`ct-head-line ${replay ? "replay" : ""}`} />}
         </svg>
 
@@ -251,6 +272,13 @@ export const TraceGraph = memo(function TraceGraph(props: GraphProps) {
             {clock(l.t)}
           </span>
         ))}
+        {intakeLane &&
+          ticks.map((k) => (
+            <span key={k.m.id} className="ct-milestone fl-reveal" style={{ left: intakeLane.cardX, top: k.y - 7 }} title={k.title}>
+              {k.text}
+              <span className="fl-mono">{clock(k.m.at)}</span>
+            </span>
+          ))}
         {showHead && (
           <span className={`ct-head-label ${replay ? "replay" : ""}`} style={{ transform: `translateY(${headY - 9}px)` }}>
             {replay ? clock(clockAt) : "NOW"}
@@ -436,13 +464,14 @@ function TaskBody({ node, trace, status, statuses, cursor, clockAt }: CardProps)
 }
 
 const INTAKE_TITLES: Record<string, string> = {
-  accepted: "Routed", duplicate: "Duplicate", not_routed: "Not routed", triage: "Triage",
+  accepted: "Routed", duplicate: "Duplicate", triage: "Triage",
 };
 
 function IntakeBody({ node, clockAt, status }: CardProps) {
   const d = node.dispatch!;
   const decision = str(d.status, "");
   const agent = str(d.agent, "");
+  const reason = dispatchReason(str(d.reason, "")) || "routed";
   return (
     <>
       <span className="ct-card-top">
@@ -450,10 +479,10 @@ function IntakeBody({ node, clockAt, status }: CardProps) {
         <StatusBadge node={node} status={status} clockAt={clockAt} />
       </span>
       <span className="ct-card-line" style={{ color: agent ? agentColor(agent) : undefined }}>
-        {agent ? `→ ${agentLabel(agent)}` : decision === "not_routed" ? "No agent needed" : "Held for a person"}
+        {agent ? `→ ${agentLabel(agent)}` : "Held for a person"}
       </span>
-      <span className="ct-card-line fl-mute" title={str(d.reason, "")}>
-        {str(d.reason, "routed")}
+      <span className="ct-card-line fl-mute" title={reason}>
+        {reason}
       </span>
     </>
   );

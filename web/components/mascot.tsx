@@ -91,7 +91,6 @@ export function Mascot({
           </svg>
         )}
       </span>
-      <span className="mascot-shadow" />
       {mood === "working" && (
         <span className="mascot-sparkles" aria-hidden>
           <i />

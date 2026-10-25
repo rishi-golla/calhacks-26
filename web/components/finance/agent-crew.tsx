@@ -97,7 +97,7 @@ export function AgentCrew() {
               <Link
                 href="/agents"
                 className="fh-crew-item"
-                aria-label={`${a.name} (${a.nick}): ${status}, ${w?.active ?? 0} active, ${w?.queued ?? 0} queued`}
+                aria-label={`${a.name} (${a.nick}): ${status}, ${w?.active ?? 0} active, ${w?.queued ?? 0} queued${w?.stalled ? `, ${w.stalled} stalled` : ""}`}
                 title={`${a.name} · ${a.role}`}
               >
                 <Mascot id={a.id} size={64} mood={moodForStatus(status, failed)} bubble={bubbles[a.id]?.text} />

@@ -12,6 +12,7 @@ import {
   fmtAgo,
   fmtDuration,
   fmtMoney,
+  intakeArriving,
   taskView,
 } from "./ops";
 
@@ -207,6 +208,90 @@ test("buildWorkloads marks stale after 60 s and counts active/queued from tasks"
   assert.equal(buildWorkloads(snap({ agent: [{ name: "risk", last_seen: at(-60) }] }), NOW).risk.status, "idle");
 });
 
+const beat = (status: string, o: Row = {}): Row => ({ name: "carrier_ap", last_seen: at(-5), status, ...o });
+const workload = (agent: Row | null, tasks: Row[]) =>
+  buildWorkloads(snap({ agent: agent ? [agent] : [], task: tasks }), NOW).carrier_ap;
+
+test("buildWorkloads: busy heartbeat with a fresh working task is working", () => {
+  const w = workload(beat("busy"), [task({ updated_at: at(-10) })]);
+  assert.equal(w.status, "working");
+  assert.equal(w.active, 1);
+  assert.equal(w.stalled, 0);
+  assert.deepEqual(w.activeTasks.map((t) => t.taskId), ["T1"]);
+});
+
+test("buildWorkloads: idle heartbeat with orphaned working rows is idle and stalled", () => {
+  const w = workload(beat("online", { active: 24 }), [
+    task({ task_id: "T1", updated_at: at(-20 * 60) }),
+    task({ task_id: "T2", case_id: "C2", updated_at: at(-60 * 60) }),
+  ]);
+  assert.equal(w.status, "idle");
+  assert.equal(w.active, 0);
+  assert.notEqual(w.active, 24);
+  assert.equal(w.stalled, 2);
+  assert.deepEqual(w.activeCases, []);
+  assert.deepEqual(w.activeTasks, []);
+});
+
+test("buildWorkloads: idle heartbeat lag at task start still counts a recent row as live", () => {
+  const w = workload(beat("online"), [task({ updated_at: at(-30) })]);
+  assert.equal(w.status, "working");
+  assert.equal(w.active, 1);
+  assert.equal(w.stalled, 0);
+  assert.deepEqual(w.activeCases, ["C1"]);
+});
+
+test("buildWorkloads: busy heartbeat extends liveness to 15 min but not beyond", () => {
+  const w = workload(beat("busy"), [
+    task({ task_id: "T1", updated_at: at(-5 * 60) }),
+    task({ task_id: "T2", updated_at: at(-60 * 60) }),
+  ]);
+  assert.deepEqual(w.activeTasks.map((t) => t.taskId), ["T1"]);
+  assert.equal(w.active, 1);
+  assert.equal(w.stalled, 1);
+  assert.equal(w.status, "working");
+  // the same 5-minute-quiet row is stalled once the heartbeat is idle
+  const idle = workload(beat("online"), [task({ updated_at: at(-5 * 60) })]);
+  assert.equal(idle.stalled, 1);
+  assert.equal(idle.active, 0);
+});
+
+test("buildWorkloads: busy heartbeat with no task rows is working with one active", () => {
+  const w = workload(beat("busy"), []);
+  assert.equal(w.status, "working");
+  assert.equal(w.active, 1);
+  assert.equal(w.stalled, 0);
+  assert.deepEqual(w.activeTasks, []);
+});
+
+test("buildWorkloads: stale heartbeat is stale and its working rows are stalled; error beats busy", () => {
+  const stale = workload(beat("busy", { last_seen: at(-61) }), [task({ updated_at: at(-10 * 60) })]);
+  assert.equal(stale.status, "stale");
+  assert.equal(stale.stalled, 1);
+  assert.equal(stale.active, 0);
+  assert.equal(workload(beat("error"), [task({ updated_at: at(-5) })]).status, "error");
+  assert.equal(workload(null, []).status, "offline");
+});
+
+test("buildWorkloads: a row without updated_at ages from started_at", () => {
+  const old = workload(beat("online"), [task({ updated_at: "", started_at: at(-10 * 60) })]);
+  assert.equal(old.stalled, 1);
+  assert.equal(old.active, 0);
+  const fresh = workload(beat("online"), [task({ updated_at: "", started_at: at(-20) })]);
+  assert.equal(fresh.stalled, 0);
+  assert.equal(fresh.active, 1);
+});
+
+test("intakeArriving is true only for cases opened within 30 s", () => {
+  const cases = (...offsets: number[]) =>
+    buildCases(snap({ case: offsets.map((o, i) => ({ case_id: `C${i}`, status: "open", opened_at: at(o) })) })).values();
+  assert.equal(intakeArriving(cases(-300, -600, -3600), NOW), false);
+  assert.equal(intakeArriving(cases(-300, -10), NOW), true);
+  assert.equal(intakeArriving(cases(-30), NOW), true);
+  assert.equal(intakeArriving(cases(-31), NOW), false);
+  assert.equal(intakeArriving([], NOW), false);
+});
+
 test("buildFinance computes balances from ledger lines", () => {
   const entry = (id: string, offsetDays: number, lines: object[]) => ({
     id,
@@ -356,4 +441,24 @@ test("fmtMoney / fmtDuration / fmtAgo edge cases", () => {
   assert.equal(fmtAgo(NOW - 5 * 60_000, NOW), "5m ago");
   assert.equal(fmtAgo(NOW - 3 * 3_600_000, NOW), "3h ago");
   assert.equal(fmtAgo(NOW - 2 * 86_400_000, NOW), "2d ago");
+});
+
+test("diffSnapshots: live doc reads count only alongside their audit row", () => {
+  const old = (n: number) => ({ id: `DR-old-${n}`, task_id: "T1", agent: "documents", doc_ref: `doc:old-${n}` });
+  const base = snap({ task: [task({ task_id: "T1" })] });
+  // A task update pulls its old reads into the window: history, not news.
+  const replay = snap({ task: [task({ task_id: "T1", updated_at: at(30) })], doc_read: [old(1), old(2)] });
+  assert.deepEqual(diffSnapshots(base, replay).filter((e) => e.type === "doc_read"), []);
+  // A fresh read arrives with its record_doc_read audit row, possibly beside old ones.
+  const fresh = snap({
+    task: replay.task,
+    doc_read: [old(1), old(2), { id: "DR-new", task_id: "T1", agent: "documents", doc_ref: "doc:new" }],
+    audit_event: [{ id: "a9", kind: "record_doc_read", case_id: "C1", task_id: "T1", ts: at(31) }],
+  });
+  const reads = diffSnapshots(base, fresh).filter((e) => e.type === "doc_read") as { docRef: string; at: number }[];
+  assert.deepEqual(reads.map((e) => e.docRef), ["doc:new"]);
+  assert.equal(reads[0].at, Date.parse(at(31)));
+  // Simulated reads carry their own timestamp and need no audit row.
+  const sim = snap({ doc_read: [{ id: "DR-s", task_id: "T1", doc_ref: "doc:s", ts: at(4) }] });
+  assert.equal(diffSnapshots(base, sim).filter((e) => e.type === "doc_read").length, 1);
 });

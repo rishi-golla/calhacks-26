@@ -30,6 +30,8 @@ export const TABLES = [
   "routing_outbox",
   "memory_revision",
   "accounting_period",
+  // Newer modules only; see `optional` in lib/live-queries.
+  "view_epoch",
 ] as const;
 export type TableName = (typeof TABLES)[number];
 export type Row = Record<string, unknown>;
@@ -192,7 +194,8 @@ export type HumanReducer =
   | "update_case"
   | "set_agent_model"
   | "revert_instruction_version"
-  | "upsert_memory";
+  | "upsert_memory"
+  | "set_view_epoch";
 export function exportCsv(name: string, rows: Row[]) {
   if (!rows.length) return;
   const keys = [...new Set(rows.flatMap((row) => Object.keys(row)))];

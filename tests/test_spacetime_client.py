@@ -156,7 +156,7 @@ async def test_approval_reference_is_still_checked_by_server():
     client = client_with(handler, actor="controller")
     with pytest.raises(spacetime.SpacetimeHTTPError) as error:
         await client.mutate("release_hold", {"id": "HOLD-1", "amount": 7000, "human_approval_id": "APP-1"})
-    assert len(requests) == 3
+    assert len(requests) == 4  # hold, the invoice's holds, approval, mutation
     assert error.value.kind == "rejected"
     assert "secret" not in str(error.value)
 
@@ -244,7 +244,7 @@ async def test_release_without_amount_checks_actual_remaining_hold_and_approval_
         return httpx.Response(200)
 
     await client_with(handler, actor="controller").mutate("release_hold", {"id": "HOLD-1", "approval_id": "APP-1"})
-    assert len(requests) == 3
+    assert len(requests) == 4
 
 
 @pytest.mark.parametrize(("original", "approval_amount", "allowed"), [
@@ -275,6 +275,92 @@ async def test_partial_release_approval_uses_original_hold_threshold(original, a
             await client.mutate("release_hold", payload)
         assert error.value.decision.result == "needs_approval"
         assert mutations == []
+
+
+def _hold(hold_id, amount, released=0, invoice="INV-1"):
+    return {"id": hold_id, "case_id": "CASE-1", "invoice_id": invoice,
+            "amount": amount, "released_amount": released}
+
+
+def holds_response(rows):
+    columns = list(rows[0])
+    return httpx.Response(200, json=sql_response(columns, [list(row.values()) for row in rows]))
+
+
+def invoice_hold_handler(target, invoice_holds, mutations, sql=None, approval_amount=None):
+    """Answers the release_hold preflight: the stored hold by id, then its invoice's holds."""
+    def handler(request):
+        if request.url.path.endswith("/sql"):
+            query = request.content.decode()
+            if sql is not None:
+                sql.append(query)
+            if '"hold"' in query and "invoice_id" in query:
+                return holds_response(invoice_holds)
+            if '"hold"' in query:
+                return row_response(target)
+            return row_response(approved_record(action="release_hold", target_id=target["id"],
+                                                amount=approval_amount))
+        mutations.append(json.loads(json.loads(request.content)[0]))
+        return httpx.Response(200)
+    return handler
+
+
+@pytest.mark.parametrize("siblings", [
+    [_hold("HOLD-2", 3000)],                       # two open sub-threshold holds, $6,000 held
+    [_hold("HOLD-2", 3000, released=3000)],        # a released hold still counts
+    [_hold("HOLD-2", 1000), _hold("HOLD-3", 1001)],  # exposure $5,001
+])
+async def test_p003_release_without_approval_is_refused_when_invoice_exposure_exceeds_threshold(siblings):
+    mutations = []
+    target = _hold("HOLD-1", 3000)
+    handler = invoice_hold_handler(target, [target, *siblings], mutations)
+    with pytest.raises(spacetime.SpacetimePolicyError) as error:
+        await client_with(handler, actor="controller").mutate("release_hold", {"id": "HOLD-1", "amount": 3000})
+    assert error.value.decision.result == "needs_approval"
+    assert "P-003" in error.value.decision.policy_ids
+    assert mutations == []
+
+
+async def test_p003_release_with_matching_approval_passes_on_split_holds():
+    mutations = []
+    target = _hold("HOLD-1", 3000)
+    handler = invoice_hold_handler(target, [target, _hold("HOLD-2", 3000)], mutations, approval_amount=3000)
+    payload = {"id": "HOLD-1", "amount": 3000, "approval_id": "APP-1", "write_id": "split-release"}
+    await client_with(handler, actor="controller").mutate("release_hold", payload)
+    assert mutations == [payload]
+
+
+async def test_p003_release_on_invoice_at_or_below_threshold_needs_no_approval():
+    mutations, sql = [], []
+    target = _hold("HOLD-1", 3000)
+    handler = invoice_hold_handler(target, [target, _hold("HOLD-2", 2000)], mutations, sql=sql)
+    payload = {"id": "HOLD-1", "amount": 3000, "write_id": "small-release"}
+    await client_with(handler, actor="controller").mutate("release_hold", payload)
+    assert mutations == [payload]
+    assert sql[1] == """SELECT * FROM "hold" WHERE invoice_id = 'INV-1'"""
+    assert not any('"approval"' in query for query in sql)
+
+
+async def test_p003_preflight_counts_the_stored_hold_even_if_the_invoice_read_omits_it():
+    mutations = []
+    target = _hold("HOLD-1", 3000)
+    handler = invoice_hold_handler(target, [_hold("HOLD-2", 2500)], mutations)
+    with pytest.raises(spacetime.SpacetimePolicyError) as error:
+        await client_with(handler, actor="controller").mutate("release_hold", {"id": "HOLD-1", "amount": 100})
+    assert error.value.decision.result == "needs_approval"
+    assert mutations == []
+
+
+@pytest.mark.parametrize("bad_rows", [
+    [_hold("HOLD-1", 3000), _hold("HOLD-9", 10, invoice="INV-OTHER")],
+    [_hold("HOLD-1", 3000), {**_hold("HOLD-2", 10), "amount": "not-a-number"}],
+])
+async def test_p003_preflight_rejects_inconsistent_invoice_hold_rows(bad_rows):
+    mutations = []
+    handler = invoice_hold_handler(_hold("HOLD-1", 3000), bad_rows, mutations)
+    with pytest.raises(spacetime.SpacetimeProtocolError):
+        await client_with(handler, actor="controller").mutate("release_hold", {"id": "HOLD-1", "amount": 100})
+    assert mutations == []
 
 
 @pytest.mark.parametrize(("requester", "allowed"), [("carrier_ap", True), ("controller", False)])
@@ -321,6 +407,7 @@ async def test_scoped_human_approval_receipt_is_not_claim_of_success(monkeypatch
     (400, "rejected", False), (401, "authorization", False), (403, "authorization", False),
     (404, "not_found", False), (409, "conflict", False), (429, "rate_limited", False),
     (500, "server", True), (503, "server", True), (307, "rejected", False),
+    (530, "rejected", False),   # a reducer that threw: the write rolled back, nothing committed
 ])
 async def test_http_failures_classified_without_retry_redirect_or_body_leak(status, kind, uncertain):
     requests = []
@@ -547,3 +634,21 @@ def test_journal_lines_normalizes_sql_triples_for_policy_and_reducers():
     assert spacetime.journal_lines([["cash", 1]]) == [["cash", 1]] and spacetime.journal_lines(None) is None
     assert policy.check("post_journal_entry", "controller", {"requested_by": "shipper_ar",
                         "lines": spacetime.journal_lines(stored)}).result == "allow"
+
+
+@pytest.mark.parametrize(("status", "body", "reason"), [
+    (530, "audit task does not exist", "audit task does not exist"),
+    (530, "summary must be a string of at most 4096 characters\n    at finish (operations.ts:94)",
+     "summary must be a string of at most 4096 characters"),
+    (530, "Bearer abc.def leaked", ""),
+    (530, "<html>" + "x" * 300, ""),
+    (500, "audit task does not exist", ""),
+])
+async def test_refused_reducer_keeps_only_a_bounded_module_reason(status, body, reason):
+    def handler(_request):
+        return httpx.Response(status, text=body)
+
+    with pytest.raises(spacetime.SpacetimeHTTPError) as error:
+        await client_with(handler, actor="validator").mutate("append_audit", {"write_id": "w"})
+    assert error.value.reason == reason
+    assert body not in str(error.value)

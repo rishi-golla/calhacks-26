@@ -65,6 +65,9 @@ class DurableRequestHandler(DefaultRequestHandler):
         self._admission_lock = asyncio.Lock()
         self._recovery_wakeup = asyncio.Event()
         executor.wake_recovery = self._recovery_wakeup.set
+        # The first orphan sweep waits one interval: a fresh process first drains its own outbox.
+        self._last_sweep = time.monotonic()
+        self._sweep_interval = float(os.getenv("A2A_ORPHAN_SWEEP_S", "60"))
         executor.confirm_state = self._confirm_state
 
     async def _confirm_state(self, task_id, state):
@@ -242,6 +245,12 @@ class DurableRequestHandler(DefaultRequestHandler):
         from common.a2a_transport import get_task, send_task
         if os.getenv("SPACETIME_DISABLED", "1") != "1":
             await self.executor.flush_projections()
+            if self._sweep_interval > 0 and time.monotonic() - self._last_sweep >= self._sweep_interval:
+                self._last_sweep = time.monotonic()
+                try:
+                    await self.executor.sweep_orphaned_tasks()
+                except Exception as error:  # noqa: BLE001 -- a dashboard read outage never blocks recovery
+                    log.warning("Orphaned task sweep deferred: %s", type(error).__name__)
         for row in await self.store.recoverable(self.name):
             context = ServerCallContext(state={"internal": True, "admitted_id": row["id"]})
             stored = await self.snapshots.get(row["id"], context)
@@ -273,6 +282,17 @@ class DurableRequestHandler(DefaultRequestHandler):
                         except Exception as error:  # noqa: BLE001 -- retain dependency on peer failure
                             log.warning("Child reconciliation deferred: %s", type(error).__name__)
                             continue
+                elif row["wait_kind"] == "approval" and os.getenv("SPACETIME_DISABLED", "1") != "1":
+                    # A human decides in W2 (decide_approval); nothing calls back, so poll the row.
+                    try:
+                        decision = await self._approval_decision(row)
+                        if decision:
+                            await self.store.put_input(row["id"], row["wait_key"],
+                                                       f"approval:{row['wait_key']}:{decision}",
+                                                       {"approval_id": row["wait_key"], "decision": decision})
+                    except Exception as error:  # noqa: BLE001 -- keep waiting through a W2 outage
+                        log.warning("Approval reconciliation deferred: %s", type(error).__name__)
+                        continue
                 if not await self.store.pending_inputs(row["id"], row["wait_key"]):
                     continue
             # Backpressure: only queue a task once per process, even before it claims a lease.
@@ -287,6 +307,22 @@ class DurableRequestHandler(DefaultRequestHandler):
                 continue
             await self.on_message_send(SendMessageRequest(message=message,
                 configuration=SendMessageConfiguration(return_immediately=True)), context)
+
+    async def _approval_decision(self, row) -> str | None:
+        """Return a final human decision for this task's own approval, else None while pending."""
+        from common.agent_support import rows
+        stored = await rows(self.name, "approval", "id", row["wait_key"])
+        if not stored:
+            return None
+        approval = stored[0]
+        if (len(stored) != 1 or approval.get("id") != row["wait_key"]
+                or approval.get("case_id") != row["envelope"]["case_id"] or approval.get("task_id") != row["id"]):
+            raise ValueError("approval identity mismatch")
+        decision = approval.get("decision")
+        # decide_approval records a decision only with a verified one-time code.
+        if decision == "rejected" or (decision == "approved" and approval.get("code_ok") is True):
+            return decision
+        return None
 
     async def recovery_loop(self):
         while True:
@@ -304,6 +340,10 @@ class DurableRequestHandler(DefaultRequestHandler):
 
 def _readiness(executor):
     from common.providers import configuration, mode
+    if mode() == "live":
+        missing = [name for name in getattr(executor, "live_required_env", ()) if not os.getenv(name, "").strip()]
+        if missing:
+            raise ValueError(f"live mode requires {', '.join(missing)}")
     provider = configuration(executor.name)
     if mode() == "live":
         if provider.provider != "openai":
@@ -316,7 +356,10 @@ def _readiness(executor):
             raise ValueError("live mode requires the service actor SpacetimeDB credential")
         if not os.getenv("SPACETIME_URL") or not os.getenv("SPACETIME_DB"):
             raise ValueError("live mode requires explicit SpacetimeDB URL and database")
-        if not os.getenv("SOURCE_DATA_PATH") or not Path(os.environ["SOURCE_DATA_PATH"]).is_file():
+        from common.source_repository import source_backend
+        # SpacetimeDB is required above, so the spacetime backend needs no local file.
+        if source_backend() == "file" and (not os.getenv("SOURCE_DATA_PATH")
+                                           or not Path(os.environ["SOURCE_DATA_PATH"]).is_file()):
             raise ValueError("live mode requires an accessible source dataset")
         credentials = [os.getenv(f"A2A_TOKEN_{actor.upper()}", "") for actor in sorted(SERVICE_ACTORS)]
         if any(not value for value in credentials) or len(set(credentials)) != len(credentials):
@@ -366,6 +409,11 @@ def build_app(executor: FreightAgent, descriptions: dict[str, str]) -> Starlette
 
     @asynccontextmanager
     async def lifespan(app):
+        try:
+            _readiness(executor)
+        except Exception as error:  # noqa: BLE001 -- report, then let /readyz and requests refuse
+            # Readiness messages name settings, never their values. /readyz reports only the type.
+            log.error("%s is not ready: %s", executor.name, error)
         await executor.store.initialize()
         async with executor.store.schema_lock():
             await snapshots.initialize()

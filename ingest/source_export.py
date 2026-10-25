@@ -94,14 +94,36 @@ def _load_facts(load: dict, brokerage: str | None) -> dict:
     return facts
 
 
-def _receivable(shipper_invoice: dict | None, deposits: list[dict]) -> dict:
+def candidate_target(deposit: dict, invoice_ids: set[str]) -> str | None:
+    """The invoice a deposit is cash on: its own reference once that names a shipper invoice (an invoice issued after
+    the cash arrived), else the invoice ingest matched it to as unapplied cash, else its reference."""
+    reference = deposit.get("invoice_id")
+    if reference in invoice_ids:
+        return reference
+    return deposit.get("matched_invoice_id") or reference
+
+
+def _receivable(shipper_invoice: dict | None, deposits: list[dict], invoice_ids: set[str] | None = None) -> dict:
     if not shipper_invoice:
         return {}
     invoice_id = shipper_invoice["invoice_id"]
-    return {"shipper_invoice_id": invoice_id, "shipper_invoice_amount": shipper_invoice.get("amount"),
-            "deposits": [{key: deposit[key] for key in ("id", "shipper_id", "invoice_id", "amount", "posted_at")}
-                         for deposit in deposits if deposit.get("invoice_id") == invoice_id],
-            "deduction_reason": shipper_invoice.get("deduction_reason")}
+    receivable = {"shipper_invoice_id": invoice_id, "shipper_invoice_amount": shipper_invoice.get("amount"),
+                  "deposits": [{key: deposit[key] for key in ("id", "shipper_id", "invoice_id", "amount", "posted_at")}
+                               for deposit in deposits if deposit.get("invoice_id") == invoice_id],
+                  "deduction_reason": shipper_invoice.get("deduction_reason")}
+    # Cash whose bank reference named no invoice, matched to this one by shipper and amount: a candidate for
+    # review, never cash applied (`deposits`). Only present when there is some, so other cases keep their digest.
+    invoice_ids = invoice_ids if invoice_ids is not None else {invoice_id}
+    unapplied = [{"id": deposit["id"], "shipper_id": deposit.get("candidate_shipper_id"),
+                  "amount": deposit.get("amount"),
+                  "posted_at": deposit.get("posted_at"), "remittance_ref": deposit.get("invoice_id"),
+                  "candidate_invoice_id": invoice_id, "match_basis": deposit.get("match_basis"),
+                  "reference_mismatch": True}
+                 for deposit in deposits if deposit.get("matched_invoice_id") == invoice_id
+                 and candidate_target(deposit, invoice_ids) == invoice_id]
+    if unapplied:
+        receivable["unapplied_deposits"] = unapplied
+    return receivable
 
 
 def _payable(invoice: dict, invoices: list[dict], documents: list[dict]) -> dict:
@@ -145,6 +167,7 @@ def build_cases(db: sqlite3.Connection, brokerage: str | None = None) -> dict[st
     invoices = _rows(db, "invoices")
     shipper_invoices = {item.get("load_id"): item for item in _rows(db, "shipper_invoices")}
     deposits = _rows(db, "deposits")
+    invoice_ids = {item["invoice_id"] for item in shipper_invoices.values() if item.get("invoice_id")}
     changes = _rows(db, "bank_changes")
     by_load: dict[str, list[dict]] = {}
     for invoice in invoices:
@@ -157,7 +180,7 @@ def build_cases(db: sqlite3.Connection, brokerage: str | None = None) -> dict[st
     for load_id, load in loads.items():
         facts = _load_facts(load, brokerage)
         doc_refs = [doc["ref"] for doc in facts["documents"]]
-        receivable = _receivable(shipper_invoices.get(load_id), deposits)
+        receivable = _receivable(shipper_invoices.get(load_id), deposits, invoice_ids)
         sinv_refs = (shipper_invoices.get(load_id) or {}).get("_evidence_refs", [])
         load_invoices = by_load.get(load_id, [])
         for invoice in load_invoices:
@@ -267,6 +290,7 @@ class Exporter:
         self.max_age_s = max_age_s
         self.dirty = True  # the first flush writes the file even before any new arrival
         self.last_flush = 0.0
+        self.written: dict | None = None  # the dataset last written, until the SpacetimeDB mirror takes it
 
     def changed(self) -> None:
         self.dirty = True
@@ -274,15 +298,22 @@ class Exporter:
     def flush(self, db: sqlite3.Connection, dataset: dict | None = None) -> None:
         """Write `dataset` (built from the current state of `db`) or, when stale, a fresh build."""
         if dataset is not None or self.dirty:
-            write(dataset or build(db), self.target)
+            dataset = dataset or build(db)
+            write(dataset, self.target)
             self.dirty = False
             self.last_flush = time.monotonic()
+            self.written = dataset
 
     def flush_if_due(self, db: sqlite3.Connection) -> None:
         """Flush stale state at most once per `max_age_s`: a full rebuild and fsync per raw arrival capped ingest
         at about ten events per second, while nothing but a routable case needs the file current immediately."""
         if self.dirty and time.monotonic() - self.last_flush >= self.max_age_s:
             self.flush(db)
+
+    def take(self) -> dict | None:
+        """The newest dataset written since the last call, for the source-record mirror to diff."""
+        dataset, self.written = self.written, None
+        return dataset
 
 
 async def _replay(events_path: Path, db: sqlite3.Connection) -> int:

@@ -3,6 +3,7 @@ import test from "node:test";
 import { AGENT_META, isAgentId, type AgentId } from "./agents";
 import { TABLES, type Row, type Snapshot } from "./data";
 import { DemoSim } from "./demo-sim";
+import { buildWorkloads } from "./ops";
 import { parseChecks, parseWorkings, recheckWorking } from "./workings";
 
 const NOW = Date.parse("2026-10-24T12:00:00.000Z");
@@ -202,6 +203,22 @@ test("simulated review checks carry severity, basis and work", () => {
       assert.ok(checks.some((c) => c.severity === "advisory"));
       assert.ok(checks.every((c) => c.basis));
       for (const c of checks) if (c.work) assert.equal(recheckWorking(c.work).status, "match", c.name);
+    }
+  }
+});
+
+test("agent map: after history fast-forward some agent is working, backed by a busy heartbeat", () => {
+  for (const seed of SEEDS) {
+    const sim = make(seed);
+    for (let i = 1; i <= 24; i++) sim.tick(NOW + i * 5_000);
+    const now = NOW + 24 * 5_000;
+    const s = sim.snapshot();
+    const workloads = buildWorkloads(s, now);
+    const working = Object.values(workloads).filter((w) => w.status === "working");
+    assert.ok(working.length > 0, `seed ${seed}: no working agent`);
+    for (const w of working) {
+      assert.equal(s.agent.find((r) => r.name === w.id)?.status, "busy", `${w.id} working without busy heartbeat`);
+      assert.ok(w.active >= 1);
     }
   }
 });

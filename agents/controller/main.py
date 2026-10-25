@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from agents.controller.card import DESCRIPTIONS
 from agents.risk.tools import audit_charges, charge_workings
+from common import policy
 from common.agent_support import (
     child_envelope,
     evidence,
@@ -17,7 +18,7 @@ from common.agent_support import (
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
-from common.source_repository import (  # noqa: F401 -- fixture_mode: PR #16's HUMAN_APPROVER_ID branch
+from common.source_repository import (
     SourceRepository,
     SourceUnavailable,
     fixture_mode,
@@ -33,8 +34,14 @@ def journal_working(label: str, lines: list[dict], debit: Decimal, credit: Decim
                    "balanced": bool(lines) and debit == credit}, unit="text", basis="P-006")
 
 
+class HumanApproverNotConfigured(RuntimeError):
+    """No designated human could ever decide the approval, so parking would wait forever."""
+
+
 class ControllerAgent(FreightAgent):
     name = "controller"
+    # decide_approval accepts only the designated human principal named at request time.
+    live_required_env = ("HUMAN_APPROVER_ID",)
 
     async def approval(self, env, task_id, source, action, target_id, amount):
         approval_id = identifier(task_id, "approval:" + action + ":" + target_id)
@@ -45,12 +52,17 @@ class ControllerAgent(FreightAgent):
                 return {"approval_id": approval_id, "approved": False, "rejected": True}
             if approval.get("decision") == "approved" and approval.get("code_ok") is True:
                 return {"approval_id": approval_id, "approved": True}
-        approver = os.getenv("HUMAN_APPROVER_ID")
-        if not approver:
-            await self.park(task_id, "awaiting_human_approval", "approval", approval_id,
-                            details={"action": action, "amount": number(amount),
-                                     "reason": "designated human approver is not configured"})
         if not stored:
+            # A pending request already names its approver; only a new request needs one.
+            approver = os.getenv("HUMAN_APPROVER_ID", "").strip()
+            if not approver:
+                if not fixture_mode():
+                    raise HumanApproverNotConfigured(
+                        "HUMAN_APPROVER_ID must name the SpacetimeDB human principal that decides approvals")
+                # Simulated runs have no W2 approver; show the wait without requesting one.
+                await self.park(task_id, "awaiting_human_approval", "approval", approval_id,
+                                details={"action": action, "amount": number(amount),
+                                         "reason": "designated human approver is not configured"})
             await mutate(self, env, task_id, "request_approval", {
                 "id": approval_id, "action": action, "target_id": target_id,
                 "invoice_id": source["invoice_id"], "amount": number(amount), "approver": approver,
@@ -158,7 +170,15 @@ class ControllerAgent(FreightAgent):
                 return await finish(self, env, task_id, outcome="unverified", findings={
                     "reason": "source evidence does not authorize releasing the hold"}, evidence_refs=refs)
             payload = {"id": hold_id, "amount": number(release)}
-            if money(hold["amount"]) > 5000:
+            # P-003 counts every hold ever placed on this invoice, so split holds still need a human.
+            if fixture_mode():
+                invoice_holds = [item for item in source.get("holds", [])
+                                 if item.get("invoice_id", hold.get("invoice_id")) == hold.get("invoice_id")]
+            else:
+                invoice_holds = await rows(self.name, "hold", "invoice_id", hold["invoice_id"])
+            if policy.release_hold_needs_approval({
+                    "amount": release, "hold_amount": hold["amount"],
+                    "invoice_hold_total": policy.invoice_hold_exposure(invoice_holds)}):
                 decision = await self.approval(env, task_id, source, "release_hold", hold_id, release)
                 if not decision["approved"]:
                     return await finish(self, env, task_id, outcome="reject", findings=decision,

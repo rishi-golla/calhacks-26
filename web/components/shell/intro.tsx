@@ -3,6 +3,7 @@
  * First-load intro: Senra-style hairline grid drawing itself in with GSAP
  * (scaleX / scaleY from 0, quint.inOut, staggered), wordmark fade, then the
  * overlay lifts. Plays once per session; skipped under reduced motion.
+ * `onDone` fires when the overlay starts lifting (or at once when skipped).
  *
  * The whole screen sits inside Canvas UI's Grid, so on Chrome with
  * html-in-canvas enabled the intro is a field of 3D tiles that ripple away
@@ -54,7 +55,6 @@ export default function Intro({ onDone }: { onDone?: () => void }) {
           /* ignore */
         }
         setShow(false);
-        done.current?.();
       },
     });
     tl.to(xs, { scaleX: 1, duration: 1.4, stagger: 0.08 }, 0)
@@ -62,7 +62,10 @@ export default function Intro({ onDone }: { onDone?: () => void }) {
       .to(word, { opacity: 1, duration: 1.1, ease: "quint.out" }, 0.7)
       .to(word, { y: -10, opacity: 0, duration: 0.5, ease: "quint.in" }, "+=0.5")
       .to([xs, ys], { opacity: 0, duration: 0.6, ease: "quint.out", stagger: 0.015 }, "<")
-      .to(el, { yPercent: -100, duration: 0.8, ease: "quint.inOut" }, "-=0.2");
+      .addLabel("lift", "-=0.2")
+      // Release the page's entry choreography as the overlay starts lifting, so it plays in view.
+      .call(() => done.current?.(), undefined, "lift")
+      .to(el, { yPercent: -100, duration: 0.8, ease: "quint.inOut" }, "lift");
     return () => {
       tl.kill();
     };

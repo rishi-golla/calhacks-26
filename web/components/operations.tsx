@@ -14,7 +14,7 @@ import {
   timestamp,
   type Row,
 } from "@/lib/data";
-import { useLive } from "./live-provider";
+import { useCaseFocus, useLive } from "./live-provider";
 import {
   Badge,
   DataTable,
@@ -38,8 +38,11 @@ const AgentNetwork = dynamic(() => import("./agent-network"), {
 export type Notify = (message: string, error?: boolean) => void;
 export function Scoreboard() {
   const { data, state } = useLive();
+  // The evaluator writes -1 for a ratio with nothing to divide by; show it as "—".
   const metrics = new Map(
-    data.metric.map((row) => [str(row.name), num(row.value)]),
+    data.metric
+      .filter((row) => num(row.value) >= 0)
+      .map((row) => [str(row.name), num(row.value)]),
   );
   const value = (names: string[]) =>
     names.map((name) => metrics.get(name)).find((item) => item !== undefined);
@@ -275,6 +278,8 @@ export function CasesView({
   notify: Notify;
 }) {
   const { data, mutate, state } = useLive();
+  // The selected case's full audit and doc-read history, not just the live window.
+  useCaseFocus(selected);
   const [agent, setAgent] = useState("");
   const [taskId, setTaskId] = useState("");
   const [busy, setBusy] = useState(false);

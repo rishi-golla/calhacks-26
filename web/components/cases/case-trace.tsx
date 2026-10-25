@@ -24,7 +24,8 @@ const SPEEDS: Speed[] = [1, 4, 16];
 const IDLE_SKIP_MS = 8_000;
 
 export default function CaseTrace({ caseId }: { caseId: string }) {
-  const { snapshot, cases, now, simulated, source } = useOps();
+  // Unscoped: a direct link to a case from before a "Start fresh" epoch still opens.
+  const { fullSnapshot: snapshot, allCases: cases, now, simulated, source } = useOps();
   const c = cases.get(caseId);
   const trace = useMemo(() => buildCaseTrace(snapshot, caseId), [snapshot, caseId]);
 
@@ -165,7 +166,7 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
         });
       }, 900),
     );
-  });
+  }, { unscoped: true });
 
   /* -------- scrolling: follow the replay head, stick to the bottom while live -------- */
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -188,7 +189,7 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
   }, [layout.height, replay]);
 
   /* -------- render -------- */
-  if (!c && trace.nodes.length === 0) {
+  if (!c && trace.nodes.length === 0 && trace.milestones.length === 0) {
     return (
       <div className={`ct-missing ${simulated ? "is-sim" : ""}`}>
         <Mascot id="intake" size={96} mood={source === "connecting" ? "working" : "alert"} />
@@ -378,7 +379,11 @@ function Scrubber(p: {
 }) {
   const span = Math.max(1, p.tEnd - p.t0);
   const progress = Math.min(1, Math.max(0, (p.at - p.t0) / span));
-  const ticks = p.trace.nodes.filter((n) => n.start >= p.t0).map((n) => ({ id: n.id, x: (n.start - p.t0) / span, color: agentColor(n.lane) }));
+  const ticks = [
+    ...p.trace.nodes.filter((n) => n.start >= p.t0).map((n) => ({ id: n.id, x: (n.start - p.t0) / span, color: agentColor(n.lane) })),
+    // Lifecycle milestones: muted, they are context rather than work.
+    ...p.trace.milestones.filter((m) => m.at >= p.t0).map((m) => ({ id: m.id, x: (m.at - p.t0) / span, color: "var(--text-mute)" })),
+  ];
   return (
     <div className="ct-scrubber">
       <button className="fl-btn small ct-play" onClick={p.onToggle} aria-label={p.playing ? "Pause replay" : "Play replay"}>

@@ -146,6 +146,14 @@ const spacetimedb = schema({
   demo_target: table({ name: 'demo_target', public: true }, {
     phone: pk(), label: s(), enabled: t.bool(),
   }),
+  // Per-record source truth agents read in place of source.json. Synthetic data, public by decision.
+  source_record: table({ name: 'source_record', public: true }, {
+    id: pk(), kind: s(), case_id: indexed(), record_json: s(), digest: s(), updated_at: s(),
+  }),
+  // Public singleton keyed 'current': the dashboard hides activity before `since`. No row, no boundary.
+  view_epoch: table({ name: 'view_epoch', public: true }, {
+    id: pk(), since: s(), set_by: s(), set_at: s(),
+  }),
   approval_secret: table({ name: 'approval_secret' }, {
     approval_id: pk(), code_hash: s(), expires_micros: t.u64(), attempts: t.u32(), consumed: t.bool(),
   }),

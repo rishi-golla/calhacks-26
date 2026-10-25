@@ -1,7 +1,9 @@
 """Deterministic controls (PRD section 9). Called before every state-changing tool.
 SpacetimeDB reducers enforce the ledger rules again (defense in depth)."""
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Literal
+from decimal import Decimal, InvalidOperation
+from typing import Any, Literal
 
 APPROVAL_THRESHOLD_USD = 5_000
 CONTRACT_TOLERANCE = 0.02
@@ -12,6 +14,32 @@ class Decision:
     result: Literal["allow", "deny", "needs_approval"]
     policy_ids: list[str] = field(default_factory=list)
     reason: str = ""
+
+
+def _usd(value: Any) -> Decimal:
+    if isinstance(value, bool) or value is None:
+        raise ValueError("amount must be a number")
+    try:
+        amount = Decimal(str(value))
+    except InvalidOperation:
+        raise ValueError("amount must be a number") from None
+    if not amount.is_finite():
+        raise ValueError("amount must be finite")
+    return amount
+
+
+def invoice_hold_exposure(holds: Iterable[Mapping[str, Any]]) -> Decimal:
+    """P-003 base for release_hold: the original amounts of every hold ever placed on one
+    invoice, released holds included. Holds are never deleted or shrunk, so this total only
+    grows, and at most the threshold of an invoice can be released without a human."""
+    return sum((_usd(hold["amount"]) for hold in holds), Decimal(0))
+
+
+def release_hold_needs_approval(payload: Mapping[str, Any]) -> bool:
+    """Mirror of the release_hold reducer. ``invoice_hold_total`` is invoice_hold_exposure() of
+    the hold's invoice; ``hold_amount`` is the hold's original amount; ``amount`` the release."""
+    keys = ("amount", "hold_amount", "invoice_hold_total")
+    return any(_usd(payload[key]) > APPROVAL_THRESHOLD_USD for key in keys if key in payload)
 
 
 def check(action: str, actor: str, payload: dict) -> Decision:
@@ -28,7 +56,9 @@ def check(action: str, actor: str, payload: dict) -> Decision:
     if action in ("release_hold", "post_journal_entry", "approve"):
         if payload.get("requested_by") and payload.get("requested_by") == actor:
             return Decision("deny", ["P-005"], "requester cannot approve")
-        if action == "release_hold" and payload.get("amount", 0) > APPROVAL_THRESHOLD_USD \
+        # Split or partially released holds cannot dodge P-003: the threshold applies to
+        # everything held on the invoice, not to this release or this hold alone.
+        if action == "release_hold" and release_hold_needs_approval(payload) \
                 and not payload.get("human_approval_id"):
             return Decision("needs_approval", ["P-003"], "release above threshold needs a human")
     if action == "post_journal_entry":

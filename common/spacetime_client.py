@@ -78,6 +78,14 @@ class SpacetimeTransportError(SpacetimeError):
 HTTPFailure = Literal["authorization", "not_found", "conflict", "rate_limited", "rejected", "server"]
 
 
+REDUCER_REFUSED_STATUS = 530
+"""SpacetimeDB 2.x answers a reducer that threw (a refused write) with HTTP 530.
+
+That is a deterministic rejection whose transaction rolled back, not a server
+fault: it is classified ``rejected`` and never ``may_have_committed``.
+"""
+
+
 class SpacetimeHTTPError(SpacetimeError):
     """Non-success HTTP status, without potentially sensitive server error text."""
 
@@ -85,10 +93,26 @@ class SpacetimeHTTPError(SpacetimeError):
         self.status_code = status_code
         self.kind: HTTPFailure = {
             401: "authorization", 403: "authorization", 404: "not_found",
-            409: "conflict", 429: "rate_limited",
+            409: "conflict", 429: "rate_limited", REDUCER_REFUSED_STATUS: "rejected",
         }.get(status_code, "server" if status_code >= 500 else "rejected")
-        self.may_have_committed = mutation and (status_code >= 500 or status_code == 408)
+        self.may_have_committed = mutation and (
+            status_code == 408 or (status_code >= 500 and status_code != REDUCER_REFUSED_STATUS))
+        # A refused reducer's own error text (module-authored, e.g. "audit task does not exist"), bounded and
+        # never part of str(self). Empty for every other status.
+        self.reason = ""
         super().__init__(f"SpacetimeDB HTTP {status_code} ({self.kind})")
+
+
+_REASON = re.compile(r"[A-Za-z0-9 _.,:;'()=/%+\-\u2013]{1,200}")
+_SECRETISH = re.compile(r"(?:bearer|token|secret|password|sk-|pk-|@)", re.IGNORECASE)
+
+
+def reducer_reason(body: str) -> str:
+    """The first line of a refused reducer's message when it is plain module text, else ''."""
+    line = (body or "").strip().splitlines()[0].strip() if (body or "").strip() else ""
+    if not _REASON.fullmatch(line) or _SECRETISH.search(line):
+        return ""
+    return line
 
 
 class SpacetimeProtocolError(SpacetimeError):
@@ -276,7 +300,10 @@ class SpacetimeClient:
                 may_have_committed=mutation and not definitely_not_sent,
             ) from None
         if not response.is_success:
-            raise SpacetimeHTTPError(response.status_code, mutation=mutation)
+            error = SpacetimeHTTPError(response.status_code, mutation=mutation)
+            if response.status_code == REDUCER_REFUSED_STATUS:
+                error.reason = reducer_reason(response.text)
+            raise error
         return response
 
     async def _stored_row(self, table: str, row_id: Any) -> dict[str, Any]:
@@ -285,6 +312,19 @@ class SpacetimeClient:
         if len(rows) != 1:
             raise SpacetimePolicyError(table, policy.Decision("deny", reason="required stored row missing"))
         return rows[0]
+
+    async def _invoice_holds(self, hold: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Every hold ever placed on ``hold``'s invoice, released ones included (P-003 base)."""
+        invoice_id = hold.get("invoice_id")
+        if not isinstance(invoice_id, str) or not invoice_id:
+            raise SpacetimeProtocolError("SpacetimeDB returned a hold without an invoice")
+        rows = await self.query_rows(f'SELECT * FROM "hold" WHERE invoice_id = {_sql_string(invoice_id)}')
+        if any(row.get("invoice_id") != invoice_id for row in rows):
+            raise SpacetimeProtocolError("SpacetimeDB returned a hold for another invoice")
+        # The stored hold is on its own invoice even if a lagging read omits it.
+        if not any(row.get("id") == hold.get("id") for row in rows):
+            rows.append(dict(hold))
+        return rows
 
     async def _verified_approval(self, name: str, payload: Mapping[str, Any]) -> None:
         approval_id = payload.get("approval_id") or payload.get("human_approval_id")
@@ -344,13 +384,20 @@ class SpacetimeClient:
             checked.update(lines=journal_lines(stored.get("lines")), requested_by=stored.get("requested_by"))
         if name == "release_hold" and checked.get("id"):
             stored = await self._stored_row("hold", checked["id"])
+            invoice_holds = await self._invoice_holds(stored)
             try:
                 original_amount = Decimal(str(stored["amount"]))
                 remaining = float(original_amount - Decimal(str(stored["released_amount"])))
-                requires_stored_approval = original_amount > policy.APPROVAL_THRESHOLD_USD
+                checked.setdefault("amount", remaining)
+                # P-003 mirrors the reducer: the threshold is on every hold ever placed on
+                # the invoice, so split or sequential sub-threshold holds still need a human.
+                requires_stored_approval = policy.release_hold_needs_approval({
+                    "amount": checked["amount"],
+                    "hold_amount": original_amount,
+                    "invoice_hold_total": policy.invoice_hold_exposure(invoice_holds),
+                })
             except (KeyError, TypeError, ValueError, InvalidOperation):
                 raise SpacetimeProtocolError("SpacetimeDB returned an invalid hold balance") from None
-            checked.setdefault("amount", remaining)
             checked["case_id"] = stored["case_id"]
             checked["invoice_id"] = stored["invoice_id"]
         if name == "propose_payment" and checked.get("invoice_id"):
@@ -468,9 +515,25 @@ class SpacetimeClient:
                                limit: int = 10) -> list[dict[str, Any]]:
         """Read active, relevant memory, preferring specific scopes and new versions.
 
-        Every nonempty scope dimension must match the supplied task scope. A
-        task without scope sees only global memory. The stored JSON ``scope``
-        is decoded in returned rows; no task or shared envelope is modified.
+        Matching is deliberately strict, one direction only: every non-null
+        dimension stored on a memory must equal the same key in the requested
+        scope. Consequences:
+
+        * A memory may be *less* specific than the task. A lesson scoped
+          ``{carrier_id, skill}`` applies to a task whose scope also has
+          ``lane`` or ``claim_type``; global (``{}``) memory applies to all.
+        * A memory may never be *more* specific than the task. If the task's
+          scope lacks a dimension the memory has (e.g. no ``lane``, or the
+          source record was unavailable so only ``skill`` is known), the
+          memory does not match: it cannot be shown to apply.
+        * A memory never applies across a different value, so one carrier's
+          lesson is never shown for another carrier.
+
+        Matches rank by number of scope dimensions, then version, then id.
+        Callers should build ``scope`` with ``common.learning.memory_scope``,
+        the same derivation the Validator writes lessons with. The stored
+        JSON ``scope`` is decoded in returned rows; no task or shared
+        envelope is modified.
         """
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise SpacetimeConfigurationError("memory limit must be a positive integer")

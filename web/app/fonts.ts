@@ -1,4 +1,4 @@
-import { Archivo, Doto, Inter, JetBrains_Mono } from "next/font/google";
+import { Archivo, Doto, Inter, Inter_Tight, JetBrains_Mono } from "next/font/google";
 
 /** Display: condensed, uppercase, industrial (Senra / Edgerun tone). */
 export const display = Archivo({
@@ -30,4 +30,12 @@ export const body = Inter({
   display: "swap",
 });
 
-export const fontClassNames = [display.variable, label.variable, mono.variable, body.variable].join(" ");
+/** Headline face for the glass theme. */
+export const tight = Inter_Tight({
+  subsets: ["latin"],
+  weight: ["500", "600"],
+  variable: "--ff-tight",
+  display: "swap",
+});
+
+export const fontClassNames = [display.variable, label.variable, mono.variable, body.variable, tight.variable].join(" ");

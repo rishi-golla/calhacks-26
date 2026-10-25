@@ -21,17 +21,6 @@
   display: block;
   user-select: none;
   -webkit-user-drag: none;
-  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.45));
-}
-.mascot-shadow {
-  position: absolute;
-  left: 18%;
-  right: 18%;
-  bottom: -2%;
-  height: 7%;
-  border-radius: 50%;
-  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.55), transparent 70%);
-  animation: mascot-shadow 3.2s ease-in-out infinite;
 }
 @keyframes mascot-breathe {
   0%,
@@ -40,17 +29,6 @@
   }
   50% {
     transform: translateY(-3%) scale(0.985, 1.015);
-  }
-}
-@keyframes mascot-shadow {
-  0%,
-  100% {
-    transform: scaleX(1);
-    opacity: 0.9;
-  }
-  50% {
-    transform: scaleX(0.92);
-    opacity: 0.7;
   }
 }
 
@@ -300,7 +278,6 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .mascot-body,
-  .mascot-shadow,
   .mascot-sparkles i,
   .mascot-drop,
   .mascot-ring,

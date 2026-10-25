@@ -9,6 +9,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
+from datetime import datetime
 
 import httpx
 from a2a.client.errors import A2AClientError
@@ -21,13 +22,35 @@ from google.protobuf.json_format import MessageToDict
 
 from common.config import AGENTS, MAX_DELEGATION_DEPTH, MAX_FANOUT, SKILL_OWNER
 from common.envelope import DelegationMeta, ResultArtifact, TaskEnvelope
-from common.runtime_store import LeaseLost, RuntimeStore, stable_id, task_id_for
+from common.runtime_store import LeaseLost, RuntimeStore, projection_target, stable_id, task_id_for
 
 log = logging.getLogger(__name__)
 TERMINAL_STATES = {TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_FAILED,
                    TaskState.TASK_STATE_CANCELED, TaskState.TASK_STATE_REJECTED}
 WAIT_STATES = {TaskState.TASK_STATE_INPUT_REQUIRED, TaskState.TASK_STATE_AUTH_REQUIRED}
 _execution: ContextVar[tuple[str, str, int] | None] = ContextVar("freight_execution", default=None)
+
+
+TERMINAL_NAMES = frozenset({"completed", "failed", "canceled", "rejected"})
+
+
+def minimal_state_projection(payload: dict, target: str) -> dict:
+    """The same task transition with its state and a compact artifact, for a full terminal row the module refused.
+
+    It carries every column needed to create the row, so it also lands on a database that never saw the task's
+    earlier rows. Memory and instruction references, the usual reasons for a refusal, are left out; the artifact
+    keeps the outcome so review (queued by the module on this transition) does not see an empty result."""
+    keep = ("task_id", "case_id", "agent", "skill", "parent_task_id", "display_id", "a2a_state", "business_status",
+            "outcome", "confidence", "model_used")
+    row = {key: payload[key] for key in keep if key in payload}
+    refs = [ref for ref in payload.get("evidence_refs", []) if isinstance(ref, str) and len(ref) <= 500][:50]
+    policies = [item for item in payload.get("policy_ids", []) if isinstance(item, str)][:20]
+    if "artifact_json" in payload or "outcome" in payload:
+        row.update(evidence_refs=refs, policy_ids=policies, artifact_json={
+            "outcome": payload.get("outcome", ""), "confidence": payload.get("confidence", 0),
+            "evidence_refs": refs, "policy_ids": policies, "findings": {"details_omitted": True}})
+    return {**row, "write_id": stable_id("projection-state", payload["write_id"]), "_target": target,
+            "_fallback": True}
 
 
 def projection_rejected(status_code: int) -> bool:
@@ -38,6 +61,14 @@ def projection_rejected(status_code: int) -> bool:
 
 class DelegationRefused(ValueError):
     pass
+
+
+class RecordedFailure(Exception):
+    """A previous run of this task failed; only recording the failure in the A2A store remains."""
+
+    def __init__(self, failure: dict):
+        self.failure = failure
+        super().__init__(failure.get("error", "failed"))
 
 
 class TaskParked(Exception):
@@ -56,6 +87,8 @@ def _meta_dict(message) -> dict:
 
 class FreightAgent(AgentExecutor):
     name: str = ""
+    # Environment settings live service readiness requires for this role.
+    live_required_env: tuple[str, ...] = ()
 
     def __init__(self, *, store: RuntimeStore | None = None):
         self.store = store or RuntimeStore()
@@ -68,6 +101,7 @@ class FreightAgent(AgentExecutor):
         # restores waiting, for tests or a local database.
         self._projection_wakeup = asyncio.Event()
         self.inline_projections = os.getenv("A2A_PROJECTION_DELIVERY", "background") == "inline"
+        self._held_warned_at = float("-inf")
 
     async def confirm_state(self, task_id: str, state: int) -> None:
         """Bound to the SDK store by build_app; direct handler tests have no SDK queue."""
@@ -150,6 +184,11 @@ class FreightAgent(AgentExecutor):
             try:
                 if env.task_type not in AGENTS[self.name].skills:
                     raise ValueError("skill is not owned by this service")
+                recorded = await self.store.get_step(task_id, "__failure")
+                if recorded is not None:
+                    # An earlier run already failed (and projected it) but the A2A store did not record it:
+                    # finish recording that failure instead of running the task again.
+                    raise RecordedFailure(recorded)
                 await updater.update_status(TaskState.TASK_STATE_WORKING,
                     metadata={"business_status": "investigating", "agent": self.name})
                 await self._project(task_id, env, meta, "working", "investigating")
@@ -190,23 +229,48 @@ class FreightAgent(AgentExecutor):
                 final_status = "queued"
             except Exception as error:  # noqa: BLE001 -- executor boundary records a safe failure artifact
                 from common.providers import ProviderError
-                failure = {"error": type(error).__name__}
-                if isinstance(error, ProviderError):  # its message is written to be safe: no response, key or prompt
-                    failure["detail"] = str(error)[:200]
-                log.warning("%s task %s failed: %s%s", self.name, task_id, type(error).__name__,
-                            f" ({failure['detail']})" if "detail" in failure else "")
-                await updater.add_artifact(parts=[new_data_part(failure)],
-                    artifact_id=stable_id("artifact", task_id, "error"), name="error")
-                await updater.failed()
+                replay = isinstance(error, RecordedFailure)
+                if replay:
+                    failure = error.failure
+                    log.info("%s task %s: recording its earlier failure in the A2A store", self.name, task_id)
+                else:
+                    failure = {"error": type(error).__name__}
+                    if isinstance(error, ProviderError):  # its message is safe: no response, key or prompt
+                        failure["detail"] = str(error)[:200]
+                    elif getattr(error, "reason", ""):  # a refused reducer's bounded module text
+                        failure["detail"] = str(error.reason)[:200]
+                    log.warning("%s task %s failed: %s%s", self.name, task_id, type(error).__name__,
+                                f" ({failure['detail']})" if "detail" in failure else "")
+                # Record the failure durably and queue the dashboard's terminal row before any SDK call that could
+                # raise, so a failure the SDK does not record still never leaves the SpacetimeDB task `working`.
+                # Only the current lease holder may declare the task failed.
                 try:
+                    await self._assert_execution(task_id)
+                    owns_lease = True
+                except LeaseLost:
+                    owns_lease = False
+                if owns_lease and not replay:
+                    try:
+                        await self.store.set_step(task_id, "__failure", failure)
+                        await self._project(task_id, env, meta, "failed", "failed")
+                    except Exception:  # noqa: BLE001 -- retain primary failure if projection is unavailable
+                        log.warning("Failed task projection remains unavailable for %s", task_id)
+                try:
+                    await updater.add_artifact(parts=[new_data_part(failure)],
+                        artifact_id=stable_id("artifact", task_id, "error"), name="error")
+                    await updater.failed()
                     await self.confirm_state(task_id, TaskState.TASK_STATE_FAILED)
-                    final_status = "failed"
+                    final_status = "failed" if owns_lease else "queued"
                 except LeaseLost:
                     final_status = "queued"
-                try:
-                    await self._project(task_id, env, meta, "failed", "failed")
-                except Exception:  # noqa: BLE001 -- retain primary failure if projection is unavailable
-                    log.warning("Failed task projection remains unavailable for %s", task_id)
+                except Exception as sdk_error:
+                    # Stay recoverable until the A2A snapshot is terminal. Raising lets the SDK persist the failed
+                    # snapshot itself; recovery then copies that terminal state into this store. If even that
+                    # write fails, the next run finds `__failure` and records it without executing the task again.
+                    log.warning("%s task %s failure could not be recorded through the A2A event queue: %s",
+                                self.name, task_id, type(sdk_error).__name__)
+                    final_status = "queued"
+                    raise
             finally:
                 async def cleanup():
                     heartbeat.cancel()
@@ -246,7 +310,7 @@ class FreightAgent(AgentExecutor):
         from common.policy import check
         if check("upsert_task", self.name, payload).result != "allow":
             raise PermissionError("task projection denied by policy")
-        await self.store.queue_projection(self.name, payload)
+        await self.store.queue_projection(self.name, {**payload, "_target": projection_target()})
         await self.deliver_projections(task_id)
 
     async def deliver_projections(self, task_id: str) -> None:
@@ -271,22 +335,35 @@ class FreightAgent(AgentExecutor):
 
     async def flush_projections(self, task_id: str | None = None) -> None:
         """Deliver persisted activity in task order; ambiguous retries keep the same write ID. A row the module
-        rejects outright blocks only its own task's later rows, so one bad projection cannot stall every task."""
+        rejects outright blocks only its own task's later rows, so one bad projection cannot stall every task.
+
+        A row is delivered only to the SpacetimeDB database it was written for. Pointing a service at another
+        database (a local rehearsal on the same runtime store) leaves the other database's rows pending instead of
+        sending them where their tasks do not exist, where every one would be rejected and dropped for good."""
         from common.policy import check
         from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError, SpacetimeTransportError
         blocked = set()
         async with self._projection_lock:
-            for event in await self.store.pending_projections(self.name, task_id):
+            # One client per pass, and the target it actually writes to, so a row is never sent elsewhere.
+            client = SpacetimeClient(actor=self.name)
+            current = f"{client.url}/{client.database}"
+            await self._warn_held_projections(current)
+            for event in await self.store.pending_projections(self.name, task_id, target=current):
                 if event["task_id"] in blocked:
                     continue
                 payload = json.loads(event["payload"])
                 operation = payload.pop("_operation", "upsert_task")
+                embedded = payload.pop("_target", None)
+                fallback = payload.pop("_fallback", False)
+                if embedded and embedded != current:
+                    blocked.add(event["task_id"])  # an unmigrated row names another database: never send it here
+                    continue
                 if operation not in {"upsert_task", "append_audit"}:
                     raise ValueError("unsupported activity outbox operation")
                 if check(operation, self.name, payload).result != "allow":
                     raise PermissionError("task projection denied by policy")
                 try:
-                    await SpacetimeClient(actor=self.name).mutate(operation, payload)
+                    await client.mutate(operation, payload)
                     await self.store.acknowledge_projection(event["id"])
                 except (SpacetimeTransportError, SpacetimeHTTPError) as error:
                     blocked.add(event["task_id"])
@@ -294,10 +371,91 @@ class FreightAgent(AgentExecutor):
                         # The module refused this exact write (a reducer that threw, or a malformed row). It is
                         # deterministic, so the row is terminal; the task's later rows get their own attempt next pass.
                         await self.store.reject_projection(event["id"])
-                        log.warning("Task projection rejected by SpacetimeDB (HTTP %s); row %s is terminal",
-                                    error.status_code, event["id"])
+                        reason = getattr(error, "reason", "") or "no reason given"
+                        terminal = operation == "upsert_task" and payload.get("a2a_state") in TERMINAL_NAMES
+                        if terminal and not fallback:
+                            # Never drop a task's final state: retry with only the state, which leaves every other
+                            # column as stored, so a refused artifact, memory or instruction reference cannot
+                            # keep the dashboard showing the task as running.
+                            await self.store.queue_projection(self.name, minimal_state_projection(payload, current))
+                            log.warning("Terminal task projection %s rejected (HTTP %s: %s); retrying state only",
+                                        event["id"], error.status_code, reason)
+                        elif terminal:
+                            log.error("Task %s final state %s could not be recorded in SpacetimeDB (HTTP %s: %s)",
+                                      payload.get("task_id"), payload.get("a2a_state"), error.status_code, reason)
+                        else:
+                            log.warning("Task projection rejected by SpacetimeDB (HTTP %s: %s); row %s is terminal",
+                                        error.status_code, reason, event["id"])
                         continue
                     log.warning("Task projection queued for retry: %s", type(error).__name__)
+
+    async def _warn_held_projections(self, current: str, every_s: float = 300) -> None:
+        """Say how many rows wait for another database, at most every `every_s`: they never reach this one."""
+        now = time.monotonic()
+        if now - self._held_warned_at < every_s:
+            return
+        self._held_warned_at = now
+        held = await self.store.held_projections(self.name, current)
+        if held:
+            log.warning("%d %s activity rows are held for another SpacetimeDB database; they are delivered when "
+                        "this service points at that database again", held, self.name)
+
+    async def sweep_orphaned_tasks(self, *, stale_s: float = 120) -> int:
+        """Repair SpacetimeDB task rows left non-terminal although this service's durable execution ended.
+
+        The runtime store is the execution authority. When it says a task is completed, failed or canceled, no
+        projection for the task is still pending, and the dashboard row has not moved for ``stale_s``, the row is
+        an orphan (its final projection was lost or refused): queue the final state again. Returns rows repaired."""
+        from common.spacetime_client import SpacetimeClient
+        if os.getenv("SPACETIME_DISABLED", "1") == "1":
+            return 0
+        db = SpacetimeClient(actor=self.name)
+        name = self.name.replace("'", "''")
+        rows = []
+        for state in ("submitted", "working", "input-required", "auth-required"):
+            rows.extend(await db.query_rows(
+                f"SELECT * FROM task WHERE agent = '{name}' AND a_2_a_state = '{state}'"))
+        now = time.time()
+        target = projection_target()
+        repaired = 0
+        for row in rows:
+            task_id = row.get("task_id")
+            if not isinstance(task_id, str) or not task_id:
+                continue
+            try:
+                updated = datetime.fromisoformat(str(row.get("updated_at", ""))).timestamp()
+            except ValueError:
+                continue
+            if now - updated < stale_s:
+                continue
+            execution = await self.store.get(task_id)
+            if execution is None or execution["status"] not in TERMINAL_NAMES:
+                continue
+            if await self.store.pending_projections(self.name, task_id, target=target):
+                continue  # its own final row is still on the way
+            payload = {"task_id": task_id, "case_id": row.get("case_id") or execution["envelope"]["case_id"],
+                       "agent": self.name, "skill": row.get("skill") or execution["envelope"]["task_type"],
+                       "parent_task_id": row.get("parent_task_id") or "",
+                       "a2a_state": execution["status"],
+                       "business_status": "resolved" if execution["status"] == "completed" else "failed"}
+            if execution["status"] == "rejected":
+                payload["business_status"] = "rejected"
+            cached = await self.store.get_step(task_id, "__result") if execution["status"] == "completed" else None
+            if cached is not None:
+                result = ResultArtifact.model_validate(cached)
+                payload.update(outcome=result.outcome, confidence=result.confidence,
+                               model_used=result.model_used or "", artifact_json=result.model_dump(),
+                               evidence_refs=result.evidence_refs, policy_ids=result.policy_ids)
+            payload["write_id"] = stable_id("projection-sweep", task_id, execution["status"])
+            if await self.store.projection_exists(payload["write_id"], target):
+                continue  # already repaired once; a second refusal was logged by delivery
+            await self.store.queue_projection(self.name, {**payload, "_target": target})
+            log.warning("Task %s was %s in SpacetimeDB but %s here; final state queued again",
+                        task_id, row.get("a2a_state"), execution["status"])
+            repaired += 1
+        if repaired:
+            self._projection_wakeup.set()
+        return repaired
 
     async def queue_tool_audit(self, payload: dict) -> None:
         """Persist tool telemetry in the task's ordered outbox before best-effort delivery.
@@ -316,7 +474,8 @@ class FreightAgent(AgentExecutor):
         document = {**payload, "write_id": stable_id("tool-audit", self.name, canonical)}
         if check("append_audit", self.name, document).result != "allow":
             raise PermissionError("tool audit denied by policy")
-        await self.store.queue_projection(self.name, {**document, "_operation": "append_audit"})
+        await self.store.queue_projection(self.name, {**document, "_operation": "append_audit",
+                                                      "_target": projection_target()})
         await self.deliver_projections(payload["task_id"])
 
     async def cancel(self, ctx: RequestContext, q: EventQueue) -> None:

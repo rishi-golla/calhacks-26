@@ -12,7 +12,21 @@ import { CheckList, Workings } from "@/components/workings";
 import { agentColor, agentLabel, skillLabel } from "@/lib/agents";
 import { json, num, str, timestamp, type Row } from "@/lib/data";
 import { fmtMoney, type TimelineEvent } from "@/lib/ops";
-import { approvalRequestedAt, clock, maskPhone, nodeStatus, shortDur, toolsAt, type CaseTrace, type NodeStatus, type TraceNode } from "./model";
+import {
+  approvalRequestedAt,
+  clock,
+  dispatchEventType,
+  dispatchReason,
+  eventLabel,
+  isMilestone,
+  maskPhone,
+  nodeStatus,
+  shortDur,
+  toolsAt,
+  type CaseTrace,
+  type NodeStatus,
+  type TraceNode,
+} from "./model";
 
 const TONE: Record<NodeStatus, string> = {
   completed: "ok",
@@ -162,7 +176,7 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
           <p className="ct-line fl-mute">No trigger recorded.</p>
         )}
         {incoming?.kind === "dispatch" && (
-          <p className="ct-quote">{str(trace.nodeById.get(incoming.from)?.dispatch?.reason, "")}</p>
+          <p className="ct-quote">{dispatchReason(str(trace.nodeById.get(incoming.from)?.dispatch?.reason, ""))}</p>
         )}
       </Section>
 
@@ -400,7 +414,7 @@ function IntakeDetails({ trace, node, onSelect }: PanelProps) {
             ["At", <span key="at" className="fl-mono">{clock(node.start)}</span>],
           ]}
         />
-        {str(d.reason, "") && <p className="ct-quote">{str(d.reason)}</p>}
+        {dispatchReason(str(d.reason, "")) && <p className="ct-quote">{dispatchReason(str(d.reason))}</p>}
       </Section>
       <Section title="Links">
         <p className="ct-line">
@@ -494,18 +508,26 @@ export function CaseLog({ trace, cursor, onSelect, onClose }: { trace: CaseTrace
       <ol className="ct-log">
         {[...events].reverse().map((e) => {
           const id = target(e);
+          // A lifecycle event the router only logged reads as "Load delivered · logged", not as a routing.
+          const milestone = e.kind === "dispatch" && isMilestone(e.row);
+          const title = milestone
+            ? `${eventLabel(dispatchEventType(str(e.row.reason, "")))} · logged`
+            : e.kind === "task_started"
+              ? `started ${skillLabel(e.row.skill)}`
+              : e.title.replaceAll("_", " ");
+          const detail = milestone || e.kind === "task_started" ? "" : e.kind === "dispatch" ? dispatchReason(e.detail) : e.detail;
           const body = (
             <>
               <span className="fl-mono fl-mute ct-log-time">{clock(e.at)}</span>
               <span className="ct-log-glyph" style={{ color: agentColor(e.agent) }}>
-                {KIND_GLYPH[e.kind] ?? "·"}
+                {milestone ? "·" : (KIND_GLYPH[e.kind] ?? "·")}
               </span>
               <span className="ct-log-body">
                 <span className="ct-log-agent" style={{ color: agentColor(e.agent) }}>
                   {agentLabel(e.agent)}
                 </span>
-                <span className="ct-log-title">{e.kind === "task_started" ? `started ${skillLabel(e.row.skill)}` : e.title.replaceAll("_", " ")}</span>
-                {e.detail && e.kind !== "task_started" && <span className="ct-log-detail">{e.detail}</span>}
+                <span className="ct-log-title">{title}</span>
+                {detail && <span className="ct-log-detail">{detail}</span>}
               </span>
             </>
           );

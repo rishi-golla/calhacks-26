@@ -283,8 +283,7 @@
   min-width: 0;
   overflow: hidden;
 }
-.fl .cx-agents .mascot.mood-idle .mascot-body,
-.fl .cx-agents .mascot.mood-idle .mascot-shadow {
+.fl .cx-agents .mascot.mood-idle .mascot-body {
   animation: none;
 }
 .fl .cx-row:hover .cx-agents .mascot.mood-idle .mascot-body {
@@ -538,6 +537,24 @@
 .fl .ct-time {
   font-size: 10px;
   color: var(--text-mute);
+}
+/* lifecycle milestones: logged context on the Intake lane, lighter than any card */
+.fl .ct-milestone {
+  position: absolute;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 10.5px;
+  line-height: 14px;
+  white-space: nowrap;
+  color: var(--text-mute);
+}
+.fl .ct-milestone .fl-mono {
+  font-size: 9.5px;
+}
+.fl .ct-milestone-tick {
+  stroke: var(--text-mute);
+  stroke-width: 1.5;
 }
 .fl .ct-head-line {
   stroke: var(--teal);

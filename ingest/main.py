@@ -7,11 +7,14 @@ import os
 import re
 import sqlite3
 import uuid
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from email.utils import parseaddr
 from pathlib import Path
+from time import monotonic
 
 import redis.asyncio as redis
 
+from common.spacetime_client import SpacetimeHTTPError
 from ingest import mirror as spacetime_mirror
 from ingest import source_export
 from ingest.documents import (
@@ -29,8 +32,11 @@ log = logging.getLogger("ingest")
 RAW_STREAM = os.getenv("RAW_STREAM", "raw")
 EVENTS_STREAM = os.getenv("EVENTS_STREAM", "events")
 DOCUMENTS_STREAM = os.getenv("DOCUMENTS_STREAM", "documents")
+DEAD_LETTER_STREAM = f"{RAW_STREAM}:dead_letter"
+DEFAULT_STREAM_MAXLEN = 200_000
 GROUP = "ingest"
 CONSUMER = "ingest-1"
+TRANSIENT, DETERMINISTIC, OTHER = "transient", "deterministic", "other"
 ACCESSORIAL_TERMS = ("detention", "lumper", "layover", "stop-off", "stop off", "tonu", "driver assist")
 # Events ingest derives that open a case for the router; a demo load's one jumps to P0 and carries its outreach target.
 CASE_EVENTS = {"carrier_invoice.received", "bank_change.requested", "shipper_payment.received"}
@@ -42,7 +48,30 @@ CREATE TABLE IF NOT EXISTS bank_offsets (file TEXT PRIMARY KEY, offset INT NOT N
 CREATE TABLE IF NOT EXISTS bank_txns (txn_id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS bank_changes (case_id TEXT PRIMARY KEY, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS deposits (txn_id TEXT PRIMARY KEY, invoice_id TEXT, json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS remittances (reference TEXT PRIMARY KEY, json TEXT NOT NULL);
 """
+
+
+def _stream_maxlen(name: str) -> int:
+    value = os.getenv(name, str(DEFAULT_STREAM_MAXLEN))
+    try:
+        cap = int(value)
+    except ValueError:
+        cap = 0
+    if cap <= 0:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return cap
+
+
+def events_maxlen() -> int:
+    """Cap on Redis `events` (approximate MAXLEN). Entries past it are trimmed whether or not the router has read
+    them, so keep it well above the longest backlog the router may build up."""
+    return _stream_maxlen("EVENTS_STREAM_MAXLEN")
+
+
+def documents_maxlen() -> int:
+    """Cap on Redis `documents` (approximate MAXLEN); unread entries past it are trimmed, as on `events`."""
+    return _stream_maxlen("DOCUMENTS_STREAM_MAXLEN")
 
 
 def data_dir() -> Path:
@@ -436,6 +465,12 @@ def _remittance_advice(trigger: dict, message: dict, db: sqlite3.Connection) -> 
         if invoice_id else None
     invoice = _read_json(row)
     if not invoice:
+        if invoice_id:
+            # Kept so a deposit arriving under this unknown reference can be matched by the PO the advice cites.
+            po_match = re.search(r"\(PO\s+([^)\s]+)\)", message.get("body", ""), re.IGNORECASE)
+            db.execute("INSERT OR REPLACE INTO remittances(reference, json) VALUES (?,?)", (invoice_id, _dump({
+                "reference": invoice_id, "po": po_match.group(1) if po_match else None,
+                "source_email": message.get("mail_id"), "evidence_refs": refs})))
         fields = {"invoice_id": invoice_id, "deduction_reason": reason}
         return [_document_event(trigger, "remittance_advice", "needs_review", fields,
                                 {"invoice_id": 0.95 if invoice_id else 0.0,
@@ -450,6 +485,101 @@ def _remittance_advice(trigger: dict, message: dict, db: sqlite3.Connection) -> 
     return [_document_event(trigger, "remittance_advice", "extracted", fields,
                             {"invoice_id": 0.95, "deduction_reason": 0.95 if reason else 0.0},
                             load={"load_id": invoice.get("load_id")}, case_id=case_id, evidence_refs=refs)]
+
+
+def _cents(value) -> int | None:
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    return int((amount * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP)) if amount.is_finite() else None
+
+
+def _shipper_named(party: dict | None, name: str) -> bool:
+    party = party or {}
+    return any(_same_identifier(party.get(key), name) for key in ("name", "legal_name"))
+
+
+def _unapplied_cash(db: sqlite3.Connection, txn_id: str, amount: float, counterparty: str | None,
+                    reference: str | None) -> dict:
+    """Match a deposit whose remittance reference names no shipper invoice the way a collections clerk applies
+    unreferenced cash: the one open shipper invoice of the remitting shipper whose open balance is exactly this
+    amount; across every shipper only when the remitter is not a known shipper. When a remittance advice cited this
+    reference with a PO, candidates on another PO are dropped, and none left is ambiguous. The result's `invoice` is
+    None unless exactly one invoice is left; the match is a candidate for review, never an applied payment."""
+    invoices = [json.loads(row) for (row,) in db.execute("SELECT json FROM shipper_invoices")]
+    invoice_ids = {invoice["invoice_id"] for invoice in invoices}
+    applied: dict[str, int] = {}
+    for (row,) in db.execute("SELECT json FROM deposits"):
+        deposit = json.loads(row)
+        target = source_export.candidate_target(deposit, invoice_ids)
+        if deposit.get("id") != txn_id and target:
+            applied[target] = applied.get(target, 0) + (_cents(deposit.get("amount")) or 0)
+    paid = _cents(amount)
+    same_amount = []
+    for invoice in invoices:
+        billed = _cents(invoice.get("amount"))
+        balance = billed - applied.get(invoice["invoice_id"], 0) if billed is not None else 0
+        if balance > 0 and balance == paid:
+            same_amount.append(invoice)
+    shippers = [*directory.load().get("shippers", []), *(invoice.get("shipper") or {} for invoice in invoices)]
+    known = bool(counterparty) and any(_shipper_named(party, counterparty) for party in shippers)
+    if known:
+        basis = "shipper_and_amount"
+        candidates = [invoice for invoice in same_amount if _shipper_named(invoice.get("shipper"), counterparty)]
+    else:
+        basis, candidates = "amount_only", same_amount
+    advice = _read_json(db.execute("SELECT json FROM remittances WHERE reference=?", (reference,)).fetchone()) \
+        if reference else None
+    po_conflict = False
+    if candidates and advice and advice.get("po"):
+        # The advice for this reference names a PO: a candidate on another PO is not this cash, even if alone.
+        narrowed = [invoice for invoice in candidates if _same_identifier(invoice.get("po"), advice["po"])]
+        basis, po_conflict = f"{basis}_and_remittance_po", not narrowed
+        candidates = narrowed or candidates
+    return {"invoice": candidates[0] if len(candidates) == 1 and not po_conflict else None, "basis": basis,
+            "shipper_known": known, "counterparty": counterparty,
+            "advice_refs": list((advice or {}).get("evidence_refs") or []),
+            "candidate_invoice_ids": sorted(invoice["invoice_id"] for invoice in candidates),
+            "reason": "ambiguous" if po_conflict or len(candidates) > 1 else
+                      "matched" if candidates else "no_open_invoice"}
+
+
+def _payment_event(trigger: dict, invoice: dict, line: str, txn_id: str | None, paid_amount: float,
+                   direction: str, reference: str | None, match: dict | None = None) -> dict:
+    """The routable shipper_payment.received for a deposit on `invoice`. With `match` the deposit's reference named
+    no invoice; ingest found this one by shipper and amount, so nothing is applied and Shipper Billing & Collections
+    reviews it."""
+    invoice_id = invoice["invoice_id"]
+    billed_amount = float(invoice.get("amount", 0))
+    shipper = invoice.get("shipper") or {}
+    payload = {"case_id": f"{invoice.get('case_id')}-AR", "load_id": invoice.get("load_id"), "lane": invoice.get("lane"),
+               "pro": invoice.get("pro"), "bol": invoice.get("bol"), "po": invoice.get("po"),
+               "invoice_id": invoice_id, "shipper": invoice.get("shipper"), "invoice_amount": billed_amount,
+               "paid_amount": paid_amount, "chase": paid_amount < billed_amount, "remittance": "ACH",
+               "bank_txn": txn_id, "deduction_reason": invoice.get("deduction_reason"),
+               "payment_id": txn_id, "shipper_id": shipper.get("id"), "shipper_name": shipper.get("name"),
+               "amount": paid_amount, "remittance_ref": reference,
+               "invoices_applied": [{"invoice_id": invoice_id, "amount": paid_amount}],
+               "posted_at": trigger.get("sim_ts"), "direction": direction,
+               "text": f"{line}\n{invoice.get('remittance_text', '')}".rstrip(),
+               "evidence_refs": []}
+    if match is not None:
+        payload.update(
+            reference_mismatch=True, invoices_applied=[], candidate_invoice_id=invoice_id,
+            counterparty=match["counterparty"], shipper_known=match["shipper_known"],
+            match_basis=match["basis"], ingest_flags=["reference_mismatch"],
+            review_reason=f"remittance reference {reference!r} matches no shipper invoice; {invoice_id} is the only "
+                          f"open invoice matching by {match['basis'].replace('_', ' ')}. Unapplied cash: review "
+                          "before applying.",
+            text=line)
+    evidence_refs = list(invoice.get("_evidence_refs", []))
+    if match is not None:
+        evidence_refs.extend(ref for ref in match["advice_refs"] if ref not in evidence_refs)
+    elif invoice.get("source_email"):
+        evidence_refs.append(f"mail:{invoice['source_email']}")
+    payload["evidence_refs"] = evidence_refs
+    return _event(trigger, "shipper_payment.received", payload, "P2", evidence_refs)
 
 
 def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
@@ -502,40 +632,45 @@ def _bank_appended(trigger: dict, db: sqlite3.Connection) -> list[dict]:
             continue
         invoice = _read_json(db.execute("SELECT json FROM shipper_invoices WHERE invoice_id=?",
                                         (reference,)).fetchone())
-        if txn_id and direction == "credit":
+        deposit_in = bool(txn_id) and direction == "credit"
+        match = _unapplied_cash(db, txn_id, paid_amount, counterparty, reference) \
+            if deposit_in and not invoice else None
+        if deposit_in:
             deposit = {"id": txn_id, "invoice_id": reference, "amount": paid_amount,
                        "shipper_id": ((invoice or {}).get("shipper") or {}).get("id"),
                        "counterparty": counterparty, "posted_at": trigger.get("sim_ts"), "file": filename}
+            if match and match["invoice"]:
+                # Bank truth stays: the deposit keeps its own reference and is not cash on the candidate invoice.
+                # shipper_id stays as the bank line gave it, so the cash never counts as this shipper's deposit.
+                deposit.update(candidate_shipper_id=(match["invoice"].get("shipper") or {}).get("id"),
+                               reference_mismatch=True, matched_invoice_id=match["invoice"]["invoice_id"],
+                               match_basis=match["basis"])
             db.execute("INSERT OR IGNORE INTO deposits(txn_id, invoice_id, json) VALUES (?,?,?)",
                        (txn_id, reference, _dump(deposit)))
-        if not invoice:
+        if not invoice and not (match and match["invoice"]):
             output.append(_event(trigger, "bank.event", {
                 "amount": paid_amount, "direction": direction, "counterparty": counterparty,
                 "reference": reference, "posted_at": trigger.get("sim_ts"), "txn_id": txn_id,
                 "file": filename, "record": line,
             }))
+            if match:
+                log.warning("unapplied cash: deposit %s of %.2f from %r, reference %r, matches no shipper invoice "
+                            "(%s; candidates %s); held for review", txn_id, paid_amount, counterparty, reference,
+                            match["reason"], ", ".join(match["candidate_invoice_ids"]) or "none")
+                output.append(_document_event(trigger, "bank_deposit", "needs_review", {
+                    "txn_id": txn_id, "amount": paid_amount, "counterparty": counterparty, "reference": reference,
+                    "mismatch": "unapplied_cash", "reason": match["reason"], "match_basis": match["basis"],
+                    "candidate_invoice_ids": match["candidate_invoice_ids"]}))
             if txn_id:
                 db.execute("INSERT OR IGNORE INTO bank_txns(txn_id) VALUES (?)", (txn_id,))
             continue
-        billed_amount = float(invoice.get("amount", 0))
-        case_id = f"{invoice.get('case_id')}-AR"
-        payload = {"case_id": case_id, "load_id": invoice.get("load_id"), "lane": invoice.get("lane"),
-                   "pro": invoice.get("pro"), "bol": invoice.get("bol"), "po": invoice.get("po"),
-                   "invoice_id": reference, "shipper": invoice.get("shipper"), "invoice_amount": billed_amount,
-                   "paid_amount": paid_amount, "chase": paid_amount < billed_amount, "remittance": "ACH",
-                   "bank_txn": txn_id, "deduction_reason": invoice.get("deduction_reason"),
-                   "payment_id": txn_id, "shipper_id": (invoice.get("shipper") or {}).get("id"),
-                   "shipper_name": (invoice.get("shipper") or {}).get("name"),
-                   "amount": paid_amount, "remittance_ref": reference,
-                   "invoices_applied": [{"invoice_id": reference, "amount": paid_amount}],
-                   "posted_at": trigger.get("sim_ts"), "direction": direction,
-                   "text": f"{line}\n{invoice.get('remittance_text', '')}".rstrip(),
-                   "evidence_refs": []}
-        evidence_refs = list(invoice.get("_evidence_refs", []))
-        if invoice.get("source_email"):
-            evidence_refs.append(f"mail:{invoice['source_email']}")
-        payload["evidence_refs"] = evidence_refs
-        output.append(_event(trigger, "shipper_payment.received", payload, "P2", evidence_refs))
+        if invoice:
+            output.append(_payment_event(trigger, invoice, line, txn_id, paid_amount, direction, reference))
+        else:
+            log.info("unapplied cash: deposit %s, reference %r, routed for review against %s (%s)", txn_id,
+                     reference, match["invoice"]["invoice_id"], match["basis"])
+            output.append(_payment_event(trigger, match["invoice"], line, txn_id, paid_amount, direction,
+                                         reference, match))
         if txn_id:
             db.execute("INSERT OR IGNORE INTO bank_txns(txn_id) VALUES (?)", (txn_id,))
     if record is None:
@@ -647,40 +782,140 @@ async def handle(ev: dict, db: sqlite3.Connection) -> list[dict]:
     return derived
 
 
+def failure_class(error: BaseException) -> str:
+    """Cutover plan H2. Deterministic: the module refused the write (HTTP 530 on SpacetimeDB 2.x, though the client
+    files it under `server`) or the request is unauthorized or unknown. Transient: the network, any other 5xx, rate
+    limiting, an exhausted energy budget (402) or a request timeout (408). Everything else (conflict, configuration,
+    policy, non-SpacetimeDB errors) keeps the old retry."""
+    if spacetime_mirror.refused(error) or (
+            isinstance(error, SpacetimeHTTPError) and error.kind in ("authorization", "not_found")):
+        return DETERMINISTIC
+    return TRANSIENT if spacetime_mirror.transient(error) else OTHER
+
+
+async def _dead_letter(r, entry_id, reason: str, raw) -> None:
+    """Atomically, as the router does: the entry lands in the dead-letter stream and leaves the pending list."""
+    async with r.pipeline(transaction=True) as pipe:
+        pipe.xadd(DEAD_LETTER_STREAM, {"entry_id": entry_id, "reason": reason, "json": raw or ""})
+        pipe.xack(RAW_STREAM, GROUP, entry_id)
+        await pipe.execute()
+
+
+class Retry:
+    """How a raw entry whose processing failed is retried. A deterministic SpacetimeDB failure is retried twice,
+    then dead-lettered. An outage is retried with exponential backoff (1 s to 30 s) for as long as it lasts, so no
+    event is published ahead of its source and case; the warning repeats at most once a minute. Anything else is
+    retried every second, as before."""
+
+    ATTEMPTS = 3  # the first try and two retries
+
+    def __init__(self, sleep=asyncio.sleep):
+        self.sleep = sleep
+        self.failures: dict = {}  # entry_id -> deterministic failures so far
+        self.outage = False  # the latest failure was transient
+        self.outage_since: float | None = None
+        self.backoff_s = 1.0
+        self.warn = spacetime_mirror.Throttle(60)
+
+    def succeeded(self, entry_id) -> None:
+        self.failures.pop(entry_id, None)
+        if self.outage_since is not None:
+            log.info("SpacetimeDB reachable again after %.0fs", monotonic() - self.outage_since)
+        self.outage, self.outage_since, self.backoff_s = False, None, 1.0
+        self.warn.reset()
+
+    async def failed(self, r, entry_id, raw, error: BaseException) -> bool:
+        """Record a failure; True when the entry was dead-lettered (and so acknowledged)."""
+        kind = failure_class(error)
+        name = entry_id.decode() if isinstance(entry_id, bytes) else entry_id
+        self.outage = kind == TRANSIENT
+        if kind == TRANSIENT:
+            if self.outage_since is None:
+                self.outage_since = monotonic()
+            if self.warn.due():
+                log.warning("SpacetimeDB unavailable for %.0fs (%s); raw entry %s stays pending, retrying with "
+                            "backoff up to %.0fs", monotonic() - self.outage_since,
+                            spacetime_mirror.describe(error), name, spacetime_mirror.RETRY_CAP_S)
+            return False
+        if kind != DETERMINISTIC:
+            return False
+        count = self.failures[entry_id] = self.failures.get(entry_id, 0) + 1
+        if count < self.ATTEMPTS:
+            log.warning("raw entry %s failed deterministically (%s), attempt %d of %d", name,
+                        spacetime_mirror.describe(error), count, self.ATTEMPTS)
+            return False
+        reason = f"{spacetime_mirror.describe(error)} after {count} attempts"
+        try:
+            await _dead_letter(r, entry_id, reason, raw)
+        except Exception:
+            log.exception("could not dead-letter raw entry %s; it stays pending", name)
+            return False
+        self.failures.pop(entry_id, None)
+        log.error("dead-lettered raw entry %s to %s: %s", name, DEAD_LETTER_STREAM, reason)
+        return True
+
+    async def wait(self) -> None:
+        if not self.outage:
+            await self.sleep(1)
+            return
+        await self.sleep(self.backoff_s)
+        self.backoff_s = min(self.backoff_s * 2, spacetime_mirror.RETRY_CAP_S)
+
+
 async def _process_entry(r, db: sqlite3.Connection, entry_id, values: dict,
                          exporter: source_export.Exporter | None = None,
-                         mirror: spacetime_mirror.Mirror | None = None) -> bool:
+                         mirror: spacetime_mirror.Mirror | None = None, retry: Retry | None = None) -> bool:
+    """True once the entry is acknowledged: processed, or dead-lettered under `retry`."""
+    raw = values.get(b"json") or values.get("json")
     try:
-        raw = values.get(b"json") or values.get("json")
         events = await handle(json.loads(raw), db)
         if exporter is not None:
             exporter.changed()
-        routed = mirror is not None and not mirror.disabled and spacetime_mirror.routed_case_ids(events)
+        routed = spacetime_mirror.routed_case_ids(events)
+        mirrored = bool(routed) and mirror is not None and not mirror.disabled
         exported = exporter is not None and any(
             event.get("type") != "document.extracted" and (event.get("payload") or {}).get("case_id")
             for event in events)
-        if routed:
-            # Agents read the case from the export and write against its SpacetimeDB rows as soon as the router
-            # admits it, so both land first. A failed mirror write leaves the entry unacked; its retry resends
-            # the same write IDs, which the module treats as no-ops.
+        if routed and (mirrored or exporter is not None):
+            # Agents read the case (its source record, or the export with the mirror off) and write against its
+            # SpacetimeDB rows as soon as the router admits it, so all of them land first. A failed mirror write
+            # leaves the entry unacked; its retry resends the same write IDs, which the module treats as no-ops,
+            # and skips the source records and directory writes that already landed.
             dataset = source_export.build(db)
-            await mirror.cases(dataset, events)
+            if mirrored:
+                await mirror.cases(dataset, events)
             if exporter is not None:
                 exporter.flush(db, dataset)
         elif exported:
             # TMS progress on a case nobody is routed to yet only needs the export fresh within a bounded delay.
             exporter.flush_if_due(db)
+        caps = {DOCUMENTS_STREAM: documents_maxlen(), EVENTS_STREAM: events_maxlen()}
         for event in events:
             stream = DOCUMENTS_STREAM if event.get("type") == "document.extracted" else EVENTS_STREAM
             await r.xadd(stream, {"json": json.dumps(event, default=str)},
-                         maxlen=20_000, approximate=True)
+                         maxlen=caps[stream], approximate=True)
         db.commit()
         await r.xack(RAW_STREAM, GROUP, entry_id)
-        return True
-    except Exception:
+    except Exception as error:
         db.rollback()
-        log.exception("ingest failed for %s", entry_id)
-        return False
+        if retry is None or failure_class(error) == OTHER:
+            log.exception("ingest failed for %s", entry_id)
+        return await retry.failed(r, entry_id, raw, error) if retry is not None else False
+    if retry is not None:
+        retry.succeeded(entry_id)
+    return True
+
+
+async def _process_batch(r, db: sqlite3.Connection, entries: list, exporter: source_export.Exporter,
+                         mirror: spacetime_mirror.Mirror, retry: Retry) -> bool:
+    """False when an entry is left pending. An outage stops the batch, so the rest stay pending in order."""
+    done = True
+    for entry_id, values in entries:
+        if not await _process_entry(r, db, entry_id, values, exporter, mirror, retry):
+            done = False
+            if retry.outage:
+                break
+    return done
 
 
 class DirectoryWatch:
@@ -711,29 +946,30 @@ class DirectoryWatch:
 
 
 async def _consume_once(r, db: sqlite3.Connection, exporter: source_export.Exporter,
-                        mirror: spacetime_mirror.Mirror, watch: "DirectoryWatch") -> None:
-    """One pass: drain this consumer's unacked entries, flush the export, then block briefly for new arrivals."""
+                        mirror: spacetime_mirror.Mirror, watch: "DirectoryWatch", retry: "Retry") -> None:
+    """One pass: drain this consumer's unacked entries, flush the export and mirror changed source records, then
+    block briefly for new arrivals."""
     watch.check()
     while True:
         pending = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: "0"}, count=10)
         entries = [entry for _stream, batch in pending or [] for entry in batch]
         if not entries:
             break
-        failed = False
-        for entry_id, values in entries:
-            if not await _process_entry(r, db, entry_id, values, exporter, mirror):
-                failed = True
-        if failed:
-            await asyncio.sleep(1)
-    # Catch up on state that opened no case (documents, deposits, TMS) before blocking for more.
+        if not await _process_batch(r, db, entries, exporter, mirror, retry):
+            await retry.wait()
+    # Catch up on state that opened no case (documents, deposits, TMS) before blocking for more, and mirror
+    # the source records that changed since the last flush.
     exporter.flush(db)
+    if not mirror.disabled:
+        await mirror.sync_sources(exporter.take())
     response = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: ">"}, count=10, block=2000)
-    for _stream, entries in response or []:
-        for entry_id, values in entries:
-            await _process_entry(r, db, entry_id, values, exporter, mirror)
+    entries = [entry for _stream, batch in response or [] for entry in batch]
+    if entries and not await _process_batch(r, db, entries, exporter, mirror, retry):
+        await retry.wait()  # the entries left pending are retried by the drain above
 
 
 async def main() -> None:
+    events_maxlen(), documents_maxlen()  # fail fast on a bad EVENTS_STREAM_MAXLEN or DOCUMENTS_STREAM_MAXLEN
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     db = connect()
     exporter = source_export.Exporter()
@@ -741,6 +977,7 @@ async def main() -> None:
     if mirror.disabled:
         log.info("SpacetimeDB mirror off (SPACETIME_DISABLED=1)")
     watch = DirectoryWatch(mirror)
+    retry = Retry()
     try:
         try:
             await r.xgroup_create(RAW_STREAM, GROUP, id="0", mkstream=True)
@@ -752,7 +989,7 @@ async def main() -> None:
             # A Redis hiccup (read timeout, dropped connection) must not end the consumer: entries it was
             # handling stay unacked in the group and are redelivered, so the iteration is safe to repeat.
             try:
-                await _consume_once(r, db, exporter, mirror, watch)
+                await _consume_once(r, db, exporter, mirror, watch, retry)
                 backoff = 1.0
             except redis.RedisError as exc:
                 log.warning("ingest consumer %s; retrying in %.0fs", type(exc).__name__, backoff)

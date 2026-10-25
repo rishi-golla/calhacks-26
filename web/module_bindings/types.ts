@@ -452,6 +452,16 @@ export const RoutingOutbox = __t.object("RoutingOutbox", {
 });
 export type RoutingOutbox = __Infer<typeof RoutingOutbox>;
 
+export const SourceRecord = __t.object("SourceRecord", {
+  id: __t.string(),
+  kind: __t.string(),
+  caseId: __t.string(),
+  recordJson: __t.string(),
+  digest: __t.string(),
+  updatedAt: __t.string(),
+});
+export type SourceRecord = __Infer<typeof SourceRecord>;
+
 export const Task = __t.object("Task", {
   taskId: __t.string(),
   caseId: __t.string(),
@@ -475,6 +485,14 @@ export const Task = __t.object("Task", {
 });
 export type Task = __Infer<typeof Task>;
 
+export const ViewEpoch = __t.object("ViewEpoch", {
+  id: __t.string(),
+  since: __t.string(),
+  setBy: __t.string(),
+  setAt: __t.string(),
+});
+export type ViewEpoch = __Infer<typeof ViewEpoch>;
+
 export const WriteReceipt = __t.object("WriteReceipt", {
   id: __t.string(),
   payloadHash: __t.string(),
@@ -484,3 +502,4 @@ export const WriteReceipt = __t.object("WriteReceipt", {
   ts: __t.string(),
 });
 export type WriteReceipt = __Infer<typeof WriteReceipt>;
+

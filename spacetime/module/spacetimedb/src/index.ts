@@ -50,3 +50,8 @@ export const raise_flag = db.reducer(input, (ctx, { payload }) => run(ctx, paylo
 export const resolve_flag = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'resolve_flag', ['validator'], op.resolveFlag));
 export const claim_outbox = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'claim_outbox', ['router'], op.claimOutbox));
 export const ack_outbox = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'ack_outbox', ['router'], op.ackOutbox));
+export const enqueue_first_hop = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'enqueue_first_hop', ['router'], op.enqueueFirstHop));
+export const upsert_source_record = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'upsert_source_record', ['ingest'], op.upsertSourceRecord));
+export const ensure_agent_defaults = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'ensure_agent_defaults', ['admin'], op.ensureAgentDefaults));
+export const set_view_epoch = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'set_view_epoch', ['human', 'admin'], op.setViewEpoch));
+export const settle_cases = db.reducer(input, (ctx, { payload }) => run(ctx, payload, 'settle_cases', ['admin'], op.settleCases));

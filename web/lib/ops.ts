@@ -406,6 +406,8 @@ export type AgentWorkload = {
   status: "working" | "idle" | "offline" | "stale" | "error";
   active: number;
   queued: number;
+  /** `working` task rows nothing is advancing: orphaned by a crash or a lost projection. */
+  stalled: number;
   done: number;
   errors: number;
   p50Ms: number;
@@ -417,10 +419,32 @@ export type AgentWorkload = {
   enabled: boolean;
 };
 
-export function buildWorkloads(snapshot: Snapshot, now: number): Record<AgentId, AgentWorkload> {
+/** Heartbeats land every 15 s; past this the agent's row is stale. */
+const HEARTBEAT_STALE_MS = 60_000;
+/** A `working` row this quiet while the heartbeat says idle has been abandoned. */
+export const TASK_STALL_MS = 120_000;
+/** Past this a `working` row is abandoned whatever the heartbeat says. */
+export const TASK_ABANDON_MS = 15 * 60_000;
+
+/**
+ * Status comes from the agent's own heartbeat, not from task rows: a row can
+ * be left `working` forever when a worker dies, while the heartbeat reports
+ * whether the service holds a live task lease right now.
+ *
+ * With `since` (a "Start fresh" epoch), done and error counts come from tasks
+ * that finished at or after it, not from the heartbeat's all-time totals.
+ */
+export function buildWorkloads(snapshot: Snapshot, now: number, { since }: { since?: number } = {}): Record<AgentId, AgentWorkload> {
   const byAgent = new Map<string, TaskView[]>();
+  const doneSince = new Map<string, number>();
+  const failedSince = new Map<string, number>();
   for (const row of snapshot.task) {
     const t = taskView(row);
+    if (since !== undefined && t.terminal && t.endedAt >= since) {
+      if (t.state === "completed") doneSince.set(t.agent, (doneSince.get(t.agent) ?? 0) + 1);
+      // The heartbeat counts rejected tasks as errors too.
+      else if (t.state === "failed" || t.state === "rejected") failedSince.set(t.agent, (failedSince.get(t.agent) ?? 0) + 1);
+    }
     if (t.terminal) continue;
     const list = byAgent.get(t.agent);
     if (list) list.push(t);
@@ -430,26 +454,39 @@ export function buildWorkloads(snapshot: Snapshot, now: number): Record<AgentId,
   for (const id of AGENT_IDS) {
     const record = snapshot.agent.find((r) => r.name === id);
     const config = snapshot.agent_config.find((r) => r.agent === id);
-    const activeTasks = (byAgent.get(id) ?? []).filter((t) => t.state === "working");
+    const workingTasks = (byAgent.get(id) ?? []).filter((t) => t.state === "working");
     const queuedTasks = (byAgent.get(id) ?? []).filter((t) => t.state !== "working");
     const lastSeen = record ? timestamp(record.last_seen) : 0;
-    const stale = !record || now - lastSeen > 60_000;
+    const stale = !record || now - lastSeen > HEARTBEAT_STALE_MS;
+    const busy = !stale && record.status === "busy";
+    const activeTasks = workingTasks.filter((t) => {
+      const quiet = now - (t.updatedAt || t.startedAt);
+      return quiet <= TASK_STALL_MS || (busy && quiet <= TASK_ABANDON_MS);
+    });
     const status: AgentWorkload["status"] = !record
       ? "offline"
       : stale
         ? "stale"
         : record.status === "error"
           ? "error"
-          : activeTasks.length > 0
+          : busy || activeTasks.length > 0
             ? "working"
             : "idle";
     out[id] = {
       id,
       status,
-      active: activeTasks.length || (record ? num(record.active) : 0),
+      // The heartbeat's own `active` column counts orphaned rows too, so count
+      // live rows here; a busy heartbeat means at least one leased task.
+      active: Math.max(activeTasks.length, busy ? 1 : 0),
       queued: queuedTasks.length || (record ? num(record.queued) : 0),
-      done: record ? num(record.done) : snapshot.task.filter((r) => r.agent === id && r.a2a_state === "completed").length,
-      errors: record ? num(record.errors) : 0,
+      stalled: workingTasks.length - activeTasks.length,
+      done:
+        since !== undefined
+          ? (doneSince.get(id) ?? 0)
+          : record
+            ? num(record.done)
+            : snapshot.task.filter((r) => r.agent === id && r.a2a_state === "completed").length,
+      errors: since !== undefined ? (failedSince.get(id) ?? 0) : record ? num(record.errors) : 0,
       p50Ms: record ? num(record.p50_ms) : 0,
       lastSeen,
       activeCases: [...new Set(activeTasks.map((t) => t.caseId))],
@@ -459,6 +496,15 @@ export function buildWorkloads(snapshot: Snapshot, now: number): Record<AgentId,
     };
   }
   return out;
+}
+
+/** Intake animates for this long after a case arrives. */
+export const INTAKE_ARRIVAL_MS = 30_000;
+
+/** Intake is working while cases arrive; a backlog of open cases is not activity. */
+export function intakeArriving(cases: Iterable<CaseView>, now: number): boolean {
+  for (const c of cases) if (c.openedAt > 0 && now - c.openedAt <= INTAKE_ARRIVAL_MS) return true;
+  return false;
 }
 
 /* --------------------------- operations metrics --------------------------- */
@@ -583,7 +629,13 @@ const ACCOUNT_ALIASES: Record<string, string> = {
   cost_of_revenue: "expense",
 };
 
-export function buildFinance(snapshot: Snapshot, now: number): FinanceMetrics {
+/**
+ * `since` (a "Start fresh" epoch, with rows already scoped to it): cash comes
+ * from the ledger rows given, not the all-time `cash_position` metric; the
+ * 30-day totals run from `since` instead, and month-to-date from the later of
+ * the month start and `since`, matching the "since" labels on Home.
+ */
+export function buildFinance(snapshot: Snapshot, now: number, { since }: { since?: number } = {}): FinanceMetrics {
   const day = 86_400_000;
   const entries = snapshot.ledger_entry
     .map((row) => ({ at: timestamp(row.posted_at), lines: (Array.isArray(row.lines) ? row.lines : json<LedgerLine[]>(row.lines, [])) as LedgerLine[] }))
@@ -599,18 +651,19 @@ export function buildFinance(snapshot: Snapshot, now: number): FinanceMetrics {
   };
   const bal = { cash: 0, ar: 0, ap: 0, revenue: 0, expense: 0 };
   const start = now - 30 * day;
+  const totalsFrom = since ?? start;
   const buckets = new Map<number, typeof bal>();
   let revenue30d = 0;
   let expense30d = 0;
   let revenueMtd = 0;
-  const monthStart = new Date(now).setDate(1);
+  const monthStart = Math.max(since ?? 0, new Date(now).setDate(1));
   for (const e of entries) {
     for (const line of e.lines) {
       const d = delta(line);
       if (!d) continue;
       bal[d.acct as keyof typeof bal] += d.amount;
-      if (d.acct === "revenue" && e.at >= start) revenue30d += d.amount;
-      if (d.acct === "expense" && e.at >= start) expense30d += d.amount;
+      if (d.acct === "revenue" && e.at >= totalsFrom) revenue30d += d.amount;
+      if (d.acct === "expense" && e.at >= totalsFrom) expense30d += d.amount;
       if (d.acct === "revenue" && e.at >= monthStart) revenueMtd += d.amount;
     }
     if (e.at >= start) {
@@ -672,7 +725,7 @@ export function buildFinance(snapshot: Snapshot, now: number): FinanceMetrics {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([period, v]) => ({ period, inflow: v.inflow, outflow: v.outflow, net: v.inflow - v.outflow, confidence: v.conf.length ? v.conf.reduce((s, c) => s + c, 0) / v.conf.length : 0 }));
   const metric = (name: string) => snapshot.metric.find((m) => m.name === name);
-  const cashMetric = metric("cash_position") ?? metric("cash_position_usd") ?? metric("cash_balance");
+  const cashMetric = since !== undefined ? undefined : (metric("cash_position") ?? metric("cash_position_usd") ?? metric("cash_balance"));
   return {
     cash: cashMetric ? num(cashMetric.value) : bal.cash,
     ap: bal.ap,
@@ -822,7 +875,8 @@ export function diffSnapshots(prev: Snapshot | null, next: Snapshot): LiveEvent[
   }
   for (const { row: e, before } of delta("delegation_edge", "id"))
     if (!before) events.push({ type: "delegation", at: timestamp(e.ts), caseId: str(e.case_id), taskId: str(e.task_id), from: str(e.from_agent), to: str(e.to_agent), skill: str(e.skill) });
-  for (const { row: a, before } of delta("audit_event", "id")) {
+  const audits = delta("audit_event", "id");
+  for (const { row: a, before } of audits) {
     if (before) continue;
     if (a.kind === "tool_call") {
       const body = json<Record<string, unknown>>(a.summary, {});
@@ -830,8 +884,33 @@ export function diffSnapshots(prev: Snapshot | null, next: Snapshot): LiveEvent[
     } else if (a.kind === "place_hold" || a.kind === "release_hold") events.push({ type: "hold", at: timestamp(a.ts), caseId: str(a.case_id), agent: str(a.agent), amount: 0, status: a.kind === "place_hold" ? "placed" : "released" });
     else if (a.kind === "post_journal_entry") events.push({ type: "journal", at: timestamp(a.ts), caseId: str(a.case_id), amount: 0, memo: str(a.summary) });
   }
-  for (const { row: d, before } of delta("doc_read", "id"))
-    if (!before) events.push({ type: "doc_read", at: timestamp(d.ts) || Date.now(), caseId: str(d.case_id), taskId: str(d.task_id), agent: str(d.agent), docRef: str(d.doc_ref) });
+  // Live doc reads carry no timestamp, and a live row can reach the cache long
+  // after it was written: the dashboard keeps doc reads whose task changed
+  // recently, so a task update brings its old reads in. A live read is news
+  // only alongside the `record_doc_read` audit row its write produced, one
+  // read per audit row; simulated reads carry their own `ts`.
+  const docAudits = new Map<string, number[]>();
+  for (const { row: a, before } of audits)
+    if (!before && a.kind === "record_doc_read") {
+      const list = docAudits.get(str(a.task_id, "")) ?? [];
+      list.push(timestamp(a.ts) || Date.now());
+      docAudits.set(str(a.task_id, ""), list);
+    }
+  const newReads = delta("doc_read", "id").filter(({ before }) => !before);
+  // Rows arrive oldest first: when a task's old reads and a fresh one land
+  // together, match audit rows to the newest reads.
+  const reads: LiveEvent[] = [];
+  for (let i = newReads.length - 1; i >= 0; i--) {
+    const d = newReads[i].row;
+    let at = timestamp(d.ts);
+    if (!at) {
+      const list = docAudits.get(str(d.task_id, ""));
+      if (!list?.length) continue;
+      at = list.pop()!;
+    }
+    reads.push({ type: "doc_read", at, caseId: str(d.case_id), taskId: str(d.task_id), agent: str(d.agent), docRef: str(d.doc_ref) });
+  }
+  events.push(...reads.reverse());
   for (const { row: a, before } of delta("approval", "id")) {
     if (!before) events.push({ type: "approval", at: timestamp(a.requested_at) || Date.now(), caseId: str(a.case_id), agent: str(a.requested_by), amount: num(a.amount), decision: "pending" });
     else if (before.decision !== a.decision) events.push({ type: "approval", at: timestamp(a.decided_at) || Date.now(), caseId: str(a.case_id), agent: "human", amount: num(a.amount), decision: str(a.decision) });

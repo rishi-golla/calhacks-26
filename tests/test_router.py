@@ -56,7 +56,10 @@ async def test_case_hint_is_not_an_authoritative_case(monkeypatch, dead_pool, tm
     assert case_id_for(value) is None
     sender = AsyncMock()
     monkeypatch.setattr(dispatch, "send_task", sender)
-    res = await process(dead_pool, Vault(tmp / "v.sqlite"), Dispatcher(tmp / "d.sqlite"), value)
+    from harness.ingest.context import ContextStore
+    from harness.ingest.memory import Memory
+    res = await process(dead_pool, Vault(tmp / "v.sqlite"), Dispatcher(tmp / "d.sqlite"), value,
+                        memory=Memory(tmp / "m.sqlite"), context=ContextStore(""))
     assert res["status"] == "triage" and "case_hint is not authoritative" in res["route"]["reason"]
     sender.assert_not_awaited()
 

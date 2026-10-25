@@ -202,8 +202,15 @@ export default function CaseExplorer() {
       if (filters.status === "human_owned" && c.status !== "human_owned") return false;
       if (filters.priorities.length && !filters.priorities.includes(c.priority)) return false;
       if (filters.kinds.length && !filters.kinds.includes(kind)) return false;
-      if (filters.attention.length && !filters.attention.some((k) => c.needsYou.includes(k))) return false;
-      if (filters.handling.length && !filters.handling.some((k) => c.agentsHandling.includes(k))) return false;
+      // "Needs you" and "Agents handling" chips are one choice of open items: a
+      // case matches any chip picked in either group (so an old `attn` link
+      // holding a hold and another kind still matches either).
+      if (
+        (filters.attention.length || filters.handling.length) &&
+        !filters.attention.some((k) => c.needsYou.includes(k)) &&
+        !filters.handling.some((k) => c.agentsHandling.includes(k))
+      )
+        return false;
       if (filters.agents.length && !filters.agents.every((a) => c.agents.includes(a))) return false;
       return terms.every((t) => text.includes(t));
     });

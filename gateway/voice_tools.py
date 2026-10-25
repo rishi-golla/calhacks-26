@@ -12,7 +12,7 @@ from fastapi import Header, HTTPException, Request
 
 from common.policy import check
 from common.runtime import projection_target
-from common.runtime_store import RuntimeStore
+from common.runtime_store import RuntimeStore, projection_row_id
 from common.source_repository import SourceRepository, SourceUnavailable
 from common.spacetime_client import SpacetimeClient
 from common.tool_loop import audit_summary, public_value
@@ -70,11 +70,11 @@ async def audit_lookup(req: Request, row: dict, name: str, result: dict, started
         return
     runtime = RuntimeStore(engine=req.app.state.calls.engine)
     # The Voice service's normal projection worker retries this durable event.
-    await runtime.queue_projection("voice_desk", {**payload, "_operation": "append_audit",
-                                                  "_target": projection_target()})
+    target = projection_target()
+    await runtime.queue_projection("voice_desk", {**payload, "_operation": "append_audit", "_target": target})
     try:
         await SpacetimeClient(actor="voice_desk").mutate("append_audit", payload)
-        await runtime.acknowledge_projection(call_id)
+        await runtime.acknowledge_projection(projection_row_id(call_id, target))
     except Exception:  # noqa: BLE001 -- dashboard delivery does not interrupt a read-only call answer
         log.warning("voice lookup audit queued for delivery")
 

@@ -257,25 +257,49 @@ function settledStatus(ctx: Ctx, caseId: string, tasks: SettleTask[]): string {
   return unresolved ? 'open' : 'resolved';
 }
 
+// The router's record of a case without tasks: null when no duplicate was routed to it, otherwise
+// whether any event on it was or will be delivered, and the latest duplicate's reason. An event is
+// delivered when it is queued or accepted, or is a duplicate keeping a task that is not mirrored on
+// another case; a P-007 duplicate of an accepted event elsewhere carries that other case's task.
+function duplicateRoute(ctx: Ctx, caseId: string): { delivered: boolean; reason: string } | null {
+  const rows = [...ctx.db.dispatch.case_id.filter(caseId)];
+  const latest = rows.filter(x => x.status === 'duplicate')
+    .sort((a, b) => a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : a.event_id < b.event_id ? -1 : 1)[0];
+  if (!latest) return null;
+  const delivered = rows.some(x => x.status === 'queued' || x.status === 'accepted'
+    || (x.status === 'duplicate' && !!x.task_id && !ctx.db.task.task_id.find(x.task_id)));
+  return { delivered, reason: `duplicate: ${latest.reason || latest.event_id}`.slice(0, 500) };
+}
+
 // Moves a case to the status its tasks, outbox, approvals and flags imply, inside the caller's
-// transaction. Human-owned cases and cases without tasks are left alone. A resolved case changes
-// only when `reopen` says this mutation created new work, so an explicit update_case resolution is
-// not undone by its own still-running task or by the reviews of work that was already underway.
-// Returns whether the case changed.
+// transaction. Human-owned cases are left alone. So are cases without tasks, unless the router
+// recorded a duplicate on one: with nothing delivered, the duplicate settles like finished work;
+// once new work is routed there, the case goes back to awaiting its first task (`open`). A resolved
+// case changes only when `reopen` says this mutation created new work, so an explicit update_case
+// resolution is not undone by its own still-running task or by the reviews of work that was
+// already underway. Returns whether the case changed.
 function settleCase(m: Mutation, caseId: string, reopen = false): boolean {
   const { ctx, p } = m;
   if (!caseId) return false;
   const previous = ctx.db.case.case_id.find(caseId);
   if (!previous || previous.status === 'human_owned') return false;
   const tasks = [...ctx.db.task.case_id.filter(caseId)];
-  if (!tasks.length) return false;
-  const status = settledStatus(ctx, caseId, tasks);
+  const route = tasks.length ? null : duplicateRoute(ctx, caseId);
+  // Only a resolved case goes back to awaiting its first task; otherwise its status is left alone.
+  if (!tasks.length && (!route || (route.delivered && previous.status !== 'resolved'))) return false;
+  const duplicate = route && !route.delivered ? route.reason : '';
+  const status = route?.delivered ? 'open' : settledStatus(ctx, caseId, tasks);
   if (status === previous.status || (previous.status === 'resolved' && !reopen)) return false;
   const next = { ...previous, status, resolved_at: status === 'resolved' ? now(ctx) : '' };
   ctx.db.case.case_id.update(next);
   m.capture('case', caseId, previous, next);
   // Keep the case's own change chain complete when the triggering action carries no case.
   if (p.case_id === undefined) p.case_id = caseId;
+  // The audit event says why a case with no work of its own was resolved.
+  if (duplicate && status === 'resolved') {
+    if (p.reason_code === undefined) p.reason_code = 'duplicate';
+    if (p.summary === undefined) p.summary = duplicate;
+  }
   return true;
 }
 
@@ -287,10 +311,12 @@ export const settleCases: Handler = m => {
   const writeId = text(p, 'write_id', undefined, 200);
   for (const row of [...ctx.db.case.iter()]) {
     const inner = new Mutation(ctx, {
-      write_id: `settle_cases:${hash(canonical([writeId, row.case_id])).slice(0, 40)}`,
-      case_id: row.case_id, summary: 'Settle case status from its tasks, outbox, approvals and flags',
+      write_id: `settle_cases:${hash(canonical([writeId, row.case_id])).slice(0, 40)}`, case_id: row.case_id,
     }, actor, 'settle_cases');
-    if (settleCase(inner, row.case_id)) inner.finish();
+    if (!settleCase(inner, row.case_id)) continue;
+    // A duplicate resolution has already named its own reason.
+    if (inner.p.summary === undefined) inner.p.summary = 'Settle case status from its tasks, outbox, approvals and flags';
+    inner.finish();
   }
   m.unchanged = true;
 };
@@ -832,12 +858,16 @@ function writeDispatch(m: Mutation, row: Dispatch): void {
 
 export const recordDispatch: Handler = m => {
   const { ctx, p } = m;
-  writeDispatch(m, {
+  const row = {
     event_id: text(p, 'event_id'), case_id: text(p, 'case_id', ''), skill: text(p, 'skill', ''),
     agent: choice(p, 'agent', ['', ...AGENTS], ''), task_id: text(p, 'task_id', ''),
     status: choice(p, 'status', ['queued', 'accepted', 'triage', 'not_routed', 'duplicate']),
     reason: text(p, 'reason'), queue_ms: uint(p, 'queue_ms'), policy_version: text(p, 'policy_version'), ts: now(ctx),
-  });
+  };
+  writeDispatch(m, row);
+  // A recorded duplicate may be the only thing ever routed to its case, which then settles here.
+  // An observation is not new work, so a resolved case stays resolved.
+  settleCase(m, row.case_id);
 };
 
 // The router commits a routed event here instead of pushing it over A2A: the outbox row and its

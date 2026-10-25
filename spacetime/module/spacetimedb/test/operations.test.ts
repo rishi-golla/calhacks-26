@@ -1013,6 +1013,133 @@ test('settle_cases sweeps pre-existing cases once and is idempotent', () => {
   assert.equal(h.rows('change_set').length, before + 3, 'later sweeps only write receipts');
 });
 
+// A re-numbered invoice case (CASE-<load>-R) that the router's P-007 check dispatched only as a duplicate.
+const P007 = 'duplicate of EVT-1 (same BOL and amount, 3.3 days apart; P-007): not sent again';
+const route = { agent: 'carrier_ap', skill: 'process_carrier_invoice', queue_ms: 0, policy_version: 'w1-route-v1' };
+const duplicate = (h: Harness, case_id: string, event_id = `DUP-${case_id}`, reason = P007, task_id = '') =>
+  dispatch(h, { ...route, event_id, case_id, task_id, status: 'duplicate', reason });
+const auditOf = (h: Harness, change: Row) => assertPresent(h.rows('audit_event').find(x => x.change_set_id === change.id));
+
+test('a duplicate dispatch on a case without tasks resolves it and records why', () => {
+  const h = new Harness(); h.open('CASE-R');
+  const before = h.rows('change_set').length;
+  const payload = duplicate(h, 'CASE-R');
+  assert.equal(status(h, 'CASE-R'), 'resolved');
+  assert.notEqual(h.row('case', 'CASE-R').resolved_at, '');
+  // The status change is part of the router's single change set, on the case chain, and its audit says why.
+  assert.equal(h.rows('change_set').length, before + 1);
+  const change = h.rows('change_set').at(-1) as Row;
+  assert.equal(change.action, 'record_dispatch');
+  assert.equal(change.case_id, 'CASE-R');
+  assert.equal(change.summary, `duplicate: ${P007}`);
+  const cells = h.rows('cell_change').filter(x => x.change_set_id === change.id);
+  assert.ok(cells.some(x => x.sheet === 'case' && x.row_key === 'CASE-R' && x.column === 'status' && x.after === '"resolved"'));
+  assert.ok(cells.some(x => x.sheet === 'dispatch' && x.column === 'status' && x.after === '"duplicate"'));
+  const audit = auditOf(h, change);
+  assert.equal(audit.reason_code, 'duplicate');
+  assert.equal(audit.summary, `duplicate: ${P007}`);
+  // An exact retry is a no-op; a later observation is not new work and leaves the resolution alone.
+  dispatch(h, payload);
+  assert.equal(h.rows('change_set').length, before + 1);
+  const resolvedAt = h.row('case', 'CASE-R').resolved_at;
+  duplicate(h, 'CASE-R', 'DUP-CASE-R-2', 'invoice re-sent again');
+  assert.equal(status(h, 'CASE-R'), 'resolved');
+  assert.equal(h.row('case', 'CASE-R').resolved_at, resolvedAt);
+  // A P-007 duplicate of an accepted event carries the original case's task; nothing was delivered here.
+  h.open('CASE-1'); h.open('CASE-1-R');
+  task(h, 'carrier_ap', 'AP-1', 'process_carrier_invoice', 'working');
+  duplicate(h, 'CASE-1-R', 'DUP-CASE-1-R', P007, 'AP-1');
+  assert.equal(status(h, 'CASE-1-R'), 'resolved');
+  assert.equal(status(h), 'in_progress');
+  // A case without tasks and without a duplicate is left alone, as before.
+  h.open('CASE-T');
+  dispatch(h, { event_id: 'TRIAGE', case_id: 'CASE-T', status: 'triage', reason: 'unknown event', queue_ms: 0, policy_version: 'v1' });
+  dispatch(h, { event_id: 'NOT-ROUTED', case_id: 'CASE-T', status: 'not_routed', reason: 'no route', queue_ms: 0, policy_version: 'v1' });
+  assert.equal(status(h, 'CASE-T'), 'open');
+});
+
+test('a queued or accepted event keeps a duplicate case unresolved', () => {
+  const h = new Harness();
+  // A first hop still queued in the outbox, and the same once delivered.
+  h.open('CASE-Q');
+  enqueueHop(h, firstHop({ event_id: 'HOP-Q', case_id: 'CASE-Q', envelope: { task_type: 'process_carrier_invoice', case_id: 'CASE-Q' } }));
+  duplicate(h, 'CASE-Q');
+  assert.equal(status(h, 'CASE-Q'), 'open');
+  deliver(h, 'first_hop:HOP-Q');
+  duplicate(h, 'CASE-Q', 'DUP-CASE-Q-2');
+  assert.equal(status(h, 'CASE-Q'), 'open');
+  // An accepted remote task whose mirror has not arrived yet.
+  h.open('CASE-A');
+  dispatch(h, { ...route, event_id: 'ACC', case_id: 'CASE-A', task_id: 'remote-1', status: 'accepted', reason: 'Delivered by dispatch worker' });
+  duplicate(h, 'CASE-A');
+  assert.equal(status(h, 'CASE-A'), 'open');
+  // A re-observed accepted event becomes a duplicate that keeps its own, delivered task.
+  h.open('CASE-D');
+  const accepted = { ...route, event_id: 'ACC-D', case_id: 'CASE-D', task_id: 'remote-2', status: 'accepted', reason: 'Delivered by dispatch worker' };
+  dispatch(h, accepted);
+  dispatch(h, { ...accepted, reason: 're-delivered event' });
+  assert.equal(h.row('dispatch', 'ACC-D').status, 'duplicate');
+  assert.equal(status(h, 'CASE-D'), 'open');
+  sweep(h);
+  assert.deepEqual(['CASE-Q', 'CASE-A', 'CASE-D'].map(id => status(h, id)), ['open', 'open', 'open']);
+});
+
+test('new work reopens a case a duplicate resolved', () => {
+  const h = new Harness(); h.open('CASE-R'); h.open('CASE-H'); h.open('CASE-F');
+  duplicate(h, 'CASE-R');
+  assert.equal(status(h, 'CASE-R'), 'resolved');
+  task(h, 'carrier_ap', 'AP-R', 'process_carrier_invoice', 'working', 'CASE-R');
+  assert.equal(status(h, 'CASE-R'), 'in_progress');
+  assert.equal(h.row('case', 'CASE-R').resolved_at, '');
+  // A new first hop goes back to awaiting its first task, like any case whose first hop is pending.
+  duplicate(h, 'CASE-H');
+  enqueueHop(h, firstHop({ event_id: 'HOP-H', case_id: 'CASE-H', envelope: { task_type: 'process_carrier_invoice', case_id: 'CASE-H' } }));
+  assert.equal(status(h, 'CASE-H'), 'open');
+  assert.equal(h.row('case', 'CASE-H').resolved_at, '');
+  deliver(h, 'first_hop:HOP-H');
+  assert.equal(status(h, 'CASE-H'), 'open');
+  // A flag holds it active until reviewed, then it settles again.
+  duplicate(h, 'CASE-F');
+  h.run('human', 'raise_flag', ['human'], op.raiseFlag, { id: 'FLAG-F', case_id: 'CASE-F', target_ref: 'dispatch:DUP-CASE-F', kind: 'wrong' });
+  assert.equal(status(h, 'CASE-F'), 'in_progress');
+  deliver(h, 'review_flag:FLAG-F');
+  h.run('validator', 'resolve_flag', ['validator'], op.resolveFlag, { id: 'FLAG-F', status: 'resolved', resolution_ref: String(h.rows('change_set')[0].id) });
+  assert.equal(status(h, 'CASE-F'), 'resolved');
+});
+
+test('a duplicate leaves a human-owned case alone', () => {
+  const h = new Harness(); h.open('CASE-R');
+  h.run('human', 'update_case', ['controller', 'validator', 'human'], op.updateCase, { case_id: 'CASE-R', status: 'human_owned', reason: 'takeover' });
+  duplicate(h, 'CASE-R');
+  assert.equal(status(h, 'CASE-R'), 'human_owned');
+  sweep(h);
+  assert.equal(status(h, 'CASE-R'), 'human_owned');
+});
+
+test('settle_cases resolves duplicate cases recorded before the rule, once', () => {
+  const h = new Harness(); h.open('CASE-R'); h.open('CASE-2-R'); h.open('CASE-Q'); h.open('CASE-E');
+  duplicate(h, 'CASE-R'); duplicate(h, 'CASE-2-R', 'DUP-2', 're-delivered event');
+  dispatch(h, { ...route, event_id: 'ACC', case_id: 'CASE-Q', task_id: 'remote-1', status: 'accepted', reason: 'Delivered by dispatch worker' });
+  duplicate(h, 'CASE-Q');
+  // Simulate cases left open by a module without the rule.
+  for (const id of ['CASE-R', 'CASE-2-R']) h.data.case.set(id, { ...h.row('case', id), status: 'open', resolved_at: '' });
+  const before = h.rows('change_set').length;
+  sweep(h);
+  assert.deepEqual(['CASE-R', 'CASE-2-R', 'CASE-Q', 'CASE-E'].map(id => status(h, id)), ['resolved', 'resolved', 'open', 'open']);
+  const changes = h.rows('change_set').slice(before);
+  assert.deepEqual(changes.map(x => x.case_id).sort(), ['CASE-2-R', 'CASE-R']);
+  assert.ok(changes.every(x => x.action === 'settle_cases' && x.agent === 'admin:publisher'));
+  assert.deepEqual(changes.map(x => [x.case_id, x.summary, auditOf(h, x).reason_code]).sort(), [
+    ['CASE-2-R', 'duplicate: re-delivered event', 'duplicate'], ['CASE-R', `duplicate: ${P007}`, 'duplicate'],
+  ]);
+  for (const change of changes) {
+    assert.ok(h.rows('cell_change').some(x => x.change_set_id === change.id && x.sheet === 'case' && x.row_key === change.case_id && x.column === 'status'));
+  }
+  sweep(h);
+  sweep(h);
+  assert.equal(h.rows('change_set').length, before + 2, 'later sweeps only write receipts');
+});
+
 test('set_view_epoch upserts and clears the audited Start fresh boundary', () => {
   const h = new Harness();
   const epoch = (actor: string, payload: Payload) => h.run(actor, 'set_view_epoch', ['human', 'admin'], op.setViewEpoch, payload);

@@ -2,12 +2,12 @@
 /**
  * Inline-SVG charts for the finance home. No chart library: sparklines are a
  * single path, the cash chart is three stacked layers (axes, a line layer
- * revealed with `fl-draw`, and a hover/live-dot overlay), and bar charts are
- * divs scaled with `transform` so updates animate on the compositor.
+ * revealed with `fl-draw`, and a hover/live-dot overlay), and the forecast
+ * bars are divs scaled with `transform` so updates animate on the compositor.
  */
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import type { FinanceMetrics, TrendPoint } from "@/lib/ops";
-import { dayLabel, periodLabel, signedShort, usdTick } from "./format";
+import { dayLabel, periodLabel, signedShort, usdShort, usdTick } from "./format";
 
 function useWidth<T extends HTMLElement>() {
   const ref = useRef<T>(null);
@@ -211,8 +211,9 @@ export function ForecastBars({ rows }: { rows: FinanceMetrics["forecast"] }) {
     <div className="fh-fc" role="img" aria-label={label}>
       {rows.map((r, i) => {
         const alpha = 0.35 + 0.65 * Math.max(0, Math.min(1, r.confidence));
+        const title = `${periodLabel(r.period)}: inflow ${usdShort(r.inflow)}, outflow ${usdShort(r.outflow)}, net ${signedShort(r.net)}, ${Math.round(r.confidence * 100)}% confidence`;
         return (
-          <div className="fh-fc-col" key={r.period} style={{ "--i": i } as CSSProperties}>
+          <div className="fh-fc-col" key={r.period} style={{ "--i": i } as CSSProperties} title={title}>
             <div className="fh-fc-plot">
               <div className="fh-fc-half up">
                 <i className="fh-bar in" style={{ transform: `scaleY(${r.inflow / max})`, opacity: alpha }} />
@@ -223,32 +224,10 @@ export function ForecastBars({ rows }: { rows: FinanceMetrics["forecast"] }) {
               <i className="fh-fc-net" style={{ top: `${50 - (r.net / max) * 50}%` }} />
             </div>
             <div className={`fh-fc-value fl-num ${r.net >= 0 ? "ok" : "hot"}`}>{signedShort(r.net)}</div>
-            <div className="fh-fc-meta">
-              <span>{periodLabel(r.period)}</span>
-              <span>{Math.round(r.confidence * 100)}%</span>
-            </div>
+            <div className="fh-fc-meta">{periodLabel(r.period)}</div>
           </div>
         );
       })}
-    </div>
-  );
-}
-
-/* ------------------------------ mini bars ------------------------------ */
-
-/** Small column chart (e.g. cases resolved per 10-minute bucket). Oldest first. */
-export function MiniBars({ values, color, height = 56 }: { values: number[]; color: string; height?: number }) {
-  const max = Math.max(1, ...values);
-  return (
-    <div className="fh-minibars" style={{ height }} aria-hidden>
-      {values.map((v, i) => (
-        <span key={i} className="fh-minibar-slot">
-          <i
-            className="fh-bar"
-            style={{ transform: `scaleY(${Math.max(v ? 0.04 : 0.015, v / max)})`, background: color, opacity: i === values.length - 1 ? 1 : 0.55 }}
-          />
-        </span>
-      ))}
     </div>
   );
 }

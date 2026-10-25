@@ -41,12 +41,10 @@ export function Json({ value, label }: { value: unknown; label?: string }) {
   const parsed = typeof value === "string" ? json<unknown>(value, value) : value;
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.keys(parsed).length === 0) return null;
   const pretty = typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2);
-  const preview = typeof parsed === "string" ? parsed : JSON.stringify(parsed);
   return (
     <details className="ct-json">
       <summary>
-        {label && <span className="fl-micro">{label}</span>}
-        <code>{preview.length > 72 ? `${preview.slice(0, 72)}…` : preview}</code>
+        <span className="fl-micro">{label ?? "data"}</span>
       </summary>
       <pre>{pretty}</pre>
     </details>
@@ -84,9 +82,7 @@ export function NodeDetails({ trace, node, cursor, onSelect, onClose }: PanelPro
         <Mascot id={node.lane} size={52} mood={status === "working" ? (node.lane === "voice_desk" ? "talking" : "working") : status === "waiting" || status === "pending" || status === "failed" ? "alert" : "idle"} />
         <div style={{ minWidth: 0 }}>
           <div className="ct-details-title">{node.kind === "task" ? skillLabel(node.task?.skill) : nodeTitle(node)}</div>
-          <div className="fl-micro ct-details-sub">
-            {node.kind === "task" ? `${node.task?.displayId} · ${node.id}` : node.id}
-          </div>
+          {node.kind === "task" && <div className="fl-micro ct-details-sub">{node.task?.displayId}</div>}
           {status && (
             <span className={`fl-chip outline ${TONE[status]}`} style={{ marginTop: 6 }}>
               {status === "waiting" ? "waiting for human" : status}
@@ -95,7 +91,7 @@ export function NodeDetails({ trace, node, cursor, onSelect, onClose }: PanelPro
         </div>
       </div>
       {!status ? (
-        <p className="ct-empty-note">This step had not happened yet at the replay cursor.</p>
+        <p className="ct-empty-note">Not reached yet.</p>
       ) : node.kind === "task" ? (
         <TaskDetails {...{ trace, node, cursor, onSelect, onClose }} />
       ) : node.kind === "intake" ? (
@@ -140,7 +136,7 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
 
   return (
     <>
-      <Section title="Triggered by">
+      <Section title="Trigger">
         {incoming ? (
           <p className="ct-line">
             <ArrowUpLeft size={13} />
@@ -161,14 +157,14 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
             <ArrowUpLeft size={13} /> {str(outboxAudit.summary)} <span className="fl-mono fl-mute">{clock(timestamp(outboxAudit.ts))}</span>
           </p>
         ) : (
-          <p className="ct-line fl-mute">No recorded trigger (task row without dispatch or delegation).</p>
+          <p className="ct-line fl-mute">No trigger recorded.</p>
         )}
         {incoming?.kind === "dispatch" && (
           <p className="ct-quote">{str(trace.nodeById.get(incoming.from)?.dispatch?.reason, "")}</p>
         )}
       </Section>
 
-      <Section title="Timings">
+      <Section title="Timing">
         <KV
           rows={[
             ["Started", <span key="s" className="fl-mono">{clock(t.startedAt)}</span>],
@@ -176,12 +172,11 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
             ["Took", <span key="d" className="fl-mono">{shortDur((done ? node.end : Math.min(cursor, Date.now())) - t.startedAt)}{done ? "" : " so far"}</span>],
             ["Model", t.model ? <span className="fl-mono">{t.model}</span> : "—"],
             ["Confidence", done && t.confidence ? <span className="fl-mono">{t.confidence.toFixed(2)}</span> : "—"],
-            ["Depth", <span key="dp" className="fl-mono">{t.depth}</span>],
           ]}
         />
       </Section>
 
-      <Section title="Documents used" count={docs.length}>
+      <Section title="Documents" count={docs.length}>
         {docs.length ? (
           <ul className="ct-list">
             {docs.map((d) => (
@@ -256,11 +251,11 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
             {artifact && <Json value={artifact} label="artifact" />}
           </>
         ) : (
-          <p className="ct-line fl-mute">Still working; the artifact lands when the task completes.</p>
+          <p className="ct-line fl-mute">Still working.</p>
         )}
       </Section>
 
-      <Section title="Communication">
+      <Section title="Links">
         <ul className="ct-list compact">
           {incoming && (
             <li className="ct-line">
@@ -305,14 +300,13 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
         ))}
       </Section>
 
-      <Section title="Audit trail" count={audit.length}>
+      <Section title="Audit" count={audit.length}>
         <ol className="ct-audit">
           {audit.map((a) => (
             <li key={str(a.id)}>
               <span className="fl-mono fl-mute">{clock(timestamp(a.ts))}</span>
               <span className="fl-mono ct-audit-code">{str(a.reason_code, str(a.kind))}</span>
               <span className="ct-audit-text">{auditText(a)}</span>
-              {str(a.hash, "") && <span className="fl-mono fl-mute ct-hash">#{str(a.hash).replace(/^sim/, "").slice(0, 8)}</span>}
             </li>
           ))}
         </ol>
@@ -397,13 +391,13 @@ function IntakeDetails({ trace, node, onSelect }: PanelProps) {
   const caseRow = trace.slice.case[0];
   return (
     <>
-      <Section title="Triggered by">
+      <Section title="Trigger">
         <p className="ct-line">
           <ArrowUpLeft size={13} /> New event for {trace.caseId}
           {caseRow && <span className="fl-mono fl-mute"> opened {clock(timestamp(caseRow.opened_at))}</span>}
         </p>
       </Section>
-      <Section title="Routing decision">
+      <Section title="Routing">
         <KV
           rows={[
             ["Skill", skillLabel(str(d.skill))],
@@ -411,13 +405,12 @@ function IntakeDetails({ trace, node, onSelect }: PanelProps) {
             ["Status", str(d.status, "")],
             ["Queue", d.queue_ms !== undefined ? <span className="fl-mono">{num(d.queue_ms)} ms</span> : ""],
             ["Policy", str(d.policy_version, "")],
-            ["Event", <span key="ev" className="fl-mono">{str(d.event_id)}</span>],
             ["At", <span key="at" className="fl-mono">{clock(node.start)}</span>],
           ]}
         />
         {str(d.reason, "") && <p className="ct-quote">{str(d.reason)}</p>}
       </Section>
-      <Section title="Communication">
+      <Section title="Links">
         <p className="ct-line">
           <ArrowDownRight size={13} /> to{" "}
           <NodeLink trace={trace} id={target} onSelect={onSelect}>
@@ -435,7 +428,7 @@ function HumanDetails({ trace, node, cursor, onSelect }: PanelProps) {
   const decided = node.end > 0 && node.end <= cursor;
   return (
     <>
-      <Section title="Triggered by">
+      <Section title="Trigger">
         <p className="ct-line">
           <ArrowUpLeft size={13} />
           <NodeLink trace={trace} id={str(a.task_id)} onSelect={onSelect}>

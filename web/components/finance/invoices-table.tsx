@@ -120,10 +120,10 @@ export function InvoicesPanel() {
         </span>
         <div className="fl-tabs fh-inv-tabs" role="tablist">
           <button role="tab" aria-selected={tab === "invoices"} className={`fl-tab ${tab === "invoices" ? "active" : ""}`} onClick={() => setTab("invoices")}>
-            Open invoices <span className="fl-num">{finance.outstandingInvoices.count}</span>
+            Open invoices
           </button>
           <button role="tab" aria-selected={tab === "proposals"} className={`fl-tab ${tab === "proposals" ? "active" : ""}`} onClick={() => setTab("proposals")}>
-            Proposals <span className="fl-num">{finance.paymentsProposed.count}</span>
+            Proposals
           </button>
         </div>
       </header>
@@ -134,7 +134,7 @@ export function InvoicesPanel() {
               <b className="fl-num">{usd(finance.outstandingInvoices.amount)}</b> outstanding
             </span>
             <span>
-              <b className="fl-num">{finance.heldInvoices.count}</b> held · {usdShort(finance.heldInvoices.amount)} on hold
+              <b className="fl-num">{usdShort(finance.heldInvoices.amount)}</b> on hold
             </span>
             <span className={finance.overdueInvoices.count ? "hot" : ""}>
               <b className="fl-num">{finance.overdueInvoices.count}</b> overdue 30d+
@@ -146,7 +146,7 @@ export function InvoicesPanel() {
               <b className="fl-num">{usd(finance.paymentsProposed.amount)}</b> awaiting release
             </span>
             <span>
-              <b className="fl-num">{proposals.filter((p) => p.status === "awaiting_approval").length}</b> need human approval
+              <b className="fl-num">{proposals.filter((p) => p.status === "awaiting_approval").length}</b> need approval
             </span>
           </>
         )}
@@ -154,10 +154,7 @@ export function InvoicesPanel() {
       <div className="fh-table-wrap">
         {rows.length === 0 ? (
           <div className="fh-empty">
-            <div>
-              <div className="fl-label strong">{emptyNote(source, tab === "invoices" ? "No open carrier invoices" : "No payment proposals yet")}</div>
-              <div className="fh-empty-sub">{source === "live" ? "Rows appear here as soon as agents record them." : "Nothing to show from the current source."}</div>
-            </div>
+            <div className="fl-label strong">{emptyNote(source, tab === "invoices" ? "No open invoices" : "No payment proposals")}</div>
           </div>
         ) : tab === "invoices" ? (
           <table className="fl-table fh-table">
@@ -182,9 +179,11 @@ export function InvoicesPanel() {
                   </td>
                   <td className="num">
                     <span className="fh-cell-main">{usd(r.amount)}</span>
-                    <span className="fh-cell-sub">{r.contract ? `contract ${usd(r.contract)}` : "no contract"}</span>
                   </td>
-                  <td className={`num fh-opt ${r.delta > 0 ? "fh-hot" : r.delta < 0 ? "fh-ok" : "fh-mute"}`}>
+                  <td
+                    className={`num fh-opt ${r.delta > 0 ? "fh-hot" : r.delta < 0 ? "fh-ok" : "fh-mute"}`}
+                    title={r.contract ? `Contract ${usd(r.contract)}` : "No contract on file"}
+                  >
                     {r.delta ? `${r.delta > 0 ? "+" : "−"}${usd(Math.abs(r.delta))}` : "—"}
                   </td>
                   <td>
@@ -243,7 +242,7 @@ export function InvoicesPanel() {
       </div>
       {rows.length > LIMIT && (
         <button className="fh-more" onClick={() => setShowAll((v) => !v)}>
-          {showAll ? "Show fewer" : `Show all ${rows.length}`}
+          {showAll ? "Show fewer" : "Show all"}
         </button>
       )}
     </section>

@@ -30,7 +30,7 @@ import { date } from "@/lib/data";
 import { LiveProvider, useLive } from "./live-provider";
 import { CasesView, LedgerView, Overview } from "./operations";
 import { InboxView, LearningView } from "./human-views";
-import { CounterpartiesView, DemoView, HarnessView } from "./support-views";
+import { CounterpartiesView, HarnessView } from "./support-views";
 import { Dialog, Submit, type FlagTarget } from "./ui";
 import AgentInbox from "./agent-inbox";
 const AuditWorkspace = dynamic(() => import("./audit-workspace"), {
@@ -109,13 +109,6 @@ const views = [
     label: "Intake & models",
     icon: Cpu,
     description: "Route, observe and configure your inference infrastructure.",
-  },
-  {
-    id: "demo",
-    label: "Demo console",
-    icon: Play,
-    description:
-      "A real scenario. A team-routed conversation. A complete audit trail.",
   },
 ];
 function DashboardBody() {
@@ -291,7 +284,6 @@ function DashboardBody() {
                 {item.id === "inbox" && pending > 0 && (
                   <span className="nav-count">{pending}</span>
                 )}
-                {item.id === "demo" && <span className="nav-demo">DEMO</span>}
               </button>
             </div>
           ))}
@@ -404,9 +396,9 @@ function DashboardBody() {
               <h1>{current.label}</h1>
               <p>{current.description}</p>
             </div>
-            <button className="button primary" onClick={() => navigate("demo")}>
+            <a className="button primary" href="/demo">
               <Play size={14} /> Run a scenario
-            </button>
+            </a>
           </div>
           {state !== "live" && (
             <div className={`connection-banner ${state}`} role="status">
@@ -458,7 +450,6 @@ function DashboardBody() {
           {view === "harness" && (
             <HarnessView notify={notify} onFlag={onFlag} />
           )}
-          {view === "demo" && <DemoView notify={notify} />}
           <footer className="page-footer">
             <span>
               <Activity size={12} /> Operational truth in SpacetimeDB

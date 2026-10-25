@@ -2,9 +2,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Database, FlaskConical, Home, ListTree, Network, RefreshCw, Table2, Zap } from "lucide-react";
+import { Bell, Database, FlaskConical, Home, ListTree, Network, Play, RefreshCw, Zap } from "lucide-react";
 import { useOps, type DataMode } from "../data-provider";
-import { fmtAgo } from "@/lib/ops";
+import { agentLabel } from "@/lib/agents";
+import { fmtAgo, fmtMoney, type AttentionItem } from "@/lib/ops";
 import { Mascot } from "../mascot";
 import Intro from "./intro";
 
@@ -12,8 +13,8 @@ const NAV = [
   { href: "/", label: "Finance", icon: Home, exact: true },
   { href: "/agents", label: "Agents", icon: Network },
   { href: "/cases", label: "Cases", icon: ListTree },
+  { href: "/demo", label: "Demo", icon: Play },
 ];
-const LEGACY = [{ href: "/ops", label: "Ops console", icon: Table2 }];
 
 export default function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -37,37 +38,24 @@ export default function Shell({ children }: { children: ReactNode }) {
             </span>
           </Link>
           <nav className="fl-nav" aria-label="Main">
-            <span className="fl-label fl-nav-group">Operations</span>
             {NAV.map((item) => {
               const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
               return (
                 <Link key={item.href} href={item.href} className={`fl-nav-item ${active ? "active" : ""}`} aria-current={active ? "page" : undefined}>
                   <item.icon size={15} />
                   {item.label}
-                  {item.href === "/" && ops.casesNeedingAttention > 0 && <span className="fl-count">{ops.casesNeedingAttention}</span>}
-                  {item.href === "/agents" && <span className="fl-micro" style={{ marginLeft: "auto" }}>{ops.tasksActive} live</span>}
+                  {item.href === "/" && ops.approvalsPending > 0 && <span className="fl-count">{ops.approvalsPending}</span>}
                 </Link>
               );
             })}
-            <span className="fl-label fl-nav-group">Records</span>
-            {LEGACY.map((item) => (
-              <Link key={item.href} href={item.href} className="fl-nav-item">
-                <item.icon size={15} />
-                {item.label}
-              </Link>
-            ))}
           </nav>
-          <RailFoot />
         </aside>
         <header className="fl-topbar">
           <span className="fl-crumb">
-            FreightLine <span style={{ color: "var(--text-mute)" }}>/</span> <strong>{title}</strong>
+            <strong>{title}</strong>
           </span>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Link href="/?focus=attention" className="fl-btn quiet small" aria-label={`${ops.approvalsPending} pending approvals`}>
-              <Bell size={14} />
-              {ops.approvalsPending > 0 && <span className="fl-num" style={{ color: "var(--orange)" }}>{ops.approvalsPending}</span>}
-            </Link>
+            <Notifications />
             <SourcePill />
           </div>
         </header>
@@ -77,35 +65,8 @@ export default function Shell({ children }: { children: ReactNode }) {
   );
 }
 
-function RailFoot() {
-  const { ops, workloads } = useOps();
-  const working = Object.values(workloads).filter((w) => w.status === "working");
-  return (
-    <div className="fl-rail-foot">
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Mascot id="intake" size={34} mood={ops.tasksActive ? "working" : "idle"} />
-        <div style={{ minWidth: 0 }}>
-          <div className="fl-label strong" style={{ fontSize: 11 }}>
-            {working.length}/{Object.keys(workloads).length} agents busy
-          </div>
-          <div className="fl-micro">{ops.tasksActive} tasks · {ops.casesActive} open cases</div>
-        </div>
-      </div>
-      <div className="fl-micro" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <Activity size={11} /> Operational truth in SpacetimeDB
-      </div>
-    </div>
-  );
-}
-
-const MODES: { id: DataMode; label: string; hint: string }[] = [
-  { id: "auto", label: "Auto", hint: "Database when available, otherwise simulation" },
-  { id: "live", label: "Live DB", hint: "SpacetimeDB only; empty when offline" },
-  { id: "sim", label: "Simulation", hint: "Browser-generated activity, clearly labeled" },
-];
-
-function SourcePill() {
-  const { source, mode, setMode, lastUpdated, now, serverUrl, databaseName, error, reconnect, sim, simulated } = useOps();
+/** Closes a popover on outside click. */
+function usePopover() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -113,9 +74,107 @@ function SourcePill() {
     const close = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) setOpen(false);
     };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", key);
+    };
   }, [open]);
+  return { open, setOpen, ref };
+}
+
+const KIND_LABEL: Record<AttentionItem["kind"], string> = {
+  approval_pending: "Approve",
+  task_failed: "Failed",
+  input_required: "Input",
+  flag_open: "Flag",
+  review_issue: "Review",
+  hold_active: "Hold",
+  call_no_answer: "No answer",
+  policy_deny: "Blocked",
+  stale_agent: "Stale",
+};
+
+/** Bell: the items that need a person, newest critical first, linking to their case. */
+function Notifications() {
+  const { attention, now } = useOps();
+  const { open, setOpen, ref } = usePopover();
+  const urgent = attention.filter((a) => a.severity === "critical" || a.severity === "high");
+  const items = attention.slice(0, 8);
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button className="fl-btn quiet small" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog" aria-label={`${urgent.length} items need attention`}>
+        <Bell size={14} />
+        {urgent.length > 0 && (
+          <span className="fl-num" style={{ color: "var(--orange)" }}>
+            {urgent.length}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="fl-popover" role="dialog" aria-label="Needs attention" style={{ width: 360, padding: 0 }}>
+          <div className="fl-panel-head" style={{ padding: "10px 12px" }}>
+            <span className="fl-section">Needs attention</span>
+            <span className="fl-micro">{attention.length}</span>
+          </div>
+          {items.length === 0 ? (
+            <p className="fl-dim" style={{ padding: 14, fontSize: 13 }}>
+              All clear.
+            </p>
+          ) : (
+            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+              {items.map((item) => (
+                <li key={item.id} style={{ borderTop: "1px solid var(--line-soft)" }}>
+                  <Link
+                    href={item.caseId ? `/cases/${encodeURIComponent(item.caseId)}` : "/"}
+                    onClick={() => setOpen(false)}
+                    style={{ display: "grid", gridTemplateColumns: "28px 1fr auto", gap: 10, alignItems: "center", padding: "9px 12px" }}
+                    className="fl-notif"
+                  >
+                    <Mascot id={item.agent === "human" ? "human" : item.agent} size={28} mood={item.severity === "critical" || item.kind === "task_failed" ? "alert" : "idle"} />
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+                        <span className={`fl-chip outline ${item.severity === "critical" || item.severity === "high" ? "hot" : ""}`} style={{ fontSize: 10, padding: "1px 5px" }}>
+                          {KIND_LABEL[item.kind]}
+                        </span>
+                        <span style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>
+                      </span>
+                      <span className="fl-micro" style={{ display: "block", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item.caseId || agentLabel(item.agent)} · {fmtAgo(item.at, now)}
+                      </span>
+                    </span>
+                    <span className="fl-num" style={{ fontSize: 13 }}>
+                      {item.amount ? fmtMoney(item.amount) : ""}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+          {attention.length > items.length && (
+            <Link href="/?focus=attention" onClick={() => setOpen(false)} className="fl-btn quiet small" style={{ display: "flex", justifyContent: "center", borderTop: "1px solid var(--line-soft)", borderRadius: 0 }}>
+              View all {attention.length}
+            </Link>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const MODES: { id: DataMode; label: string }[] = [
+  { id: "auto", label: "Auto" },
+  { id: "live", label: "Live" },
+  { id: "sim", label: "Simulation" },
+];
+
+function SourcePill() {
+  const { source, mode, setMode, lastUpdated, now, serverUrl, databaseName, error, reconnect, sim, simulated } = useOps();
+  const { open, setOpen, ref } = usePopover();
   const label =
     source === "live" ? "Live" : source === "simulation" ? "Simulation" : source === "fallback" ? "Snapshot" : source === "connecting" ? "Connecting" : "Offline";
   return (
@@ -127,42 +186,30 @@ function SourcePill() {
       </button>
       {open && (
         <div className="fl-popover" role="dialog" aria-label="Data source">
-          <div className="fl-section" style={{ marginBottom: 10 }}>
-            Data source
-          </div>
           <div className="fl-tabs" style={{ marginBottom: 10 }}>
             {MODES.map((m) => (
-              <button key={m.id} className={`fl-tab ${mode === m.id ? "active" : ""}`} onClick={() => setMode(m.id)} title={m.hint}>
+              <button key={m.id} className={`fl-tab ${mode === m.id ? "active" : ""}`} onClick={() => setMode(m.id)}>
                 {m.label}
               </button>
             ))}
           </div>
-          <dl style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 12px", margin: 0, fontSize: 12 }}>
-            <dt className="fl-micro">Now</dt>
-            <dd style={{ margin: 0 }}>
-              {simulated ? "Simulated in this browser. No rows are written anywhere." : `${databaseName} on ${serverUrl}`}
-            </dd>
-            <dt className="fl-micro">Updated</dt>
-            <dd style={{ margin: 0 }} className="fl-mono">
-              {lastUpdated ? fmtAgo(lastUpdated, now) : "never"}
-            </dd>
-            {error && !simulated && (
-              <>
-                <dt className="fl-micro">Error</dt>
-                <dd style={{ margin: 0, color: "var(--orange)" }}>{error}</dd>
-              </>
-            )}
-          </dl>
+          <div className="fl-micro" style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{simulated ? "Simulated · not recorded" : `${databaseName} · ${serverUrl}`}</span>
+            <span>{lastUpdated ? fmtAgo(lastUpdated, now) : "no data"}</span>
+          </div>
+          {error && !simulated && (
+            <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--orange)" }}>{error}</p>
+          )}
           {simulated ? (
             <div style={{ marginTop: 12 }}>
               <label className="fl-micro" style={{ display: "flex", justifyContent: "space-between" }}>
-                <span>Arrival rate</span>
+                <span>Rate</span>
                 <span className="fl-mono">{sim.ratePerMinute}/min</span>
               </label>
               <input type="range" min={0} max={120} step={1} value={sim.ratePerMinute} onChange={(e) => sim.setRate(Number(e.target.value))} style={{ width: "100%", padding: 0, background: "transparent", border: 0 }} />
               <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
                 <button className="fl-btn small" onClick={() => sim.inject("detention_unsupported")}>
-                  <Zap size={12} /> Detention case
+                  <Zap size={12} /> Detention
                 </button>
                 <button className="fl-btn small" onClick={() => sim.inject("bank_change")}>
                   <Zap size={12} /> Bank change
@@ -177,6 +224,9 @@ function SourcePill() {
               <RefreshCw size={12} /> Reconnect
             </button>
           )}
+          <Link href="/ops" className="fl-micro" style={{ display: "block", marginTop: 12, textDecoration: "underline", textUnderlineOffset: 3 }} onClick={() => setOpen(false)}>
+            Admin console
+          </Link>
         </div>
       )}
     </div>

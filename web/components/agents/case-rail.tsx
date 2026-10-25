@@ -33,11 +33,10 @@ const statusLabel = (s: string) => (s === "in_progress" ? "Working" : s === "hum
 
 export type RailMetrics = {
   active: number;
-  completed: number;
   exceptions: number;
+  /** Handoffs and completed tool calls in the last five minutes. */
   handoffs: number;
   toolCalls: number;
-  throughput: number;
 };
 
 type Props = {
@@ -92,11 +91,9 @@ function CaseRailImpl({ caseList, liveAgents, selectedCase, onSelect, tab, onTab
     <>
       <div className="au-metrics" aria-label="Operations">
         <Metric v={metrics.active} k="Active cases" />
-        <Metric v={metrics.completed} k="Completed" />
         <Metric v={metrics.exceptions} k="Exceptions" hot={metrics.exceptions > 0} />
-        <Metric v={metrics.handoffs} k="Handoffs" />
-        <Metric v={metrics.toolCalls} k="Tool calls" />
-        <Metric v={metrics.throughput} k="Resolved / h" />
+        <Metric v={metrics.handoffs} k="Handoffs" sub="last 5 min" />
+        <Metric v={metrics.toolCalls} k="Tool calls" sub="last 5 min" />
       </div>
       <div className="au-explorer-head">
         <div className="au-list-meta">
@@ -173,11 +170,14 @@ function CaseRailImpl({ caseList, liveAgents, selectedCase, onSelect, tab, onTab
   );
 }
 
-function Metric({ v, k, hot = false }: { v: number; k: string; hot?: boolean }) {
+function Metric({ v, k, sub, hot = false }: { v: number; k: string; sub?: string; hot?: boolean }) {
   return (
     <div className="au-metric">
       <div className={`v ${hot ? "hot" : ""}`}>{v.toLocaleString()}</div>
-      <div className="k">{k}</div>
+      <div className="k">
+        {k}
+        {sub && <small>{sub}</small>}
+      </div>
     </div>
   );
 }
@@ -201,7 +201,7 @@ function CaseRow({
   const needs = c.attention.length > 0 && c.status !== "resolved";
   return (
     <div
-      className={`au-row ${selected ? "sel" : ""}`}
+      className={`au-row ${selected ? "sel" : ""} ${needs ? "needs" : ""}`}
       style={{ top }}
       role="option"
       aria-selected={selected}
@@ -242,7 +242,6 @@ function CaseRow({
             <i key={a} className={live?.has(a) ? "live" : ""} style={{ "--c": agentColor(a) } as CSSProperties} title={AGENT_META[a].name} />
           ))}
         </span>
-        {needs && <span className="att">Needs attention</span>}
         <span className="amt">{c.exposureUsd ? fmtMoney(c.exposureUsd) : "—"}</span>
       </span>
     </div>

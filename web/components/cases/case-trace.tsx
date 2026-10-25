@@ -1,6 +1,6 @@
 "use client";
 /**
- * /cases/[id] — per-case execution trace. Header, financial side effects,
+ * /cases/[id] — per-case execution trace. Header, ledger strip,
  * the git-style graph (built only from rows that exist), a replay scrubber
  * and a details drawer.
  */
@@ -194,13 +194,8 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
         <Mascot id="intake" size={96} mood={source === "connecting" ? "working" : "alert"} />
         <div className="fl-section">Case {caseId}</div>
         <h1 className="fl-display" style={{ fontSize: 34 }}>
-          {source === "connecting" ? "Connecting…" : "Not in the current data"}
+          {source === "connecting" ? "Connecting…" : "Case not found."}
         </h1>
-        <p className="fl-dim">
-          {simulated
-            ? "The simulation regenerates its history on every load; pick a case from the explorer."
-            : "No case row or task rows exist for this id in the live database."}
-        </p>
         <Link href="/cases" className="fl-btn">
           <ArrowLeft size={14} /> Back to cases
         </Link>
@@ -210,7 +205,8 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
 
   const tasks = trace.nodes.filter((n) => n.kind === "task" && n.start <= cursor);
   const agents = new Set(tasks.map((n) => n.lane)).size;
-  const tools = tasks.reduce((s, n) => s + n.tools.filter((t) => t.startedAt <= cursor).length, 0);
+  const openedAt = c?.openedAt || t0;
+  const endedAt = c ? (c.resolvedAt && c.status === "resolved" && c.resolvedAt <= cursor ? c.resolvedAt : 0) : !trace.open && trace.last <= cursor ? trace.last : 0;
   const status = c?.status ?? (trace.open ? "in_progress" : "resolved");
   const statusAtCursor = replay ? (c?.resolvedAt && c.resolvedAt <= cursor ? "resolved" : "in_progress") : status;
 
@@ -227,27 +223,17 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
             </span>
             {c && <PriorityChip priority={c.priority} />}
             <StatusChip status={statusAtCursor} active={replay ? 0 : (c?.activeTasks ?? 0)} />
-            {replay && <span className="fl-chip outline agent">Replay · {clock(clockAt)}</span>}
+            {replay && <span className="fl-chip outline agent">Replay</span>}
           </div>
           <h1 className="fl-display ct-title">{c?.title ?? caseId}</h1>
           <div className="ct-meta fl-mono">
-            <span>Opened {clock(c?.openedAt || t0)}</span>
-            {c?.resolvedAt && c.status === "resolved" && c.resolvedAt <= cursor ? (
-              <span>
-                Resolved {clock(c.resolvedAt)} · took {shortDur(c.resolvedAt - c.openedAt)}
-              </span>
-            ) : null}
+            <span>Opened {clock(openedAt)}</span>
+            {/* While replaying, the scrubber readout carries the elapsed time. */}
+            {endedAt ? <span>Took {shortDur(endedAt - openedAt)}</span> : replay ? null : <span>{shortDur(clockAt - openedAt)} so far</span>}
             <span>
               {agents} agent{agents === 1 ? "" : "s"}
             </span>
-            <span>
-              {tasks.length} task{tasks.length === 1 ? "" : "s"}
-            </span>
-            <span>
-              {tools} tool call{tools === 1 ? "" : "s"}
-            </span>
-            <span>Exposure {c?.exposureUsd ? fmtMoney(c.exposureUsd) : "$0"}</span>
-            {c?.loadId && <span>{c.loadId}</span>}
+            {c?.exposureUsd ? <span>Exposure {fmtMoney(c.exposureUsd)}</span> : null}
           </div>
         </div>
         <div className="ct-head-actions">
@@ -259,7 +245,7 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
             {replay && missed > 0 && <span className="ct-missed fl-mono">+{missed}</span>}
           </button>
           <Link className="fl-btn small" href={`/agents?case=${encodeURIComponent(caseId)}`} title="See this case on the agent graph">
-            <Network size={13} /> Agents
+            <Network size={13} /> Map
           </Link>
           <button className={`fl-btn small ${panel === "log" ? "primary" : ""}`} onClick={() => setPanel((p) => (p === "log" ? "closed" : "log"))}>
             <ListOrdered size={13} /> Log
@@ -288,7 +274,7 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
             {trace.nodes.length === 0 && (
               <div className="ct-waiting">
                 <Mascot id="intake" size={56} mood="working" />
-                <span>Waiting for Intake to route this case…</span>
+                <span>Not routed yet.</span>
               </div>
             )}
           </div>
@@ -308,21 +294,19 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
           replay={replay}
           playing={playing}
           speed={speed}
-          missed={missed}
           onToggle={togglePlay}
           onSpeed={setSpeed}
           onSeek={(t) => {
             setPlaying(false);
             setReplayAt(t);
           }}
-          onLive={goLive}
         />
       </div>
     </div>
   );
 }
 
-/* ------------------------------ side effects ------------------------------ */
+/* ------------------------------ ledger ------------------------------ */
 
 const EFFECT_TONE: Record<string, string> = {
   active: "hot",
@@ -339,14 +323,17 @@ const EFFECT_TONE: Record<string, string> = {
 };
 
 function SideEffects({ trace, cursor, onSelect }: { trace: Trace; cursor: number; onSelect: (id: string) => void }) {
-  const items = trace.sideEffects.map((s) => ({ s, status: sideEffectAt(s, cursor) })).filter((x) => x.status);
+  const items = trace.sideEffects
+    .filter((s) => s.kind !== "forecast")
+    .map((s) => ({ s, status: sideEffectAt(s, cursor) }))
+    .filter((x) => x.status);
   return (
-    <div className="ct-effects" aria-label="Financial side effects">
+    <div className="ct-effects" aria-label="Ledger">
       <span className="fl-section ct-effects-label" style={{ "--accent": "var(--yellow)" } as CSSProperties}>
-        Side effects
+        Ledger
       </span>
       {items.length === 0 ? (
-        <span className="fl-micro">No holds, payments, approvals or journals {cursor === Infinity ? "on this case" : "yet"}</span>
+        <span className="fl-micro">{cursor === Infinity ? "None" : "None yet"}</span>
       ) : (
         <div className="ct-effects-list">
           {items.map(({ s, status }) => {
@@ -385,11 +372,9 @@ function Scrubber(p: {
   replay: boolean;
   playing: boolean;
   speed: Speed;
-  missed: number;
   onToggle: () => void;
   onSpeed: (s: Speed) => void;
   onSeek: (t: number) => void;
-  onLive: () => void;
 }) {
   const span = Math.max(1, p.tEnd - p.t0);
   const progress = Math.min(1, Math.max(0, (p.at - p.t0) / span));
@@ -398,7 +383,7 @@ function Scrubber(p: {
     <div className="ct-scrubber">
       <button className="fl-btn small ct-play" onClick={p.onToggle} aria-label={p.playing ? "Pause replay" : "Play replay"}>
         {p.playing ? <Pause size={13} /> : <Play size={13} />}
-        {p.playing ? "Pause" : p.replay ? "Play" : "Replay"}
+        {p.playing ? "Pause" : "Play"}
       </button>
       <div className="fl-tabs ct-speed" role="group" aria-label="Replay speed">
         {SPEEDS.map((s) => (
@@ -426,13 +411,12 @@ function Scrubber(p: {
         />
       </div>
       <span className="ct-readout fl-mono">
-        {timer(p.at - p.t0)} <span className="fl-mute">/ {timer(span)}</span>
+        {p.replay && (
+          <>
+            {timer(p.at - p.t0)} <span className="fl-mute">/ {timer(span)}</span>
+          </>
+        )}
       </span>
-      <button className={`fl-btn small ${p.replay ? "" : "primary"}`} onClick={p.onLive}>
-        <i className={`fl-dot ${p.replay ? "" : "pulse"}`} style={{ "--accent": p.replay ? "var(--text-mute)" : "#000" } as CSSProperties} />
-        Live
-        {p.replay && p.missed > 0 && <span className="ct-missed fl-mono">+{p.missed}</span>}
-      </button>
     </div>
   );
 }

@@ -1,8 +1,7 @@
 "use client";
 /**
- * One node on the agent map: mascot, status ring, live counts, the
- * "received" counter (owned by the packet engine), an activity ticker and a
- * short queue of case chips. Memoized; props are primitives so a 250 ms data
+ * One node on the agent map: mascot, status ring, one line of counts, an
+ * activity ticker (owned by the packet engine) and a short queue of case chips. Memoized; props are primitives so a 250 ms data
  * tick only re-renders the nodes whose numbers actually moved.
  */
 import { memo, useEffect, useRef, type CSSProperties } from "react";
@@ -18,7 +17,7 @@ export type NodeView = {
   mood: Mood;
   bubble?: string;
   tone: NodeTone;
-  /** Three counters: [value, label] pairs flattened, e.g. "3|act|1|q|128|done". */
+  /** Counters as [value, label] pairs flattened, e.g. "3|active|128|done". */
   counts: string;
   /** Case chips: "CASE-4831~P1|CASE-4829~P3". */
   chips: string;
@@ -48,11 +47,10 @@ function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, st
   const size = MASCOT_SIZE[id];
   const flash = useRef<HTMLSpanElement>(null);
   const bump = useRef<HTMLSpanElement>(null);
-  const count = useRef<HTMLElement>(null);
   const ticker = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    engine.registerNode(id, { flash: flash.current, bump: bump.current, count: count.current, ticker: ticker.current });
+    engine.registerNode(id, { flash: flash.current, bump: bump.current, ticker: ticker.current });
     return () => engine.unregisterNode(id);
   }, [engine, id]);
 
@@ -87,12 +85,6 @@ function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, st
           <span className="au-flash" ref={flash} aria-hidden />
           <span className="au-ticker" ref={ticker} aria-hidden />
           <Mascot id={id} mood={mood} size={size} bubble={bubble} />
-          {id !== "human" && (
-            <span className="au-recv" title="Handoffs received">
-              <i>↘</i>
-              <b ref={count} />
-            </span>
-          )}
           <span className="au-nick">{meta.nick}</span>
           {order > 0 && <span className="au-order">{order}</span>}
         </span>

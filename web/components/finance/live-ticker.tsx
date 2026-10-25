@@ -1,6 +1,6 @@
 "use client";
 /**
- * Live ledger ticker: a vertical feed of the money-relevant things agents just
+ * Activity feed: a vertical list of the money-relevant things agents just
  * did — new cases, holds, approvals, failures, payment proposals and posted
  * journal entries — newest on top, last 30 kept.
  *
@@ -18,8 +18,8 @@ import { useLiveEvents, useOps } from "@/components/data-provider";
 import { Mascot } from "@/components/mascot";
 import { agentColor, skillLabel } from "@/lib/agents";
 import { json, num, str, timestamp, type Row, type Snapshot } from "@/lib/data";
-import { fmtAgo, type CaseView, type LedgerLine, type LiveEvent } from "@/lib/ops";
-import { clock, emptyNote, nick, usd } from "./format";
+import type { CaseView, LedgerLine, LiveEvent } from "@/lib/ops";
+import { emptyNote, nick, usd } from "./format";
 
 type Tone = "ok" | "hot" | "warn" | "info" | "bad";
 type Tick = { id: string; at: number; agent: string; text: string; amount?: number; signed?: boolean; tone: Tone; caseId?: string };
@@ -110,7 +110,7 @@ const merge = (prev: Tick[], incoming: Tick[]) => {
 };
 
 export function LiveTicker() {
-  const { snapshot, cases, simulated, source, now } = useOps();
+  const { snapshot, cases, simulated, source } = useOps();
   const [ticks, setTicks] = useState<Tick[]>([]);
   const [paused, setPaused] = useState(false);
   const buffer = useRef<Tick[]>([]);
@@ -118,12 +118,8 @@ export function LiveTicker() {
   const pausedRef = useRef(false);
   pausedRef.current = paused;
 
-  // Arrival times of every accepted item (not capped at KEEP) for the rate readout.
-  const arrivals = useRef<number[]>([]);
   const push = (incoming: Tick[]) => {
     if (!incoming.length) return;
-    const t = Date.now();
-    arrivals.current = [...arrivals.current.filter((a) => t - a <= 60_000), ...incoming.map((i) => i.at)];
     if (pausedRef.current) {
       buffer.current = merge(buffer.current, incoming);
       setBuffered(buffer.current.length);
@@ -145,7 +141,6 @@ export function LiveTicker() {
   const baseline = useRef<{ pp: Map<string, string>; je: Set<string> } | null>(null);
   useEffect(() => {
     baseline.current = null;
-    arrivals.current = [];
     setTicks([]);
     buffer.current = [];
     setBuffered(0);
@@ -201,40 +196,24 @@ export function LiveTicker() {
     if (shift > 0) el.animate([{ transform: `translateY(-${shift}px)` }, { transform: "translateY(0)" }], { duration: 520, easing: "cubic-bezier(.23,1,.32,1)" });
   }, [ticks]);
 
-  const perMinute = arrivals.current.filter((a) => now - a <= 60_000).length;
-
   return (
-    <section className="fl-panel fh-ticker" aria-label="Live ledger and activity">
+    <section className="fl-panel fh-ticker" aria-label="Activity">
       <header className="fl-panel-head">
         <span className="fl-section" style={{ "--accent": "var(--teal)" } as CSSProperties}>
-          Live ledger
+          Activity
         </span>
-        <span className="fh-head-meta">
-          {paused ? (
-            <span className="fl-chip outline warn">Paused{buffered ? ` · ${buffered} new` : ""}</span>
-          ) : (
-            <span className="fl-micro fh-live">
-              <i className="fl-dot pulse" /> {perMinute}/min
-            </span>
-          )}
-        </span>
+        {paused && <span className="fl-chip outline warn">Paused{buffered ? ` · ${buffered} new` : ""}</span>}
       </header>
       <div className="fh-ticker-body" onPointerEnter={() => setPaused(true)} onPointerLeave={resume}>
         {ticks.length === 0 ? (
           <div className="fh-empty">
             <Mascot id="intake" mood="sleeping" size={52} />
-            <div>
-              <div className="fl-label strong">{emptyNote(source, "Quiet for now")}</div>
-              <div className="fh-empty-sub">New holds, approvals, payments and journal entries appear here as they happen.</div>
-            </div>
+            <div className="fl-label strong">{emptyNote(source, "Quiet for now")}</div>
           </div>
         ) : (
           <ol className="fh-ticker-list" ref={list} aria-live="polite" aria-relevant="additions">
             {ticks.map((t) => (
               <li key={t.id} data-id={t.id} className={`fh-tick tone-${t.tone}`} style={{ "--agent": agentColor(t.agent) } as CSSProperties}>
-                <time className="fh-tick-time" dateTime={new Date(t.at).toISOString()} title={fmtAgo(t.at, now)} suppressHydrationWarning>
-                  {clock(t.at)}
-                </time>
                 <span className="fh-tick-agent">{nick(t.agent)}</span>
                 {t.caseId ? (
                   <Link href={`/cases/${encodeURIComponent(t.caseId)}`} className="fh-tick-text" title={`${t.text} · ${t.caseId}`}>

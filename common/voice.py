@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
+from pydantic import ValidationError
 from sqlalchemy import Column, Float, MetaData, String, Table, Text, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -24,7 +25,7 @@ from common.envelope import CallResult, DelegationMeta, PlaceCall, TaskEnvelope
 from common.outreach import route_target
 from common.policy import check
 from common.providers import infer, mode
-from common.spacetime_client import SpacetimeClient
+from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError
 
 metadata = MetaData()
 attempts = Table("w3_voice_attempts", metadata,
@@ -37,6 +38,11 @@ attempts = Table("w3_voice_attempts", metadata,
 
 class VoiceError(RuntimeError):
     pass
+
+
+class CallRefused(VoiceError):
+    """A condition that makes this call impossible as requested: caller purpose, case, directory, calling hours or
+    configuration. Retrying the same call is refused again. The message is fixed text, safe to record."""
 
 
 CARTESIA_VERSION = "2026-08-14"
@@ -162,29 +168,98 @@ class CallStore:
 def check_call_window(company: dict) -> None:
     timezone = company.get("timezone") or os.getenv("OUTREACH_TIMEZONE")
     if not timezone:
-        raise VoiceError("verified contact timezone is required for live calls")
+        raise CallRefused("verified contact timezone is required for live calls")
     hour = datetime.now(ZoneInfo(timezone)).hour
     start, end = int(os.getenv("OUTREACH_START_HOUR", "8")), int(os.getenv("OUTREACH_END_HOUR", "18"))
     if not 0 <= start < end <= 24 or not start <= hour < end:
-        raise VoiceError("outreach is outside the configured calling hours")
+        raise CallRefused("outreach is outside the configured calling hours")
 
 
 def call_config(purpose: str) -> tuple[dict, str, str]:
     status = voice_configuration_status(purpose)
     if not status["available"]:
-        raise VoiceError("Cartesia voice configuration is incomplete or invalid")
+        raise CallRefused("Cartesia voice configuration is incomplete or invalid")
     key = os.getenv("CARTESIA_API_KEY", "")
     persona = os.getenv(f"CARTESIA_AGENT_ID_{purpose.upper()}", "")
     number = os.getenv("CARTESIA_FROM_NUMBER_ID", "")
     return {"X-API-Key": key, "Cartesia-Version": CARTESIA_VERSION}, persona, number
 
 
-async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> tuple[str, CallResult | None]:
+async def _call_target(env: TaskEnvelope, request: PlaceCall):
+    """Resolve and route the verified destination for a call, before anything is recorded or dialed."""
     from common.source_repository import SourceRepository
 
+    sources = SourceRepository()
+    source = None
+    if mode() == "live":
+        source = await sources.load(env)
+        if request.counterparty_id not in {source.get("carrier_id"), source.get("shipper_id"),
+                                          source.get("counterparty_id")}:
+            raise CallRefused("call counterparty is not part of the assigned case")
+    company = await sources.get_company(request.counterparty_id)
+    contact = await sources.get_contact(request.counterparty_id)
+    if not contact.get("company_id"):
+        contact = None
+    target = contact or company
+    verified = bool(target and target.get("phone") and target.get("source_url"))
+    if contact and float(contact.get("confidence", 0)) < 0.7:
+        verified = False
+    decision = check("contact_counterparty", "voice_desk", {"directory_verified": verified})
+    if decision.result != "allow":
+        raise CallRefused("contact must come from a verified directory")
+    routed = route_target("phone", target["phone"], env.subject.get("demo_target"))
+    return source, sources, company, contact, target, routed
+
+
+def _requested_call(env: TaskEnvelope, meta: DelegationMeta) -> PlaceCall:
     request = PlaceCall.model_validate(env.subject)
     if CALL_PURPOSES.get(meta.from_agent) != request.purpose:
-        raise VoiceError("caller is not permitted to request this call purpose")
+        raise CallRefused("caller is not permitted to request this call purpose")
+    return request
+
+
+async def call_preflight(env: TaskEnvelope, meta: DelegationMeta) -> str | None:
+    """Why this call cannot be placed, or None when it may proceed. Read-only: nothing is recorded or dialed.
+
+    It repeats start_call's fixed gates (purpose, case, verified directory, demo routing, calling hours and voice
+    configuration) and the ledger's routing gate: W2 refuses any call whose routed number has no enabled
+    `demo_target` row. An impossible call then ends at once, before a model turn, instead of failing in a tool loop.
+    A transient read failure returns None; start_call still enforces every gate."""
+    from common.demo_calls import CASE_ID as TEAM_CASE
+    from common.outreach import OutreachBlocked
+    from common.source_repository import NotInDirectory, SourceUnavailable
+
+    try:
+        request = _requested_call(env, meta)
+        status = voice_configuration_status(request.purpose)
+        if not status["available"]:
+            names = status["missing_configuration"] + status["invalid_configuration"]
+            return "outbound voice configuration is incomplete or invalid: " + ", ".join(names)
+        _source, _sources, company, _contact, target, routed = await _call_target(env, request)
+        if env.case_id != TEAM_CASE:  # the team demo may hold an operator's hours grant; start_call decides
+            check_call_window({**company, "timezone": target.get("timezone") or company.get("timezone")})
+    except (CallRefused, NotInDirectory) as refusal:
+        return str(refusal)
+    except OutreachBlocked:
+        return "the call has no allowlisted demo destination"
+    except ValidationError:
+        return "the call request is malformed"
+    except SourceUnavailable:
+        return None  # the source could not be read just now: not a fact about this call
+    client = SpacetimeClient(actor="voice_desk")
+    if client.disabled or not _PHONE.fullmatch(routed.routed_to):
+        return None
+    try:
+        targets = await client.query_rows(f"SELECT * FROM demo_target WHERE phone = '{routed.routed_to}'")
+    except Exception:  # noqa: BLE001 -- a read outage leaves the decision to start_call and W2
+        return None
+    if not any(row.get("enabled") is True for row in targets):
+        return "the routed demo number is not enabled in the live database (demo_target), so W2 refuses the call"
+    return None
+
+
+async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> tuple[str, CallResult | None]:
+    request = _requested_call(env, meta)
     attempt_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"freightops:call:{task_id}"))
     if mode() == "live":
         replay_store = CallStore()
@@ -197,24 +272,7 @@ async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> t
                 return attempt_id, None
         finally:
             await replay_store.close()
-    sources = SourceRepository()
-    if mode() == "live":
-        source = await sources.load(env)
-        if request.counterparty_id not in {source.get("carrier_id"), source.get("shipper_id"),
-                                          source.get("counterparty_id")}:
-            raise VoiceError("call counterparty is not part of the assigned case")
-    company = await sources.get_company(request.counterparty_id)
-    contact = await sources.get_contact(request.counterparty_id)
-    if not contact.get("company_id"):
-        contact = None
-    target = contact or company
-    verified = bool(target and target.get("phone") and target.get("source_url"))
-    if contact and float(contact.get("confidence", 0)) < 0.7:
-        verified = False
-    decision = check("contact_counterparty", "voice_desk", {"directory_verified": verified})
-    if decision.result != "allow":
-        raise VoiceError("contact must come from a verified directory")
-    routed = route_target("phone", target["phone"], env.subject.get("demo_target"))
+    source, sources, company, contact, target, routed = await _call_target(env, request)
     if mode() == "fixture":
         fixture = dict(company.get("fixture_call_result", {}))
         fixture_findings = fixture.get("findings", {})
@@ -250,13 +308,26 @@ async def start_call(env: TaskEnvelope, meta: DelegationMeta, task_id: str) -> t
             return attempt_id, None
         payload = json.loads(row["payload"])
         # W2 enforces company/hour, human ownership, verified directory and demo targets atomically.
-        await SpacetimeClient(actor="voice_desk").mutate("upsert_call", {
-            "write_id": f"call:{attempt_id}:queued", "id": attempt_id, "case_id": env.case_id,
-            "task_id": task_id, "company_id": request.counterparty_id,
-            "contact_id": payload["contact_id"], "routed_to": routed.routed_to,
-            "persona": request.purpose, "direction": "outbound", "status": "queued",
-            **({"team_demo_authorized": True} if hours_grant else {}),
-        })
+        try:
+            await SpacetimeClient(actor="voice_desk").mutate("upsert_call", {
+                "write_id": f"call:{attempt_id}:queued", "id": attempt_id, "case_id": env.case_id,
+                "task_id": task_id, "company_id": request.counterparty_id,
+                "contact_id": payload["contact_id"], "routed_to": routed.routed_to,
+                "persona": request.purpose, "direction": "outbound", "status": "queued",
+                **({"team_demo_authorized": True} if hours_grant else {}),
+            })
+        except SpacetimeHTTPError as error:
+            from common.runtime import projection_rejected
+            if not projection_rejected(error.status_code):
+                raise
+            # W2 refused to queue this call (routing allowlist, one call per company per hour, directory, human
+            # takeover). Nothing was dialed; the same attempt would be refused again, so it ends unreached.
+            reason = getattr(error, "reason", "") or f"SpacetimeDB HTTP {error.status_code}"
+            result = CallResult(reached=False, intended_to=routed.intended_to, routed_to=routed.routed_to,
+                                findings={"end_reason": "ledger_refused", "reason": reason[:200],
+                                          "verified": False, "call_accepted": False})
+            await store.set(attempt_id, status="refused", result=result.model_dump_json(), delivered="1")
+            return attempt_id, result
         # A restart before claim can generate a replacement capability; store only its hash.
         if not await store.claim_dial(attempt_id):
             return attempt_id, None

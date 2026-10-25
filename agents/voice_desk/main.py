@@ -1,10 +1,19 @@
 from agents.voice_desk.card import DESCRIPTIONS
 from common.agent_support import evidence, finish
 from common.envelope import CallResult, ResultArtifact
+from common.outreach import OutreachBlocked
 from common.runtime import FreightAgent
 from common.server import serve
-from common.source_repository import SourceRepository, SourceUnavailable
-from common.voice import redact_transcript, start_call
+from common.source_repository import NotInDirectory, SourceRepository, SourceUnavailable
+from common.voice import CallRefused, call_preflight, redact_transcript, start_call
+
+
+def not_reachable(reason: str) -> ResultArtifact:
+    """A call that cannot be placed ends at once, unreached, so its caller decides (unverified, hold) without it."""
+    call = CallResult(reached=False, findings={"end_reason": "not_reachable", "reason": reason[:200],
+                                               "verified": False, "call_accepted": False})
+    return ResultArtifact(outcome="unverified", confidence=0.0, model_used="deterministic", findings={
+        "call_result": call.model_dump(), "outbound_call_placed": False, "reachable": False, "reason": reason[:200]})
 
 
 class VoiceDeskAgent(FreightAgent):
@@ -12,6 +21,11 @@ class VoiceDeskAgent(FreightAgent):
     async def handle(self, env, meta, task_id, updater):
         from common.providers import mode
         if mode() == "live":
+            if env.task_type == "place_call":
+                # Recorded once, so a resumed call wait never re-decides reachability mid-call.
+                blocked = await self.step(task_id, "call_preflight", lambda: call_preflight(env, meta))
+                if blocked:
+                    return not_reachable(blocked)
             from common.tool_loop import run_tool_loop
             return await run_tool_loop(self, env, meta, task_id)
         return await self.run_workflow(env, meta, task_id, updater)
@@ -39,7 +53,13 @@ class VoiceDeskAgent(FreightAgent):
                           "transcript_redacted": redact_transcript(transcript),
                           "outbound_call_placed": False, "financial_authorization": False},
                 evidence_refs=refs, recommended_next=["ingest.voice.inbound.dispute"])
-        attempt_id, result = await start_call(env, meta, task_id)
+        from common.demo_calls import DemoCallBlocked
+        try:
+            attempt_id, result = await start_call(env, meta, task_id)
+        except (CallRefused, NotInDirectory, DemoCallBlocked) as refusal:
+            return not_reachable(str(refusal))
+        except OutreachBlocked:
+            return not_reachable("the call has no allowlisted demo destination")
         if result is None:
             data = await self.resume_data(task_id, f"call:{attempt_id}")
             if data:

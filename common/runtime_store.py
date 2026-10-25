@@ -101,6 +101,15 @@ def digest(value: Any) -> str:
     return hashlib.sha256(canonical(value).encode()).hexdigest()
 
 
+def wire_form(value: Any) -> Any:
+    """``value`` as an A2A peer receives it. A data part travels as a protobuf Struct, where every JSON number is a
+    double, so ``120`` arrives as ``120.0``. A delegation is reserved and compared in this form; otherwise a reserved
+    envelope holding an integer never matches the envelope its child is sent, and the child is refused."""
+    from google.protobuf.json_format import MessageToDict, ParseDict
+    from google.protobuf.struct_pb2 import Struct
+    return MessageToDict(ParseDict({"value": value}, Struct()))["value"]
+
+
 def stable_id(*parts: str) -> str:
     return str(uuid.uuid5(NAMESPACE, canonical(list(parts))))
 
@@ -411,6 +420,22 @@ class RuntimeStore:
         async with self.engine.begin() as conn:
             await conn.execute(update(dependencies).where(dependencies.c.id == dependency_id).values(
                 state=state, result=canonical(result)))
+
+    async def close_dependency(self, dependency_id: str, state: str, result: list[dict]) -> bool:
+        """End a reservation the child never accepted. Only a still-pending reservation changes, so a child that was
+        admitted in the meantime keeps its delegation. Returns whether this call closed it."""
+        async with self.engine.begin() as conn:
+            changed = await conn.execute(update(dependencies).where(
+                dependencies.c.id == dependency_id, dependencies.c.state == "pending").values(
+                state=state, result=canonical(result)))
+        return changed.rowcount == 1
+
+    async def dependency_for_child(self, child_id: str) -> dict | None:
+        await self.initialize()
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(select(dependencies).where(
+                dependencies.c.child_id == child_id).limit(1))).mappings().first()
+        return dict(row) if row else None
 
     async def recoverable(self, agent: str) -> list[dict]:
         await self.initialize()

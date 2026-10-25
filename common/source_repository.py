@@ -39,6 +39,10 @@ class SourceUnavailable(ValueError):
     """Required authoritative evidence has not been supplied."""
 
 
+class NotInDirectory(SourceUnavailable):
+    """The source was read and has no verified directory entry: a fact about the data, not a read failure."""
+
+
 def source_backend() -> str:
     backend = os.getenv("SOURCE_DATA_BACKEND", "").strip().lower() or "file"
     if backend not in {"file", "spacetime"}:
@@ -185,7 +189,7 @@ class SourceRepository:
         companies = data.get("companies", {})
         company = companies.get(counterparty_id) if isinstance(companies, dict) else None
         if not isinstance(company, dict) or company.get("id", counterparty_id) != counterparty_id:
-            raise SourceUnavailable("counterparty is absent from the verified source directory")
+            raise NotInDirectory("counterparty is absent from the verified source directory")
         return {**copy.deepcopy(company), "id": counterparty_id, **source_provenance(data, company)}
 
     async def get_contact(self, counterparty_id: str) -> dict[str, Any]:
@@ -204,4 +208,4 @@ class SourceRepository:
         company = await self.get_company(counterparty_id)
         if company.get("verified") is True and company.get("source") and company.get("phone"):
             return company
-        raise SourceUnavailable("no independently verified contact is available")
+        raise NotInDirectory("no independently verified contact is available")

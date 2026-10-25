@@ -603,7 +603,10 @@
   box-shadow: var(--card-edge);
   position: relative;
   z-index: 30;
-  overflow: hidden;
+}
+/* The list clips its own rows to the rail's radius; the rail itself must not clip (the agent panel floats outside it). */
+.fl.theme-glass .au-list {
+  border-radius: 0 0 23px 23px;
 }
 .fl.theme-glass .au-row {
   border-bottom-color: rgba(255, 255, 255, 0.08);
@@ -951,7 +954,6 @@
   color: var(--text);
   font-family: var(--font-body);
   animation: fl-log-in 260ms var(--e-out) both;
-  touch-action: none;
 }
 @keyframes fl-log-in {
   from {
@@ -966,6 +968,7 @@
   padding: 14px 16px 8px;
   cursor: grab;
   user-select: none;
+  touch-action: none;
 }
 .fl.theme-glass .fl-log-head:active {
   cursor: grabbing;
@@ -1177,6 +1180,7 @@
   width: 16px;
   height: 16px;
   cursor: nwse-resize;
+  touch-action: none;
   border-right: 2px solid rgba(255, 255, 255, 0.3);
   border-bottom: 2px solid rgba(255, 255, 255, 0.3);
   border-bottom-right-radius: 6px;

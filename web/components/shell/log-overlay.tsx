@@ -120,7 +120,12 @@ export function LogWindow({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   useEffect(() => {
-    if (rect) window.localStorage.setItem(RECT_KEY, JSON.stringify(rect));
+    if (!rect) return;
+    try {
+      window.localStorage.setItem(RECT_KEY, JSON.stringify(rect));
+    } catch {
+      // Storage may be blocked; the window still works, it just forgets its place.
+    }
   }, [rect]);
 
   const startDrag = useCallback(
@@ -144,11 +149,10 @@ export function LogWindow({ onClose }: { onClose: () => void }) {
   };
 
   const events = useMemo(() => {
-    const list = buildTimeline(snapshot).filter((e) => e.kind !== "doc_read" && e.kind !== "dispatch");
-    const seen = new Set(list.filter((e) => e.kind === "review").map((e) => e.caseId));
+    // Verdicts come from the `review` table itself (it carries the checks); the `add_review` audit rows would duplicate them.
+    const list = buildTimeline(snapshot).filter((e) => e.kind !== "doc_read" && e.kind !== "dispatch" && str(e.row.kind, "") !== "add_review");
     for (const r of snapshot.review) {
       const caseId = str(r.case_id, "");
-      if (seen.has(caseId)) continue;
       const verdict = str(r.verdict, "pass");
       list.push({
         id: `review:${str(r.id)}`,

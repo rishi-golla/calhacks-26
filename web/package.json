@@ -7,7 +7,7 @@
     "build": "next build --turbopack",
     "start": "next start --port 3001 --hostname 127.0.0.1",
     "lint": "eslint",
-    "test": "tsx --test lib/*.test.ts"
+    "test": "tsx --test lib/*.test.ts components/cases/*.test.ts"
   },
   "dependencies": {
     "@vgpu/wgsl": "^0.6.0",

@@ -874,8 +874,10 @@
 }
 
 /* cases table: give the Attention column room and never clip pill borders */
-.fl.theme-glass .cx-row {
-  grid-template-columns: 120px minmax(200px, 1fr) 40px 112px 84px 128px 64px 236px;
+@media (min-width: 1101px) {
+  .fl.theme-glass .cx-row {
+    grid-template-columns: 120px minmax(200px, 1fr) 40px 112px 84px 128px 64px 236px;
+  }
 }
 .fl.theme-glass .cx-attn {
   overflow: visible;

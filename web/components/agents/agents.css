@@ -1114,6 +1114,16 @@
   font-size: calc(10px * var(--ts));
   font-weight: 600;
 }
+/* "Thinking…" has no step to name: no border or glow, so named steps stand out. */
+.au-doing.quiet {
+  border-color: transparent;
+  background: rgba(4, 18, 27, 0.45);
+  color: rgba(255, 255, 255, 0.62);
+}
+.au-doing.quiet > i {
+  box-shadow: none;
+  opacity: 0.6;
+}
 .au-node.has-doing .au-ticker {
   display: none;
 }

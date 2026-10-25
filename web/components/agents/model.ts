@@ -186,22 +186,32 @@ export function toolDoing(name: string): string {
   return `${ing[0].toUpperCase()}${ing.slice(1)}${tail ? ` ${tail}` : ""}`;
 }
 
+/** A finished step stays up this long, so back-to-back tool calls read as one steady line instead of flickering through "Thinking…". */
+export const ACTIVITY_HOLD_MS = 2_500;
+
 /**
  * What each working agent is doing right now, for the line above its mascot:
- * the tool call it has open (newest first), "Thinking…" between tool calls,
- * and how many other tasks it is working. Idle agents get nothing.
- * Only the tool-call rows of live tasks are read, so this stays cheap per tick.
+ * the tool call it has open (newest first, or one that ended within
+ * ACTIVITY_HOLD_MS), "Thinking…" between tool calls, and how many other tasks
+ * it is working. Idle agents get nothing. Only the tool-call rows of live
+ * tasks are read, so this stays cheap per tick.
  */
-export type Activity = { text: string; /** Other live tasks beyond the one shown. */ more: number };
+export type Activity = {
+  text: string;
+  /** Other live tasks beyond the one shown. */
+  more: number;
+  /** True for "Thinking…": no tool step to name, shown quieter. */
+  thinking: boolean;
+};
 
-export function agentActivity(snapshot: Snapshot, workloads: Record<AgentId, AgentWorkload>): Partial<Record<AgentId, Activity>> {
+export function agentActivity(snapshot: Snapshot, workloads: Record<AgentId, AgentWorkload>, now: number): Partial<Record<AgentId, Activity>> {
   const live = new Set<string>();
   for (const id of AGENT_IDS) for (const t of workloads[id].activeTasks) live.add(t.taskId);
   if (!live.size) return {};
   const rows = snapshot.audit_event.filter((r) => r.kind === "tool_call" && live.has(str(r.task_id, "")));
   const open = new Map<string, { name: string; status: string; at: number }>();
   for (const c of buildToolCalls({ ...snapshot, audit_event: rows })) {
-    if (c.endedAt) continue;
+    if (c.endedAt && now - c.endedAt > ACTIVITY_HOLD_MS) continue;
     const prev = open.get(c.taskId);
     if (!prev || c.startedAt > prev.at) open.set(c.taskId, { name: c.name, status: c.status, at: c.startedAt });
   }
@@ -215,7 +225,7 @@ export function agentActivity(snapshot: Snapshot, workloads: Record<AgentId, Age
       if (c && (!best || c.at > best.at)) best = c;
     }
     const doing = !best ? "Thinking…" : best.status === "waiting" ? "Waiting" : toolDoing(best.name);
-    out[id] = { text: doing, more: tasks.length - 1 };
+    out[id] = { text: doing, more: tasks.length - 1, thinking: !best };
   }
   return out;
 }

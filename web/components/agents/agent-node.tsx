@@ -22,6 +22,8 @@ export type NodeView = {
   doing?: string;
   /** Other live tasks beyond the one `doing` describes. */
   doingMore?: number;
+  /** "Thinking…": shown quieter than a named step. */
+  doingQuiet?: boolean;
   tone: NodeTone;
   /** Counters as [value, label] pairs flattened, e.g. "3|active|128|done". */
   counts: string;
@@ -54,7 +56,7 @@ const breathOffset = (id: string) => {
   return h % 4000;
 };
 
-function AgentNodeImpl({ id, mood, bubble, doing, doingMore = 0, tone, counts, chips, more, engine, stretch, state, focus, order, selectedCase, onHover, onSelect, onCase }: Props) {
+function AgentNodeImpl({ id, mood, bubble, doing, doingMore = 0, doingQuiet = false, tone, counts, chips, more, engine, stretch, state, focus, order, selectedCase, onHover, onSelect, onCase }: Props) {
   const meta = isAgentId(id) ? AGENT_META[id] : NODE_META[id as "intake" | "human"];
   const pos = nodePos(id);
   const size = MASCOT_SIZE[id];
@@ -97,7 +99,7 @@ function AgentNodeImpl({ id, mood, bubble, doing, doingMore = 0, tone, counts, c
         <span className="au-fig" ref={bump}>
           {/* Keyed by its text so each new step replays the entrance. */}
           {doing && (
-            <span key={doing} className="au-doing" role="status">
+            <span key={doing} className={`au-doing ${doingQuiet ? "quiet" : ""}`} role="status">
               <i aria-hidden />
               <span className="au-doing-text">{doing}</span>
               {doingMore > 0 && (

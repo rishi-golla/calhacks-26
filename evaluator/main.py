@@ -34,6 +34,10 @@ every step has been emitted, and nothing on it changed for EVALUATOR_GRACE_S wal
 a positive with an undecided lane counts as not caught; a negative that nothing flagged is not counted as a true
 negative but as "failed" (a lane failed) or "unresolved". Loads with no case in SpacetimeDB are "unseen".
 
+"Start fresh": when the public `view_epoch` row exists, only loads whose earliest case `opened_at` is at or after
+its `since` are scored (loads with no case yet are left out until one opens), and `calls_placed` counts only calls
+started since then. Every metric is still written on every pass; nothing is deleted.
+
 A load is flagged when any of its cases has a hold row, or a lane decision is parked, `hold`, `reject`, `suspicious`
 or `partial`, or `unverified` without an explicit clearance (`payment_blocked: false`) or a pending payment approval.
 Planted-error scenarios are positives; clean loads and decoys are negatives. A duplicate invoice also counts as caught
@@ -79,6 +83,8 @@ from typing import Any
 log = logging.getLogger("evaluator")
 
 TABLES = ("case", "task", "hold", "payment_proposal", "invoice", "call", "metric")
+# Read separately so a module published before the table existed still scores (as "no epoch").
+EPOCH_TABLE = "view_epoch"
 ERROR_SCENARIOS = frozenset({
     "detention_unsupported", "shipper_short_pay", "bank_change", "duplicate_invoice", "duplicate_renumbered",
     "rate_mismatch", "fsc_error", "math_error", "lumper_no_receipt", "factoring_unverified", "pod_unsigned",
@@ -177,7 +183,18 @@ def read_answer_key(path: pathlib.Path) -> list[dict]:
 
 async def fetch_rows(client) -> dict[str, list[dict]]:
     """Snapshot every table the scorer reads. Table names are constants, never caller input."""
-    return {table: await client.query_rows(f'SELECT * FROM "{table}"') for table in TABLES}
+    from common.spacetime_client import SpacetimeHTTPError
+    rows = {table: await client.query_rows(f'SELECT * FROM "{table}"') for table in TABLES}
+    try:
+        rows[EPOCH_TABLE] = await client.query_rows(f'SELECT * FROM "{EPOCH_TABLE}"')
+    except SpacetimeHTTPError as error:
+        # Only a module published before the table existed (SQL "no such table", HTTP 400) means no
+        # boundary. Any other failure propagates, so a pass never publishes unbounded historical scores.
+        if error.status_code != 400:
+            raise
+        log.warning("view_epoch table is missing on this module; scoring every load")
+        rows[EPOCH_TABLE] = []
+    return rows
 
 
 def events_tail_now(path: pathlib.Path, tail_bytes: int = 65536) -> datetime | None:
@@ -238,6 +255,22 @@ def _when(value: Any) -> datetime | None:
     except ValueError:
         return None
     return parsed.replace(tzinfo=UTC) if parsed and parsed.tzinfo is None else parsed
+
+
+def view_since(rows: Mapping[str, list[dict]]) -> datetime | None:
+    """The "Start fresh" boundary from the `view_epoch` singleton, or None when no epoch is set."""
+    for row in rows.get(EPOCH_TABLE, []):
+        if _text(row.get("id")) == "current":
+            return _when(row.get("since"))
+    return None
+
+
+def _in_view(cases: list[dict], since: datetime | None) -> bool:
+    """A load is in view when no epoch is set, or its earliest case opened at or after the epoch."""
+    if since is None:
+        return True
+    opened = [when for when in (_when(c.get("opened_at")) for c in cases) if when]
+    return bool(opened) and min(opened) >= since
 
 
 def _findings(task: Mapping) -> dict:
@@ -406,6 +439,8 @@ def score(answers: list[dict], rows: Mapping[str, list[dict]], clocks: Clocks | 
     for unknown in sorted({a["scenario"] for a in answers} - SCENARIOS):
         log.warning("answer-key scenario %r is not classified; its loads are not scored", unknown)
     cases = _cases_by_load(known, rows.get("case", []))
+    since = view_since(rows)
+    known = [a for a in known if _in_view(cases.get(str(a["load_id"]), []), since)]
     tasks, holds = _group(rows.get("task", []), "case_id"), _group(rows.get("hold", []), "case_id")
     proposals = _group(rows.get("payment_proposal", []), "case_id")
     invoices = _group(rows.get("invoice", []), "case_id")
@@ -434,7 +469,10 @@ def scoreboard(loads: list[LoadScore], rows: Mapping[str, list[dict]]) -> dict[s
     else:
         f1 = 2 * precision * recall / (precision + recall) if precision and recall else 0.0
     durations = [seconds for x in loads for seconds in x.task_seconds]
-    calls = sum(_text(c.get("status")) not in UNPLACED_CALLS for c in rows.get("call", []))
+    since = view_since(rows)
+    calls = sum(_text(c.get("status")) not in UNPLACED_CALLS
+                and (since is None or ((started := _when(c.get("started_at"))) is not None and started >= since))
+                for c in rows.get("call", []))
     metrics: dict[str, float] = {
         "precision": precision, "recall": recall,
         "dollars_caught": sum(x.at_risk_usd for x in positives if x.caught),

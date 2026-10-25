@@ -31,7 +31,7 @@ DATABASE = "at350-freightops"
 PUBLISHER = "c2005175965c7ab35b8367adc2064a7bc96cacb0b0b796ddf81377fc02b50f1f"
 FIXTURE_HUMAN = "human:operator"
 ACTORS = (*SERVICES, FIXTURE_HUMAN)
-ADMIN_REDUCERS = {"grant_role", "set_period", "ensure_agent_defaults"}
+ADMIN_REDUCERS = {"grant_role", "set_period", "ensure_agent_defaults", "settle_cases"}
 PERIODS_AHEAD = 18
 # Observed Maincloud round trips reach 1 s; the client's 5 s default is too tight under load.
 CLOUD_TIMEOUT_SECONDS = 15
@@ -54,6 +54,22 @@ def ensure_agent_defaults(admin) -> list[str]:
     admin.call("admin", "ensure_agent_defaults", {"write_id": f"agent-defaults:{uuid.uuid4()}"})
     after = {row["agent"] for row in admin.rows("agent_config")}
     return sorted(after - before)
+
+
+def settle_cases(admin) -> tuple[dict[str, int], dict[str, int]]:
+    """Run the module's ``settle_cases`` sweep once; returns case status counts (before, after).
+
+    The sweep is idempotent by content, so each call gets a fresh write id, as for
+    ``ensure_agent_defaults``. It never touches human-owned cases or reopens resolved ones.
+    """
+    def counts() -> dict[str, int]:
+        result: dict[str, int] = {}
+        for row in admin.rows("case"):
+            result[row["status"]] = result.get(row["status"], 0) + 1
+        return dict(sorted(result.items()))
+    before = counts()
+    admin.call("admin", "settle_cases", {"write_id": f"settle-cases:{uuid.uuid4()}"})
+    return before, counts()
 
 
 def open_accounting_periods(admin, today: date | None = None) -> tuple[list[str], list[str]]:
@@ -361,6 +377,8 @@ def main() -> None:
     commands.add_parser("handoff", help="Regenerate services.env and handoff/<actor>.env from stored credentials "
                         "without contacting Maincloud")
     commands.add_parser("demo", help="Seed labeled W2 fixtures in the authorized cloud database")
+    commands.add_parser("settle-cases", help="Run the one-time settle_cases sweep after publishing the "
+                        "case-settlement rule (idempotent)")
     grant = commands.add_parser("grant-human", help="Grant the identity displayed by the cloud-connected dashboard")
     grant.add_argument("identity")
     grant.add_argument("--name", required=True)
@@ -375,6 +393,13 @@ def main() -> None:
                   "no cloud request was made.")
         elif args.command == "demo":
             admin.demo()
+        elif args.command == "settle-cases":
+            try:
+                before, after = settle_cases(admin)
+            except RuntimeError as error:
+                raise RuntimeError("settle_cases failed; republish the module from main first (spacetime/CLOUD.md)") from error
+            print(f"Case statuses before: {before}")
+            print(f"Case statuses after:  {after}")
         else:
             admin.grant(args.identity, "human", f"human:{args.name.removeprefix('human:')}")
             print(f"Human role granted on {DATABASE}; the publisher credential was not shared.")

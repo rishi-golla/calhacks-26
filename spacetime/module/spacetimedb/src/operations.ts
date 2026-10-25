@@ -230,6 +230,71 @@ export const updateCase: Handler = m => {
   m.capture('case', next.case_id, previous, next);
 };
 
+const FAILED = ['failed', 'canceled', 'rejected'];
+type SettleTask = { task_id: string; agent: string; skill: string; a2a_state: string; started_at: string };
+
+// The status the case's work implies: in_progress while anything is pending, open when a final
+// result failed (or its latest review found an issue) and no later completed task for the same
+// agent and skill superseded it, otherwise resolved. A proposed but unpaid payment still counts as
+// resolved: the agent work is done and the payment row keeps its own status.
+function settledStatus(ctx: Ctx, caseId: string, tasks: SettleTask[]): string {
+  const nowMs = Number(ctx.timestamp.microsSinceUnixEpoch / 1000n);
+  const active = tasks.some(x => !TERMINAL.includes(x.a2a_state))
+    || [...ctx.db.routing_outbox.case_id.filter(caseId)].some(x => x.status !== 'done')
+    // An expired request can never be decided, so it no longer holds the case open.
+    || [...ctx.db.approval.case_id.filter(caseId)].some(x => x.decision === 'pending' && Date.parse(x.expires_at) > nowMs)
+    || [...ctx.db.flag.case_id.filter(caseId)].some(x => x.status === 'open' || x.status === 'reviewing');
+  if (active) return 'in_progress';
+  const latestReview = new Map<string, { verdict: string; ts: string }>();
+  for (const review of ctx.db.review.case_id.filter(caseId)) {
+    const seen = latestReview.get(review.target_task_id);
+    if (!seen || review.ts >= seen.ts) latestReview.set(review.target_task_id, review);
+  }
+  const bad = (x: SettleTask) => FAILED.includes(x.a2a_state) || latestReview.get(x.task_id)?.verdict === 'issue';
+  const unresolved = tasks.filter(bad).some(x => !tasks.some(y =>
+    y.task_id !== x.task_id && y.agent === x.agent && y.skill === x.skill && y.a2a_state === 'completed'
+    && y.started_at >= x.started_at && !bad(y)));
+  return unresolved ? 'open' : 'resolved';
+}
+
+// Moves a case to the status its tasks, outbox, approvals and flags imply, inside the caller's
+// transaction. Human-owned cases and cases without tasks are left alone. A resolved case changes
+// only when `reopen` says this mutation created new work, so an explicit update_case resolution is
+// not undone by its own still-running task or by the reviews of work that was already underway.
+// Returns whether the case changed.
+function settleCase(m: Mutation, caseId: string, reopen = false): boolean {
+  const { ctx, p } = m;
+  if (!caseId) return false;
+  const previous = ctx.db.case.case_id.find(caseId);
+  if (!previous || previous.status === 'human_owned') return false;
+  const tasks = [...ctx.db.task.case_id.filter(caseId)];
+  if (!tasks.length) return false;
+  const status = settledStatus(ctx, caseId, tasks);
+  if (status === previous.status || (previous.status === 'resolved' && !reopen)) return false;
+  const next = { ...previous, status, resolved_at: status === 'resolved' ? now(ctx) : '' };
+  ctx.db.case.case_id.update(next);
+  m.capture('case', caseId, previous, next);
+  // Keep the case's own change chain complete when the triggering action carries no case.
+  if (p.case_id === undefined) p.case_id = caseId;
+  return true;
+}
+
+// One-time admin sweep for cases settled before this rule existed. Never reopens a resolved case.
+// Each changed case gets its own change set and audit event on its own chain, in this same
+// transaction, so case histories show the settlement; the sweep itself records only its receipt.
+export const settleCases: Handler = m => {
+  const { ctx, p, actor } = m;
+  const writeId = text(p, 'write_id', undefined, 200);
+  for (const row of [...ctx.db.case.iter()]) {
+    const inner = new Mutation(ctx, {
+      write_id: `settle_cases:${hash(canonical([writeId, row.case_id])).slice(0, 40)}`,
+      case_id: row.case_id, summary: 'Settle case status from its tasks, outbox, approvals and flags',
+    }, actor, 'settle_cases');
+    if (settleCase(inner, row.case_id)) inner.finish();
+  }
+  m.unchanged = true;
+};
+
 export const upsertInvoice: Handler = m => {
   const { ctx, p, actor } = m;
   const id = text(p, 'id');
@@ -428,6 +493,7 @@ export const requestApproval: Handler = m => {
   };
   ctx.db.approval.insert(row);
   m.capture('approval', row.id, null, row);
+  settleCase(m, case_id, true);
 };
 
 export const issueApprovalCode: Handler = m => {
@@ -465,6 +531,7 @@ export const decideApproval: Handler = m => {
   ctx.db.approval.id.update(next);
   m.capture('approval', previous.id, previous, next);
   p.case_id = previous.case_id;
+  settleCase(m, previous.case_id);
 };
 
 function enqueue(m: Mutation, id: string, kind: string, caseId: string, taskId: string, body: object, targetAgent = 'validator'): void {
@@ -530,6 +597,9 @@ export const upsertTask: Handler = m => {
   if (TERMINAL.includes(a2a_state) && (!previous || !TERMINAL.includes(previous.a2a_state)) && ['carrier_ap', 'shipper_ar', 'controller', 'cfo'].includes(agent)) {
     enqueue(m, `review_output:${task_id}`, 'review_output', case_id, task_id, { target_task_id: task_id, case_id, agent, artifact: JSON.parse(row.artifact_json) });
   }
+  // A task that did not exist before is new work and may reopen a resolved case; progress on a task
+  // that was already running (including the one that explicitly resolved the case) may not.
+  settleCase(m, case_id, !previous);
 };
 
 export const recordDelegation: Handler = m => {
@@ -566,6 +636,7 @@ export const recordDelegation: Handler = m => {
   ctx.db.task.insert(child);
   m.capture('task', task_id, null, child);
   refreshCounts(m, to_agent);
+  settleCase(m, case_id, true);
 };
 
 export const agentHeartbeat: Handler = m => {
@@ -791,6 +862,7 @@ export const enqueueFirstHop: Handler = m => {
   if (existing && existing.payload_json !== canonical(body)) throw new Error('first hop for this event was already enqueued with different contents');
   writeDispatch(m, { event_id, case_id, skill, agent, task_id: '', status: 'queued', reason: text(p, 'reason'), queue_ms, policy_version, ts: now(ctx) });
   enqueue(m, id, 'first_hop', case_id, '', body, agent);
+  settleCase(m, case_id, !existing);
 };
 
 export const logLlmCall: Handler = m => {
@@ -831,6 +903,23 @@ export const ensureAgentDefaults: Handler = m => {
   m.unchanged = !m.cells.length;
 };
 
+// "Start fresh": a view boundary, not a deletion. `since` (default now) is normalised to the
+// module's ISO convention; `clear: true` removes the boundary. Both are audited as usual.
+export const setViewEpoch: Handler = m => {
+  const { ctx, p, actor } = m;
+  const previous = ctx.db.view_epoch.id.find('current');
+  if (bool(p, 'clear', false)) {
+    if (p.since !== undefined) throw new Error('clear cannot be combined with since');
+    if (!previous) { m.unchanged = true; return; }
+    ctx.db.view_epoch.id.delete('current');
+    m.capture('view_epoch', 'current', previous, {});
+    return;
+  }
+  const row = { id: 'current', since: p.since === undefined ? now(ctx) : iso(text(p, 'since')), set_by: actor.actor, set_at: now(ctx) };
+  if (previous) ctx.db.view_epoch.id.update(row); else ctx.db.view_epoch.insert(row);
+  m.capture('view_epoch', 'current', previous, row);
+};
+
 export const upsertForecast: Handler = m => {
   const { ctx, p, actor } = m;
   const id = text(p, 'id');
@@ -861,6 +950,8 @@ export const addReview: Handler = m => {
       enqueue(m, `review_followup:${task.task_id}`, 'review_followup', case_id, task.task_id, { target_task_id: task.task_id, case_id, agent: task.agent, actions, review_id: row.id }, task.agent);
     }
   }
+  // An issue is new evidence against finished work, so it may reopen a resolved case.
+  settleCase(m, case_id, row.verdict === 'issue');
 };
 
 export const upsertMemory: Handler = m => {
@@ -945,6 +1036,7 @@ export const raiseFlag: Handler = m => {
   ctx.db.flag.insert(row);
   m.capture('flag', row.id, null, row);
   enqueue(m, `review_flag:${row.id}`, 'review_flag', case_id, '', { flag_id: row.id, target_ref: row.target_ref, case_id });
+  settleCase(m, case_id, true);
 };
 
 export const resolveFlag: Handler = m => {
@@ -958,6 +1050,7 @@ export const resolveFlag: Handler = m => {
   ctx.db.flag.id.update(row);
   m.capture('flag', row.id, previous, row);
   p.case_id = row.case_id;
+  settleCase(m, row.case_id);
 };
 
 export const claimOutbox: Handler = m => {
@@ -980,4 +1073,5 @@ export const ackOutbox: Handler = m => {
   const row = { ...previous, status: success ? 'done' : 'pending', claimed_by: '', lease_expires_at: '', updated_at: now(ctx), last_error: success ? '' : text(p, 'error', 'delivery failed') };
   ctx.db.routing_outbox.id.update(row);
   m.capture('routing_outbox', row.id, previous, row);
+  settleCase(m, row.case_id);
 };

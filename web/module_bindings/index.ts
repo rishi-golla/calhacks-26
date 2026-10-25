@@ -64,6 +64,8 @@ import SetAgentModelReducer from "./set_agent_model_reducer";
 import SetDemoTargetReducer from "./set_demo_target_reducer";
 import SetMetricReducer from "./set_metric_reducer";
 import SetPeriodReducer from "./set_period_reducer";
+import SetViewEpochReducer from "./set_view_epoch_reducer";
+import SettleCasesReducer from "./settle_cases_reducer";
 import UpdateCaseReducer from "./update_case_reducer";
 import UpsertCallReducer from "./upsert_call_reducer";
 import UpsertCompanyReducer from "./upsert_company_reducer";
@@ -110,6 +112,7 @@ import ReviewRow from "./review_table";
 import RoutingOutboxRow from "./routing_outbox_table";
 import SourceRecordRow from "./source_record_table";
 import TaskRow from "./task_table";
+import ViewEpochRow from "./view_epoch_table";
 
 /** Type-only namespace exports for generated type groups. */
 
@@ -611,6 +614,17 @@ const tablesSchema = __schema({
       { name: 'task_task_id_key', constraint: 'unique', columns: ['taskId'] },
     ],
   }, TaskRow),
+  viewEpoch: __table({
+    name: 'view_epoch',
+    indexes: [
+      { accessor: 'id', name: 'view_epoch_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'view_epoch_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ViewEpochRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
@@ -645,6 +659,8 @@ const reducersSchema = __reducers(
   __reducerSchema("set_demo_target", SetDemoTargetReducer),
   __reducerSchema("set_metric", SetMetricReducer),
   __reducerSchema("set_period", SetPeriodReducer),
+  __reducerSchema("set_view_epoch", SetViewEpochReducer),
+  __reducerSchema("settle_cases", SettleCasesReducer),
   __reducerSchema("update_case", UpdateCaseReducer),
   __reducerSchema("upsert_call", UpsertCallReducer),
   __reducerSchema("upsert_company", UpsertCompanyReducer),
@@ -698,6 +714,8 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "routing_outbox": Omit<typeof tablesSchema.schemaType.tables["routingOutbox"], "accessorName"> & { readonly accessorName: "routing_outbox" };
     /** @deprecated Use `sourceRecord` instead. This alias will be removed in the next major version. */
     readonly "source_record": Omit<typeof tablesSchema.schemaType.tables["sourceRecord"], "accessorName"> & { readonly accessorName: "source_record" };
+    /** @deprecated Use `viewEpoch` instead. This alias will be removed in the next major version. */
+    readonly "view_epoch": Omit<typeof tablesSchema.schemaType.tables["viewEpoch"], "accessorName"> & { readonly accessorName: "view_epoch" };
   };
 };
 
@@ -734,6 +752,7 @@ const tableAccessorAliases = {
   "payment_proposal": "paymentProposal",
   "routing_outbox": "routingOutbox",
   "source_record": "sourceRecord",
+  "view_epoch": "viewEpoch",
 } as const;
 
 function __withTableAccessorAliases<T extends object>(target: T, freeze = false): T {
@@ -790,6 +809,8 @@ export type DbView = __DbViewBase & {
   readonly "routing_outbox": __DbViewBase["routingOutbox"];
   /** @deprecated Use `sourceRecord` instead. This alias will be removed in the next major version. */
   readonly "source_record": __DbViewBase["sourceRecord"];
+  /** @deprecated Use `viewEpoch` instead. This alias will be removed in the next major version. */
+  readonly "view_epoch": __DbViewBase["viewEpoch"];
 };
 
 type __TablesBase = __QueryBuilder<typeof tablesSchema.schemaType>;
@@ -830,6 +851,8 @@ export type Tables = __TablesBase & {
   readonly "routing_outbox": __TablesBase["routingOutbox"];
   /** @deprecated Use `sourceRecord` instead. This alias will be removed in the next major version. */
   readonly "source_record": __TablesBase["sourceRecord"];
+  /** @deprecated Use `viewEpoch` instead. This alias will be removed in the next major version. */
+  readonly "view_epoch": __TablesBase["viewEpoch"];
 };
 
 /** The tables available in this remote SpacetimeDB module. Each table reference doubles as a query builder. */

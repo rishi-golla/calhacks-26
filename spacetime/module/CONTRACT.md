@@ -37,6 +37,8 @@ Authentication comes only from the actual SpacetimeDB sender identity. The init 
 | `set_metric` | evaluator | `name`, `value` |
 | `set_agent_model` | human | `agent`, `model`, `enabled` (default true) |
 | `ensure_agent_defaults` | admin | none; inserts `{model: auto, enabled: true}` for every agent missing from `agent_config` and leaves existing rows alone |
+| `set_view_epoch` | human, admin | `since` (optional ISO timestamp, default now) upserts the `view_epoch` row; or `clear: true` (without `since`) deletes it. Clearing when no row exists writes only the receipt |
+| `settle_cases` | admin | none; runs the case-settlement rule below over every case (one-time sweep for cases written before the rule). Each changed case gets its own change set and audit event on its case chain, in one transaction; the sweep itself and a no-op sweep write only receipts |
 | `upsert_forecast` | cfo | `id`, `case_id`, `period`, `category`, `amount` (signed), `confidence`, `assumptions_json` |
 | `upsert_company` | ingest | `id`, `kind`, `name`, optional `usdot`, `mc`, `phone`, `website`, `source_url` |
 | `upsert_source_record` | ingest | `id` (`case:<case_id>`, `company:<id>`, `contacts:<company_id>` or `dataset:meta`), `kind` (`case`, `company`, `contacts`, `dataset`, matching the id prefix), `record_json` (object, or array for `contacts`), `digest` (SHA-256 hex of `record_json` exactly as sent) |
@@ -165,3 +167,43 @@ decisions. The data is synthetic and deliberately unredacted.
 lacks that row; `ensure_agent_defaults` (admin) inserts the missing defaults. It is
 idempotent and never re-enables a disabled agent or resets a chosen model, so
 provisioning can call it after every publish.
+
+### Case settlement
+
+Case status follows the work on the case. At the end of `upsert_task`, `record_delegation`,
+`enqueue_first_hop`, `ack_outbox`, `add_review`, `request_approval`, `decide_approval`,
+`raise_flag` and `resolve_flag`, the module re-derives the status of the affected case inside
+the same transaction:
+
+- `human_owned` cases, and cases with no task yet (opened by ingest, first hop not delivered),
+  are left alone.
+- **Active** (`in_progress`): a task is non-terminal (`submitted`, `working`, `input-required`,
+  `auth-required`), a `routing_outbox` row for the case is not `done`, an approval is `pending`
+  and unexpired, or a flag is `open` or `reviewing`.
+- Otherwise **`open`** when a task ended `failed`, `canceled` or `rejected`, or its latest review
+  verdict is `issue`, and no later `completed` task for the same agent and skill (without an issue
+  review) supersedes it. Such a case needs attention.
+- Otherwise **`resolved`**, with `resolved_at` set. A proposed but unpaid payment still counts:
+  the agent work is done and `payment_proposal.status` keeps its own state.
+
+A resolved case changes only when the mutation creates new work: a new task, delegation, first
+hop, approval request or flag, or an `issue` review. Leaving `resolved` clears `resolved_at`.
+An explicit `update_case(resolved)` is therefore not undone by the caller's own task finishing,
+or by the reviews it enqueues; a later new task (for example the Validator's review task) or an
+issue does reopen it. A status change is captured as `case` cells in the triggering mutation's
+change set, under the case chain; nothing is written when the status is unchanged.
+`update_case` remains the explicit override. No tables or indexes change.
+An approval that expires undecided stops counting as active, but expiry alone triggers no reducer;
+the requesting task normally settles the case when it finishes, and `settle_cases` can be re-run.
+
+### Start fresh view boundary
+
+`view_epoch` is a public singleton table: at most one row, `id = "current"`, with `since`
+(the dashboard hides activity before it), `set_by` (the caller's actor, e.g. `human:operator`)
+and `set_at`. Both timestamps use the module convention (`2026-10-24T09:30:00.000Z`); a
+supplied `since` must parse as a date and is normalised to that form. No row means no boundary.
+`set_view_epoch` is accountable like any write: it emits a change set (sheet `view_epoch`, row
+`current`) and an audit event on the system chain. It deletes nothing else; memory, lessons,
+precedents, counterparties and the ledger are untouched. The evaluator reads the row and scores
+only loads whose earliest case `opened_at` is at or after `since`, and counts only calls started
+since then. Publish the module before deploying a dashboard that subscribes to `view_epoch`.

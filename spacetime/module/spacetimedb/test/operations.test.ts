@@ -14,7 +14,7 @@ const primaryKeys: Record<string, string> = {
   change_set: 'id', cell_change: 'id', doc_read: 'id', review: 'id', agent_memory: 'id', instruction_version: 'id',
   flag: 'id', company: 'id', contact: 'id', delegation_edge: 'id', invoice: 'id', accounting_period: 'period',
   principal: 'identity', cash_forecast: 'id', journal_request: 'id', routing_outbox: 'id', memory_revision: 'id',
-  demo_target: 'phone', approval_secret: 'approval_id', write_receipt: 'id', chain_head: 'name', source_record: 'id',
+  demo_target: 'phone', approval_secret: 'approval_id', write_receipt: 'id', chain_head: 'name', source_record: 'id', view_epoch: 'id',
 };
 const identities: Record<string, string> = {};
 ['admin', 'human', 'controller', 'carrier_ap', 'shipper_ar', 'cfo', 'risk', 'verification', 'voice_desk', 'validator', 'documents', 'ingest', 'harness', 'evaluator', 'router', 'stranger'].forEach((name, i) => identities[name] = (i + 1).toString(16).padStart(64, '0'));
@@ -827,4 +827,216 @@ test('first-hop, source and default writes keep every change and audit chain ver
       previous = String(row.hash);
     }
   }
+});
+
+// Case settlement: the module moves a case to the status its work implies inside each reducer.
+const STATE_STATUS: Record<string, string> = { submitted: 'queued', working: 'investigating', 'input-required': 'awaiting_other_agent', completed: 'resolved', failed: 'failed', canceled: 'failed', rejected: 'rejected' };
+function task(h: Harness, agent: string, task_id: string, skill: string, a2a_state: string, case_id = 'CASE-1') {
+  return h.run(agent, 'upsert_task', [agent], op.upsertTask, { task_id, case_id, skill, a2a_state, business_status: STATE_STATUS[a2a_state] });
+}
+function deliver(h: Harness, id: string) {
+  h.run('router', 'claim_outbox', ['router'], op.claimOutbox, { id });
+  h.run('router', 'ack_outbox', ['router'], op.ackOutbox, { id, success: true });
+}
+const review = (h: Harness, target: string, verdict = 'pass', actions = ['none']) =>
+  h.run('validator', 'add_review', ['validator'], op.addReview, { id: `REV-${target}-${h.serial}`, target_task_id: target, verdict, actions });
+const status = (h: Harness, id = 'CASE-1') => h.row('case', id).status;
+const sweep = (h: Harness, actor = 'admin') => h.run(actor, 'settle_cases', ['admin'], op.settleCases, {});
+
+test('a case resolves once its tasks and their reviews are complete', () => {
+  const h = new Harness(); h.open();
+  assert.equal(status(h), 'open');
+  task(h, 'carrier_ap', 'AP', 'process_carrier_invoice', 'working');
+  assert.equal(status(h), 'in_progress');
+  task(h, 'carrier_ap', 'AP', 'process_carrier_invoice', 'completed');
+  assert.equal(h.row('routing_outbox', 'review_output:AP').status, 'pending');
+  assert.equal(status(h), 'in_progress', 'the pending review keeps the case active');
+  h.run('router', 'claim_outbox', ['router'], op.claimOutbox, { id: 'review_output:AP' });
+  task(h, 'validator', 'VAL', 'review_output', 'working');
+  h.run('router', 'ack_outbox', ['router'], op.ackOutbox, { id: 'review_output:AP', success: true });
+  review(h, 'AP');
+  assert.equal(status(h), 'in_progress', 'the review task itself is still running');
+  assert.equal(h.row('case', 'CASE-1').resolved_at, '');
+  const before = h.rows('change_set').length;
+  task(h, 'validator', 'VAL', 'review_output', 'completed');
+  assert.equal(status(h), 'resolved');
+  assert.notEqual(h.row('case', 'CASE-1').resolved_at, '');
+  // The status change is part of the triggering mutation's single change set, under the case chain.
+  assert.equal(h.rows('change_set').length, before + 1);
+  const change = h.rows('change_set').at(-1) as Row;
+  assert.equal(change.case_id, 'CASE-1');
+  assert.ok(h.rows('cell_change').some(x => x.change_set_id === change.id && x.sheet === 'case' && x.column === 'status' && x.after === '"resolved"'));
+  // A replayed terminal write changes nothing.
+  task(h, 'validator', 'VAL', 'review_output', 'completed');
+  assert.equal(h.rows('change_set').length, before + 2);
+  assert.equal(h.rows('cell_change').filter(x => x.sheet === 'case' && x.column === 'status').length, 3);
+});
+
+test('a final failure leaves the case open until a successful rerun supersedes it', () => {
+  const h = new Harness(); h.open();
+  task(h, 'documents', 'DOC-1', 'receive_document', 'working');
+  task(h, 'documents', 'DOC-1', 'receive_document', 'failed');
+  assert.equal(status(h), 'open');
+  // Success on another skill does not supersede the failure.
+  task(h, 'documents', 'PKT', 'check_document_packet', 'completed');
+  assert.equal(status(h), 'open');
+  task(h, 'documents', 'DOC-2', 'receive_document', 'working');
+  assert.equal(status(h), 'in_progress');
+  task(h, 'documents', 'DOC-2', 'receive_document', 'completed');
+  assert.equal(status(h), 'resolved');
+});
+
+test('a review issue counts as an unresolved result until a passing rerun', () => {
+  const h = new Harness(); h.open();
+  task(h, 'carrier_ap', 'AP-1', 'process_carrier_invoice', 'completed');
+  deliver(h, 'review_output:AP-1');
+  review(h, 'AP-1', 'issue', ['rerun_task']);
+  assert.equal(status(h), 'in_progress', 'the corrective follow-up is pending');
+  deliver(h, 'review_followup:AP-1');
+  assert.equal(status(h), 'open');
+  task(h, 'carrier_ap', 'AP-2', 'process_carrier_invoice', 'completed');
+  assert.equal(status(h), 'in_progress');
+  deliver(h, 'review_output:AP-2');
+  review(h, 'AP-2');
+  assert.equal(status(h), 'resolved');
+});
+
+test('a pending approval keeps the case active until it is decided', () => {
+  const h = new Harness(); h.open(); h.hold();
+  task(h, 'documents', 'DOC', 'receive_document', 'completed');
+  assert.equal(status(h), 'resolved');
+  h.approval();
+  assert.equal(status(h), 'in_progress', 'a new approval request is new work');
+  h.decide('APPROVAL-1', 'wrong-code');
+  assert.equal(status(h), 'in_progress');
+  h.decide();
+  assert.equal(h.row('approval', 'APPROVAL-1').decision, 'approved');
+  assert.equal(status(h), 'resolved');
+});
+
+test('an open or reviewing flag keeps the case active', () => {
+  const h = new Harness(); h.open();
+  task(h, 'documents', 'DOC', 'receive_document', 'completed');
+  assert.equal(status(h), 'resolved');
+  h.run('human', 'raise_flag', ['human'], op.raiseFlag, { id: 'FLAG-1', case_id: 'CASE-1', target_ref: 'task:DOC', kind: 'wrong' });
+  assert.equal(status(h), 'in_progress');
+  deliver(h, 'review_flag:FLAG-1');
+  assert.equal(status(h), 'in_progress', 'the flag is still open');
+  h.run('validator', 'resolve_flag', ['validator'], op.resolveFlag, { id: 'FLAG-1', status: 'reviewing' });
+  assert.equal(status(h), 'in_progress');
+  h.run('validator', 'resolve_flag', ['validator'], op.resolveFlag, { id: 'FLAG-1', status: 'resolved', resolution_ref: String(h.rows('change_set')[0].id) });
+  assert.equal(status(h), 'resolved');
+});
+
+test('new work reopens a resolved case and clears resolved_at', () => {
+  const h = new Harness(); h.open();
+  task(h, 'documents', 'DOC', 'receive_document', 'completed');
+  assert.equal(status(h), 'resolved');
+  task(h, 'documents', 'DOC-2', 'collect_documents', 'working');
+  assert.equal(status(h), 'in_progress');
+  assert.equal(h.row('case', 'CASE-1').resolved_at, '');
+  task(h, 'documents', 'DOC-2', 'collect_documents', 'completed');
+  assert.equal(status(h), 'resolved');
+  // A new routed event and a new delegation are new work too.
+  enqueueHop(h, firstHop());
+  assert.equal(status(h), 'in_progress');
+  deliver(h, 'first_hop:event-1');
+  assert.equal(status(h), 'resolved');
+  task(h, 'carrier_ap', 'AP', 'process_carrier_invoice', 'working');
+  h.run('carrier_ap', 'record_delegation', ['carrier_ap'], op.recordDelegation, { id: 'E1', parent_task_id: 'AP', task_id: 'RISK', to_agent: 'risk', skill: 'investigate_charge' });
+  assert.equal(status(h), 'in_progress');
+});
+
+test('human-owned cases and cases without tasks are never settled', () => {
+  const h = new Harness(); h.open(); h.open('CASE-2');
+  task(h, 'documents', 'DOC', 'receive_document', 'working');
+  h.run('human', 'update_case', ['controller', 'validator', 'human'], op.updateCase, { case_id: 'CASE-1', status: 'human_owned', reason: 'takeover' });
+  task(h, 'documents', 'DOC', 'receive_document', 'completed');
+  h.run('human', 'raise_flag', ['human'], op.raiseFlag, { id: 'FLAG-1', case_id: 'CASE-1', target_ref: 'task:DOC', kind: 'wrong' });
+  deliver(h, 'review_flag:FLAG-1');
+  assert.equal(status(h), 'human_owned');
+  // Opened by ingest, first hop pending then delivered, but no task yet: status is left alone.
+  enqueueHop(h, firstHop({ event_id: 'event-2', case_id: 'CASE-2', envelope: { task_type: 'process_carrier_invoice', case_id: 'CASE-2' } }));
+  assert.equal(status(h, 'CASE-2'), 'open');
+  deliver(h, 'first_hop:event-2');
+  assert.equal(status(h, 'CASE-2'), 'open');
+  sweep(h);
+  assert.equal(status(h), 'human_owned');
+  assert.equal(status(h, 'CASE-2'), 'open');
+});
+
+test('an explicit controller resolution survives its own task finishing', () => {
+  const h = new Harness(); h.open();
+  task(h, 'carrier_ap', 'AP', 'process_carrier_invoice', 'working');
+  h.run('carrier_ap', 'record_delegation', ['carrier_ap'], op.recordDelegation, { id: 'E1', parent_task_id: 'AP', task_id: 'CTRL', to_agent: 'controller', skill: 'review_hold' });
+  task(h, 'controller', 'CTRL', 'review_hold', 'working');
+  h.run('controller', 'update_case', ['controller', 'validator', 'human'], op.updateCase, { case_id: 'CASE-1', status: 'resolved', reason: 'UNSUPPORTED_ACCESSORIAL' });
+  const resolvedAt = h.row('case', 'CASE-1').resolved_at;
+  task(h, 'controller', 'CTRL', 'review_hold', 'completed');
+  task(h, 'carrier_ap', 'AP', 'process_carrier_invoice', 'completed');
+  assert.equal(status(h), 'resolved', 'running and reviewed work that predates the resolution does not reopen it');
+  assert.equal(h.row('case', 'CASE-1').resolved_at, resolvedAt);
+  sweep(h);
+  assert.equal(status(h), 'resolved');
+  // A review that finds an issue is new evidence and does reopen it.
+  deliver(h, 'review_output:CTRL');
+  review(h, 'CTRL', 'issue', ['none']);
+  assert.equal(status(h), 'in_progress', 'the carrier AP review is still pending');
+  deliver(h, 'review_output:AP');
+  review(h, 'AP');
+  assert.equal(status(h), 'open');
+});
+
+test('settle_cases sweeps pre-existing cases once and is idempotent', () => {
+  const h = new Harness(); h.open(); h.open('CASE-2'); h.open('CASE-3');
+  task(h, 'documents', 'DOC-1', 'receive_document', 'completed');
+  task(h, 'documents', 'DOC-2', 'receive_document', 'failed', 'CASE-2');
+  task(h, 'documents', 'DOC-3', 'receive_document', 'working', 'CASE-3');
+  // Simulate rows written before the settlement rule existed.
+  for (const [id, value] of [['CASE-1', 'open'], ['CASE-2', 'in_progress'], ['CASE-3', 'open']]) {
+    h.data.case.set(id, { ...h.row('case', id), status: value, resolved_at: '' });
+  }
+  assert.throws(() => sweep(h, 'controller'), /role/);
+  const before = h.rows('change_set').length;
+  sweep(h);
+  assert.deepEqual(['CASE-1', 'CASE-2', 'CASE-3'].map(id => status(h, id)), ['resolved', 'open', 'in_progress']);
+  // One change set per changed case, each on its own case chain so the case history shows it.
+  const changes = h.rows('change_set').slice(before);
+  assert.deepEqual(changes.map(x => x.case_id).sort(), ['CASE-1', 'CASE-2', 'CASE-3']);
+  assert.ok(changes.every(x => x.action === 'settle_cases' && x.agent === 'admin:publisher'));
+  for (const change of changes) {
+    assert.ok(h.rows('audit_event').some(x => x.change_set_id === change.id && x.case_id === change.case_id));
+    assert.ok(h.rows('cell_change').some(x => x.change_set_id === change.id && x.sheet === 'case' && x.row_key === change.case_id && x.column === 'status'));
+  }
+  sweep(h);
+  sweep(h);
+  assert.equal(h.rows('change_set').length, before + 3, 'later sweeps only write receipts');
+});
+
+test('set_view_epoch upserts and clears the audited Start fresh boundary', () => {
+  const h = new Harness();
+  const epoch = (actor: string, payload: Payload) => h.run(actor, 'set_view_epoch', ['human', 'admin'], op.setViewEpoch, payload);
+  for (const actor of ['controller', 'validator', 'stranger']) assert.throws(() => epoch(actor, {}), /role|provisioned/);
+  const count = h.rows('change_set').length;
+  epoch('human', {});
+  const first = h.row('view_epoch', 'current');
+  assert.deepEqual(first, { id: 'current', since: first.set_at, set_by: 'human:operator', set_at: first.set_at });
+  assert.match(String(first.since), /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  epoch('admin', { since: '2026-10-24T09:30:00Z' });
+  assert.equal(h.row('view_epoch', 'current').since, '2026-10-24T09:30:00.000Z');
+  assert.equal(h.row('view_epoch', 'current').set_by, 'admin:publisher');
+  assert.equal(h.rows('view_epoch').length, 1);
+  for (const since of ['not a date', 7, '']) assert.throws(() => epoch('human', { since }));
+  assert.throws(() => epoch('human', { clear: true, since: '2026-10-24T09:30:00Z' }), /clear/);
+  epoch('human', { clear: true });
+  assert.equal(h.rows('view_epoch').length, 0);
+  assert.equal(h.rows('change_set').length, count + 3);
+  const cleared = h.rows('change_set').at(-1) as Row;
+  assert.equal(cleared.action, 'set_view_epoch');
+  assert.equal(cleared.case_id, '');
+  assert.ok(h.rows('audit_event').some(x => x.change_set_id === cleared.id && x.kind === 'set_view_epoch'));
+  assert.ok(h.rows('cell_change').some(x => x.change_set_id === cleared.id && x.sheet === 'view_epoch' && x.column === 'since' && x.after === 'null'));
+  // Clearing nothing records only the receipt; other data is untouched throughout.
+  epoch('human', { clear: true });
+  assert.equal(h.rows('change_set').length, count + 3);
 });

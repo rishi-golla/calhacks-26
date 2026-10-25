@@ -30,6 +30,17 @@ make spacetime-generate
 make cloud-verify VERIFY_ARGS="--heartbeat-wait 0"
 ```
 
+After the publish that adds the case-settlement rule, run the one-time sweep once so cases
+written before it settle too (idempotent; it never touches `human_owned` cases or reopens
+resolved ones):
+
+```bash
+.venv/bin/python -m scripts.spacetime_cloud settle-cases
+```
+
+The same publish adds the public `view_epoch` table ("Start fresh"). Publish it before deploying a
+dashboard build that subscribes to `view_epoch`, or that build's live subscription and snapshot fail.
+
 There is no automatic deletion or local-to-cloud data copy. Local development
 continues to use the separate `freightops` database on port 3000.
 

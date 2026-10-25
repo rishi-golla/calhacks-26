@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64" viewBox="0 0 96 64" fill="none">
+  <title>FreightLine truck logo</title>
+  <desc>An angular white F-shaped freight trailer and truck cab with a transparent window and two white wheels.</desc>
+  <path d="M14 10H62L59 20H24L21 27H49L46 37H18L14 47H3L14 10Z" fill="#FFFFFF"/>
+  <path d="M65 20H77L91 35L88 47H78C77 41 73 38 68 38C62 38 58 41 56 47H33L36 39H53L59 20H65Z M68 25H75L83 34H65L68 25Z" fill-rule="evenodd" fill="#FFFFFF"/>
+  <path d="M3 28H14L12 34H1L3 28Z" fill="#FFFFFF"/>
+  <circle cx="24" cy="48" r="7" fill="#FFFFFF"/>
+  <circle cx="67" cy="48" r="7" fill="#FFFFFF"/>
+</svg>

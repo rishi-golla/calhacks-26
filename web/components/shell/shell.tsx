@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Activity, Bell, Database, FlaskConical, Home, ListTree, Network, Play, Receipt, RefreshCw, Zap } from "lucide-react";
@@ -40,6 +41,7 @@ export default function Shell({ children }: { children: ReactNode }) {
         <div className="fl-shell">
           <aside className="fl-rail">
             <Link href="/" className="fl-brand" aria-label="FreightLine home">
+              <Image src="/freightline-truck.svg" alt="" width={36} height={24} className="fl-brand-truck" />
               <span className="fl-brand-name">FreightLine</span>
             </Link>
             <nav className="fl-nav" aria-label="Main">

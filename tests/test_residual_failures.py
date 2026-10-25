@@ -298,7 +298,7 @@ def review_world(monkeypatch, tmp_path):
             raise ProviderError(world["infer_error"])
         return {"assessment": {"issues": [], "summary": "ok"}, "model_used": "openai/test"}
 
-    monkeypatch.setattr(validator_main, "load_review", load)
+    monkeypatch.setattr("agents.validator.tools.load_review", load)
     monkeypatch.setattr(validator_main, "infer", infer)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.get_instruction_history", get_history)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.mutate", write)

@@ -15,6 +15,7 @@ import os
 import re
 import socket
 import time
+import unicodedata
 import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlsplit, urlunsplit
@@ -204,7 +205,10 @@ def _name_key(name) -> tuple[frozenset[str], str] | None:
     """Tokens and their concatenation, so "J.B. Hunt Transport, Inc." and "J B HUNT TRANSPORT INC" agree."""
     if not isinstance(name, str):
         return None
-    text = re.sub(r"[^A-Z0-9]", " ", name[:200].upper().replace(".", "").replace("'", "").replace("&", " AND "))
+    folded = "".join(ch for ch in unicodedata.normalize("NFKD", name[:200]) if not unicodedata.combining(ch))
+    text = re.sub(r"[^A-Z0-9]", " ", folded.upper().replace("'", "").replace("&", " AND "))
+    # A run of single-letter initials is one token however it is dotted or spaced: "J.B.", "J B" and "JB".
+    text = re.sub(r"\b([A-Z0-9])\s+(?=[A-Z0-9]\b)", r"\1", text)
     tokens = [token for token in text.split() if token not in _NAME_NOISE]
     return (frozenset(tokens), "".join(tokens)) if tokens else None
 

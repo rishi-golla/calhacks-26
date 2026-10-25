@@ -347,7 +347,10 @@ def test_registered_name_must_match_the_case_carrier(names, expected):
 
 @pytest.mark.parametrize("ours,registered", [("J.B. Hunt Transport, Inc.", "J B HUNT TRANSPORT INC"),
                                              ("O'Brien & Sons Trucking", "OBRIEN AND SONS TRUCKING LLC"),
-                                             ("Cherokee Freight Lines", "CHEROKEE FREIGHT LINES STOCKTON LLC")])
+                                             ("Cherokee Freight Lines", "CHEROKEE FREIGHT LINES STOCKTON LLC"),
+                                             ("J.B. Hunt Transport", "J B HUNT TRANSPORT LOWELL AR"),
+                                             ("JB Hunt Transport", "J. B. HUNT TRANSPORT, L.L.C."),
+                                             ("Transportes Peña", "TRANSPORTES PENA SA DE CV")])
 def test_name_match_ignores_punctuation_suffixes_and_locations(ours, registered):
     assert apify.carrier_name_matches({"legal_name": registered}, [ours]) is True
 

@@ -174,6 +174,23 @@ export type TraceNode = {
   height: number;
 };
 
+/**
+ * A shipment lifecycle event the router logged without routing (`not_routed`
+ * dispatch rows: tendered, dispatched, delivered, GPS). Context, not a
+ * decision: drawn as a tick on the Intake lane, never as a card.
+ */
+export type TraceMilestone = {
+  id: string;
+  /** Ingest event type, e.g. `load.delivered`; "" when the reason names none. */
+  type: string;
+  /** Short plain label for the tick, e.g. "Delivered". */
+  label: string;
+  at: number;
+  /** Every time this tick stands for: one, or each GPS ping when pings are collapsed. */
+  times: number[];
+  row: Row;
+};
+
 export type TraceEdge = {
   id: string;
   kind: "dispatch" | "delegation" | "review" | "approval" | "decision" | "retry";
@@ -206,6 +223,8 @@ export type CaseTrace = {
   nodes: TraceNode[];
   nodeById: Map<string, TraceNode>;
   edges: TraceEdge[];
+  /** Lifecycle events logged without routing, chronological. */
+  milestones: TraceMilestone[];
   timeline: TimelineEvent[];
   sideEffects: SideEffect[];
   /** Every audit row for a task, chronological (includes upsert_task rows the timeline hides). */
@@ -216,6 +235,94 @@ export type CaseTrace = {
   /** Any task still open or approval still pending. */
   open: boolean;
 };
+
+/* ------------------------- lifecycle milestones ------------------------- */
+
+const EVENT_LABEL: Record<string, string> = {
+  "load.tendered": "Load tendered",
+  "load.dispatched": "Load dispatched",
+  "load.delivered": "Load delivered",
+  "gps.ping": "GPS ping",
+  "pod.received": "Proof of delivery received",
+  "carrier_invoice.received": "Carrier invoice received",
+  "shipper_payment.received": "Shipper payment received",
+  "bank.event": "Bank event",
+  "bank_change.requested": "Bank change requested",
+  "voice.inbound.dispute": "Dispute call received",
+  "email.received": "Email received",
+  "scenario.injected": "Scenario injected",
+};
+const MILESTONE_LABEL: Record<string, string> = {
+  "load.tendered": "Tendered",
+  "load.dispatched": "Dispatched",
+  "load.delivered": "Delivered",
+};
+
+/** Plain words for an ingest event type: `load.delivered` → "Load delivered". */
+export function eventLabel(type: string): string {
+  if (EVENT_LABEL[type]) return EVENT_LABEL[type];
+  const words = type.replace(/[._]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : "Event";
+}
+
+/** Short tick label: "Tendered", "Dispatched", "Delivered", else the event's plain words. */
+export const milestoneLabel = (type: string) => MILESTONE_LABEL[type] ?? (type ? eventLabel(type) : "Logged");
+
+const NOT_ROUTED_REASON = /^(?:scenario -> )?([\w.]+) is not routed(?: \(7\.3\))?$/;
+const TABLE_REASON = /^7\.3 table: (?:scenario -> )?([\w.]+)$/;
+
+/** The event type a router reason names ("load.delivered is not routed (7.3)"), "" if none. */
+export function dispatchEventType(reason: string): string {
+  return (reason.match(NOT_ROUTED_REASON) ?? reason.match(TABLE_REASON))?.[1] ?? "";
+}
+
+/** A router reason in plain words: no PRD section numbers, no raw event types. */
+export function dispatchReason(reason: string): string {
+  const notRouted = reason.match(NOT_ROUTED_REASON);
+  if (notRouted) return `${eventLabel(notRouted[1])} · logged`;
+  const table = reason.match(TABLE_REASON);
+  if (table) return eventLabel(table[1]);
+  let out = reason.replace(/\s*\(7\.3\)/g, "").replace(/\b7\.3 table:\s*/g, "");
+  for (const [type, label] of Object.entries(EVENT_LABEL)) out = out.replaceAll(type, label.toLowerCase());
+  return out.trim();
+}
+
+/** A `not_routed` dispatch is a logged lifecycle event, not a routing decision. */
+export const isMilestone = (d: Row) => str(d.status, "") === "not_routed";
+
+/**
+ * Splits dispatch rows into routing decisions (routed, triage, duplicate: drawn
+ * as cards) and lifecycle milestones (drawn as ticks). GPS pings collapse into
+ * one milestone at the first ping. `fallbackAt` stands in for a missing `ts`.
+ */
+export function splitDispatches(rows: Row[], fallbackAt = 0): { decisions: Row[]; milestones: TraceMilestone[] } {
+  const decisions: Row[] = [];
+  const milestones: TraceMilestone[] = [];
+  let gps: TraceMilestone | undefined;
+  for (const d of [...rows].sort((a, b) => timestamp(a.ts) - timestamp(b.ts))) {
+    if (!isMilestone(d)) {
+      decisions.push(d);
+      continue;
+    }
+    const at = timestamp(d.ts) || fallbackAt;
+    const type = dispatchEventType(str(d.reason, ""));
+    if (type === "gps.ping" && gps) {
+      gps.times.push(at);
+      continue;
+    }
+    const m: TraceMilestone = { id: `milestone:${str(d.event_id)}`, type, label: milestoneLabel(type), at, times: [at], row: d };
+    if (type === "gps.ping") gps = m;
+    milestones.push(m);
+  }
+  return { decisions, milestones };
+}
+
+/** The tick's text at `cursor` (Infinity = live), or null before it happened. */
+export function milestoneAt(m: TraceMilestone, cursor: number): string | null {
+  const n = m.times.filter((t) => t <= cursor).length;
+  if (!n) return null;
+  return m.type === "gps.ping" ? `${n} GPS ping${n === 1 ? "" : "s"}` : m.label;
+}
 
 const CARD_W_TOOL_ROWS = 3;
 export function taskCardHeight(tools: number) {
@@ -262,9 +369,10 @@ export function buildCaseTrace(snapshot: Snapshot, caseId: string): CaseTrace {
   const nodes: TraceNode[] = [];
   const edges: TraceEdge[] = [];
 
-  // Intake dispatch: the root of the graph.
+  // Intake dispatch: routing decisions are the root of the graph; lifecycle events only get ticks.
+  const { decisions, milestones } = splitDispatches(slice.dispatch, timestamp(caseRow?.opened_at));
   const dispatchByTask = new Map<string, string>();
-  for (const d of [...slice.dispatch].sort((a, b) => timestamp(a.ts) - timestamp(b.ts))) {
+  for (const d of decisions) {
     const id = `intake:${str(d.event_id)}`;
     const at = timestamp(d.ts) || timestamp(caseRow?.opened_at);
     nodes.push({ id, kind: "intake", lane: "intake", start: at, end: at, dispatch: d, tools: [], docs: [], waits: [], height: SMALL_CARD_H });
@@ -361,6 +469,7 @@ export function buildCaseTrace(snapshot: Snapshot, caseId: string): CaseTrace {
   const times = [
     timestamp(caseRow?.opened_at),
     ...nodes.flatMap((n) => [n.start, n.end]),
+    ...milestones.flatMap((m) => m.times),
     ...timeline.map((e) => e.at),
     ...sideEffects.flatMap((s) => [s.at, s.changedAt]),
   ].filter((t) => t > 0);
@@ -371,6 +480,7 @@ export function buildCaseTrace(snapshot: Snapshot, caseId: string): CaseTrace {
     nodes,
     nodeById: new Map(nodes.map((n) => [n.id, n])),
     edges,
+    milestones,
     timeline,
     sideEffects,
     auditByTask,
@@ -509,6 +619,9 @@ export const LAYOUT = {
   laneGap: 16,
 };
 
+/** Vertical room one milestone tick takes on the Intake lane, and the most time before it may add. */
+export const MILESTONE_STEP = 18;
+
 /** Compressed time → pixels: linear for 10 s, slower to 30 s, then a fixed spacer. */
 const GAP_MS = 30_000;
 function stretch(dt: number) {
@@ -524,7 +637,7 @@ export type TraceLayout = {
   laneById: Map<string, Lane>;
   /** y of each node's start dot. */
   nodeY: Map<string, number>;
-  /** y of keyed anchors: `end:<node>`, `src:<edge>`. */
+  /** y of keyed anchors: `end:<node>`, `src:<edge>`, `<milestone id>`. */
   anchorY: Map<string, number>;
   yOf: (t: number) => number;
   gaps: Gap[];
@@ -538,12 +651,15 @@ export type TraceLayout = {
  * a node never overlaps the previous node of its lane and a branch always
  * leaves room to curve. Positions only depend on earlier anchors, so a live
  * case grows downward without reshuffling what is already on screen.
+ * Milestones have no card: the time before one adds at most MILESTONE_STEP,
+ * so a run of lifecycle events never pushes the first real card down.
  */
 export function layoutTrace(trace: CaseTrace, tail: number): TraceLayout {
-  const { nodes, edges } = trace;
+  const { nodes, edges, milestones } = trace;
   // Lanes in order of first appearance.
   const firstAt = new Map<string, number>();
-  for (const n of [...nodes].sort((a, b) => a.start - b.start)) if (!firstAt.has(n.lane)) firstAt.set(n.lane, n.start);
+  const starts = [...nodes.map((n) => ({ lane: n.lane, t: n.start })), ...milestones.map((m) => ({ lane: "intake", t: m.at }))];
+  for (const s of starts.sort((a, b) => a.t - b.t)) if (!firstAt.has(s.lane)) firstAt.set(s.lane, s.t);
   const lanes: Lane[] = [];
   let x = LAYOUT.gutter;
   for (const [id, first] of firstAt) {
@@ -553,7 +669,7 @@ export function layoutTrace(trace: CaseTrace, tail: number): TraceLayout {
   }
   const laneById = new Map(lanes.map((l) => [l.id, l]));
 
-  type Anchor = { t: number; key: string; order: number; node?: TraceNode; source?: string };
+  type Anchor = { t: number; key: string; order: number; node?: TraceNode; source?: string; milestone?: boolean };
   const anchors: Anchor[] = [];
   const sourceOf = new Map<string, string>();
   for (const e of edges) {
@@ -570,6 +686,7 @@ export function layoutTrace(trace: CaseTrace, tail: number): TraceLayout {
     }
     for (const d of n.docs) anchors.push({ t: d.at, key: `doc:${d.id}`, order: 0 });
   }
+  for (const m of milestones) anchors.push({ t: m.at, key: m.id, order: 1, milestone: true });
   if (tail) anchors.push({ t: tail, key: "tail", order: 2 });
   const valid = anchors.filter((a) => a.t > 0).sort((a, b) => a.t - b.t || a.order - b.order);
 
@@ -583,10 +700,14 @@ export function layoutTrace(trace: CaseTrace, tail: number): TraceLayout {
   for (const a of valid) {
     const dt = a.t - prev;
     const y0 = y;
-    y += stretch(dt);
-    if (dt > GAP_MS) gaps.push({ y0, y1: y, dt });
+    y += a.milestone ? Math.min(stretch(dt), MILESTONE_STEP) : stretch(dt);
+    if (dt > GAP_MS && !a.milestone) gaps.push({ y0, y1: y, dt });
     prev = a.t;
-    if (a.node) {
+    if (a.milestone) {
+      // A tick sits below whatever the Intake lane already shows, and keeps its own row free of the next card.
+      y = Math.max(y, laneFree.get("intake") ?? 0);
+      laneFree.set("intake", y + MILESTONE_STEP);
+    } else if (a.node) {
       let min = laneFree.get(a.node.lane) ?? 0;
       const src = a.source ? anchorY.get(a.source) : undefined;
       if (src !== undefined) min = Math.max(min, src + LAYOUT.branch);

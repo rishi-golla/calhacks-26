@@ -259,15 +259,22 @@ function settledStatus(ctx: Ctx, caseId: string, tasks: SettleTask[]): string {
 
 // The router's record of a case without tasks: null when no duplicate was routed to it, otherwise
 // whether any event on it was or will be delivered, and the latest duplicate's reason. An event is
-// delivered when it is queued or accepted, or is a duplicate keeping a task that is not mirrored on
-// another case; a P-007 duplicate of an accepted event elsewhere carries that other case's task.
+// delivered when it is queued or accepted, or is a duplicate keeping a task of this case's own: a
+// re-observed accepted event keeps its task, while a P-007 duplicate of an accepted event elsewhere
+// carries that other case's task. The task's mirror may lag its acceptance, so a task belongs to
+// another case when its mirror, or else another case's dispatch row carrying it, says so.
 function duplicateRoute(ctx: Ctx, caseId: string): { delivered: boolean; reason: string } | null {
   const rows = [...ctx.db.dispatch.case_id.filter(caseId)];
   const latest = rows.filter(x => x.status === 'duplicate')
     .sort((a, b) => a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : a.event_id < b.event_id ? -1 : 1)[0];
   if (!latest) return null;
+  // dispatch.task_id has no index; this scan runs only for a duplicate whose task is not mirrored.
+  const elsewhere = (taskId: string) => {
+    const task = ctx.db.task.task_id.find(taskId);
+    return task ? task.case_id !== caseId : [...ctx.db.dispatch.iter()].some(x => x.task_id === taskId && x.case_id !== caseId);
+  };
   const delivered = rows.some(x => x.status === 'queued' || x.status === 'accepted'
-    || (x.status === 'duplicate' && !!x.task_id && !ctx.db.task.task_id.find(x.task_id)));
+    || (x.status === 'duplicate' && !!x.task_id && !elsewhere(x.task_id)));
   return { delivered, reason: `duplicate: ${latest.reason || latest.event_id}`.slice(0, 500) };
 }
 

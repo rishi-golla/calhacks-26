@@ -184,7 +184,8 @@ affected case inside the same transaction:
   normally `resolved`; that change set's audit event has `reason_code = duplicate` and summary
   `duplicate: <the latest duplicate row's reason>` unless the caller supplied its own. A P-007
   duplicate of an accepted event carries the original case's task and still counts as nothing
-  delivered here. If new work (a first hop) is later routed to such a case while it is resolved,
+  delivered here; the task is another case's when its mirror is, or, before the mirror arrives,
+  when another case's dispatch row carries it. If new work (a first hop) is later routed to such a case while it is resolved,
   it goes back to `open`, awaiting its first task; a task reopens it as usual.
 - **Active** (`in_progress`): a task is non-terminal (`submitted`, `working`, `input-required`,
   `auth-required`), a `routing_outbox` row for the case is not `done`, an approval is `pending`

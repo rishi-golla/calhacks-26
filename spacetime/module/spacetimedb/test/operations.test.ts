@@ -1051,6 +1051,11 @@ test('a duplicate dispatch on a case without tasks resolves it and records why',
   duplicate(h, 'CASE-1-R', 'DUP-CASE-1-R', P007, 'AP-1');
   assert.equal(status(h, 'CASE-1-R'), 'resolved');
   assert.equal(status(h), 'in_progress');
+  // So does one whose original task is accepted on its own case but not mirrored yet.
+  h.open('CASE-2'); h.open('CASE-2-R');
+  dispatch(h, { ...route, event_id: 'ORIG-2', case_id: 'CASE-2', task_id: 'remote-2', status: 'accepted', reason: 'Delivered by dispatch worker' });
+  duplicate(h, 'CASE-2-R', 'DUP-CASE-2-R', P007, 'remote-2');
+  assert.equal(status(h, 'CASE-2-R'), 'resolved');
   // A case without tasks and without a duplicate is left alone, as before.
   h.open('CASE-T');
   dispatch(h, { event_id: 'TRIAGE', case_id: 'CASE-T', status: 'triage', reason: 'unknown event', queue_ms: 0, policy_version: 'v1' });

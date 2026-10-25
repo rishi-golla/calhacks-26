@@ -155,6 +155,15 @@ The same-origin Next route forwards `POST /demo/{phone|email|bank_change|short_p
 
 The repository's original handler responds only with `{"queued":"<kind>"}`. That response is explicitly displayed as a **stub acknowledgment**, never a confirmed case, call or email. Real confirmation comes from the gateway result and subscribed case/call records. No W3/W4 implementation is duplicated in this frontend.
 
+## Load burst (local operator control)
+
+The **Burst** button in the top bar announces 1-200 synthetic loads at once, each fast-forwarded to its
+carrier invoice, so they open real cases through Redis, ingest, the router and the agents while the map
+shows them landing. It is only rendered when `web/.env.local` has `DEMO_BURST_ENABLED=1`, `GATEWAY_URL`
+pointing at the local gateway and the same server-only `DEMO_CONTROL_TOKEN` the gateway loads; the
+same-origin `/api/demo-burst` route forwards to `POST /demo/burst` and never exposes the token. The
+gateway needs `REDIS_URL` and a simulator world (`data/world.json`), not a running simulator.
+
 ## Verification
 
 Unit tests cover same-timestamp audit ordering, ancestor isolation, forward/reverse diffs, malformed ancestry termination, USD normalization, and safe document URLs. Root W2 integration tests exercise reducers and measured real subscriptions against the published module. Browser checks should include mobile navigation, live identity provisioning, wrong/correct OTP, flag delivery, model pinning and audit cell provenance. Live behavior depends on running W1/W3/W4 services for their respective work; UI empty states identify missing records.

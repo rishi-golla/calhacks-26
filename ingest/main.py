@@ -968,6 +968,30 @@ async def _consume_once(r, db: sqlite3.Connection, exporter: source_export.Expor
         await retry.wait()  # the entries left pending are retried by the drain above
 
 
+async def _ensure_group(r) -> None:
+    """Create the consumer group, and the stream with it, unless they already exist."""
+    try:
+        await r.xgroup_create(RAW_STREAM, GROUP, id="0", mkstream=True)
+    except redis.ResponseError as exc:
+        if "BUSYGROUP" not in str(exc):
+            raise
+
+
+async def _recover_group(r, exc: Exception) -> bool:
+    """A Redis restart without persistence loses the stream and the group; XREADGROUP then answers NOGROUP on
+    every attempt, so backing off alone would stall ingestion for good. Recreate the group and report whether
+    the loop can go straight on (a Redis that is still down leaves it to the normal backoff)."""
+    if not isinstance(exc, redis.ResponseError) or "NOGROUP" not in str(exc):
+        return False
+    log.warning("consumer group %s on %s is gone (Redis restarted?); recreating it", GROUP, RAW_STREAM)
+    try:
+        await _ensure_group(r)
+    except redis.RedisError as error:
+        log.warning("could not recreate the consumer group yet: %s", type(error).__name__)
+        return False
+    return True
+
+
 async def main() -> None:
     events_maxlen(), documents_maxlen()  # fail fast on a bad EVENTS_STREAM_MAXLEN or DOCUMENTS_STREAM_MAXLEN
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
@@ -979,11 +1003,7 @@ async def main() -> None:
     watch = DirectoryWatch(mirror)
     retry = Retry()
     try:
-        try:
-            await r.xgroup_create(RAW_STREAM, GROUP, id="0", mkstream=True)
-        except redis.ResponseError as exc:
-            if "BUSYGROUP" not in str(exc):
-                raise
+        await _ensure_group(r)
         backoff = 1.0
         while True:
             # A Redis hiccup (read timeout, dropped connection) must not end the consumer: entries it was
@@ -992,6 +1012,9 @@ async def main() -> None:
                 await _consume_once(r, db, exporter, mirror, watch, retry)
                 backoff = 1.0
             except redis.RedisError as exc:
+                if await _recover_group(r, exc):
+                    backoff = 1.0
+                    continue
                 log.warning("ingest consumer %s; retrying in %.0fs", type(exc).__name__, backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)

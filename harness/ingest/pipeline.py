@@ -15,6 +15,7 @@ from harness.ingest.dispatch import Dispatcher, DispatchError
 from harness.ingest.redact import BUSINESS, known_spans, leftovers, redact_obj, replace_spans
 from harness.ingest.routing import Route, classify, table_route
 from harness.ingest.schemas import AMOUNT_FIELDS, DOC_TYPE, PII_ONLY, SCHEMAS, is_structured, lite_schema
+from harness.ingest.telemetry import ENTRY, Undeliverable
 from harness.ingest.vault import TOKEN_RE, Vault
 from harness.pool import Pool, Unavailable
 
@@ -117,11 +118,24 @@ def _verbatim_spans(items: list[dict], text: str, vault: Vault, kinds: dict[str,
     return spans
 
 
+def _recorded_outcome(prior: dict, envelope: dict | None) -> dict:
+    status = prior["status"]
+    res = {"status": status, "envelope": envelope,
+           "route": Route(prior["skill"], "routed" if prior["agent"] else status, prior["reason"]).__dict__}
+    if status == "accepted":
+        res["dispatch"] = {"event_id": prior["event_id"], "skill": prior["skill"], "agent": prior["agent"],
+                           "task_id": prior["task_id"], "status": status, "duplicate": False}
+    return res
+
+
 async def _first_hop(dispatcher: Dispatcher, out: dict, event_id: str, route: Route, env: TaskEnvelope) -> str:
     try:
         out["dispatch"] = await dispatcher.send(event_id, route.skill, env, reason=route.reason)
-    except DispatchError as e:
+    except Undeliverable as e:   # no retry can deliver it: the consumer dead-letters the entry
         out["error"] = str(e)
+        return "dead_letter"
+    except DispatchError as e:   # pending; a refusal (`rejected`) counts toward the consumer's bound
+        out.update(error=str(e), rejected=e.rejected)
         return "dispatch_failed"
     # queued (SpacetimeDB outbox) or accepted (A2A task created), unless the event was already delivered.
     return "duplicate" if out["dispatch"].get("duplicate") else out["dispatch"]["status"]
@@ -137,7 +151,8 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
         timings[name] = int((now - since) * 1000)
         return now
 
-    if not isinstance(event, dict) or not event.get("event_id") or not event.get("type"):
+    if not isinstance(event, dict) or not all(isinstance(event.get(k), str) and event[k].strip()
+                                              for k in ("event_id", "type")):
         raise BadEvent("event needs event_id and type")
     payload = event.get("payload") or {}
     if not isinstance(payload, dict):
@@ -148,6 +163,10 @@ async def process(pool: Pool, vault: Vault, dispatcher: Dispatcher, event: dict,
 
     prior = dispatcher.get(event_id)
     if prior and prior["status"] in TERMINAL:
+        if dispatch and prior["entry_id"] is not None and prior["entry_id"] == ENTRY.get():
+            # A reclaim of the entry that recorded this outcome: it was never acknowledged (e.g. its telemetry
+            # write failed), so finish the same outcome instead of calling the entry its own duplicate.
+            return {**out, **_recorded_outcome(prior, dispatcher.envelope(event_id))}
         return {**out, "status": "duplicate", "prior": prior}
     pinned = dispatcher.pinned(event_id) if dispatch else None
     if pinned:   # an enqueue was already attempted and only its exact payload may be resent: skip the models

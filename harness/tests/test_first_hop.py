@@ -3,6 +3,7 @@
 The real SpacetimeClient runs over an httpx mock transport, so these tests see the exact bytes the reducer
 would receive: the write-receipt rule rejects a reused write id whose contents changed."""
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -21,7 +22,7 @@ from harness.ingest.dispatch import Dispatcher, DispatchError
 from harness.ingest.pipeline import process
 from harness.ingest.telemetry import POLICY_VERSION, QUEUE_MS, queue_ms
 from harness.ingest.vault import Vault
-from harness.pool import CONFIG_PATH, Pool, Unavailable
+from harness.pool import Unavailable
 
 SKILL = "process_carrier_invoice"
 
@@ -29,14 +30,21 @@ SKILL = "process_carrier_invoice"
 class FakeSpacetime:
     """Answers reducer calls with queued outcomes (HTTP status or a transport failure); 200 once they run out.
     Like the module's write receipts, a committed write id replays as a no-op and rejects changed contents (530);
-    a timeout commits before the response is lost."""
+    a timeout commits before the response is lost. SQL reads see an outbox row `first_hop:<event_id>` once its
+    enqueue committed (that write id is the row id)."""
 
     def __init__(self) -> None:
-        self.requests: list[httpx.Request] = []
+        self.requests: list[httpx.Request] = []   # reducer calls only
+        self.queries: list[str] = []
         self.outcomes: list = []
         self.receipts: dict[str, dict] = {}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/sql"):
+            query = request.content.decode()
+            self.queries.append(query)
+            rows = [[key] for key in re.findall(r"'([^']*)'", query) if key in self.receipts]
+            return httpx.Response(200, json=[{"schema": {"elements": [{"name": {"some": "id"}}]}, "rows": rows}])
         self.requests.append(request)
         outcome = self.outcomes.pop(0) if self.outcomes else 200
         if outcome == "connect":
@@ -74,17 +82,6 @@ def queue_time():
     token = QUEUE_MS.set(250)
     yield 250
     QUEUE_MS.reset(token)
-
-
-@pytest.fixture
-async def dead_pool(tmp_path):
-    """Models unreachable: the pipeline still routes deterministically (PRD H11)."""
-    cfg = tmp_path / "c.toml"
-    cfg.write_text(CONFIG_PATH.read_text().replace("127.0.0.1:800", "127.0.0.1:1800"))
-    pool = Pool(cfg)
-    await pool.check_health()
-    yield pool
-    await pool.aclose()
 
 
 def envelope(**subject) -> TaskEnvelope:
@@ -325,7 +322,7 @@ async def test_consumer_acks_queued_without_a_second_dispatch_row(stdb, dead_poo
     telemetry.assert_awaited_once()
     assert telemetry.await_args.args[2] == "duplicate"
     assert telemetry.await_args.kwargs | {"received_ms": None} == {
-        "agent": "carrier_ap", "skill": SKILL, "task_id": "", "received_ms": None}
+        "agent": "carrier_ap", "skill": SKILL, "task_id": "", "received_ms": None, "pins": d}
     r.xack.assert_awaited_with("events", "router", redelivered)
 
 

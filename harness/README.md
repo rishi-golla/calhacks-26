@@ -35,6 +35,12 @@ make router           # Redis `events`, group `router` -> first hop (or HARNESS_
 ## Behaviour worth knowing
 - ACK only after a terminal outcome (queued / accepted / duplicate / not_routed / triage). Failed dispatches stay pending
   and are reclaimed after 120 s (`ROUTER_RECLAIM_IDLE_MS`); entries still running are never reclaimed.
+- No entry stays pending forever on a deterministic failure. A write the module can never accept (write id over
+  200 characters, i.e. a first-hop event id over 190; a text field over 4096; a payload over 256 KiB; non-finite
+  numbers) is dead-lettered at once. An event the reducer keeps refusing (HTTP 530, e.g. a human-owned case) is
+  dead-lettered when a refusal follows `ROUTER_MAX_REJECTED_ATTEMPTS` (10) refused reclaims, about 20 minutes; a
+  success resets the count. Outages (transport, 429, 402, 408, other 5xx) retry forever. Each dead letter also
+  writes a `triage` dispatch row with the reason when the module accepts one.
 - Unknown or low-confidence (<0.6) classifications, and routable events with no upstream `case_id`, go to Redis
   stream `triage`. Malformed entries go to `events:dead_letter`.
 - `FIRST_HOP_TRANSPORT=a2a` (default) dispatches with W3's `common.a2a_transport` (`A2A_TOKEN_ROUTER` in live
@@ -42,7 +48,8 @@ make router           # Redis `events`, group `router` -> first hop (or HARNESS_
   (router identity, write id `first_hop:<event_id>`), which commits the `routing_outbox` row and a `queued`
   `dispatch` row together; the dispatch worker delivers it over A2A. It needs `SPACETIME_DISABLED=0`; otherwise
   every routed event stays pending. The first attempt's payload is stored in `ingest.sqlite` and resent verbatim on
-  every retry, because the reducer rejects a reused write id with changed contents (as HTTP 530).
+  every retry, because the reducer rejects a reused write id with changed contents (as HTTP 530). Dispatch telemetry
+  rows are pinned the same way per write id (`dispatch:<entry>:<status>`, table `write_pin`).
 - Model-bound events share `ROUTER_MODEL_CONCURRENCY` (8) slots; the rest skip the queue.
 - `python -m harness.tests.batch_bench` scores a fixed batch against the W4 ground truth (see its docstring).
 - Envelope schema is unchanged: review flags ride in `subject` (`needs_review`, `review_notes`, `doc_type`).

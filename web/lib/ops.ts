@@ -635,10 +635,18 @@ const ACCOUNT_ALIASES: Record<string, string> = {
  * 30-day totals run from `since` instead, and month-to-date from the later of
  * the month start and `since`, matching the "since" labels on Home.
  */
+/** Journal lines arrive as objects over the live socket but as positional tuples from the SQL snapshot. */
+function ledgerLines(raw: unknown): LedgerLine[] {
+  const list = Array.isArray(raw) ? raw : json<unknown[]>(raw, []);
+  return list.map((line) =>
+    Array.isArray(line) ? ({ account: line[0], debit: line[1], credit: line[2] } as LedgerLine) : (line as LedgerLine),
+  );
+}
+
 export function buildFinance(snapshot: Snapshot, now: number, { since }: { since?: number } = {}): FinanceMetrics {
   const day = 86_400_000;
   const entries = snapshot.ledger_entry
-    .map((row) => ({ at: timestamp(row.posted_at), lines: (Array.isArray(row.lines) ? row.lines : json<LedgerLine[]>(row.lines, [])) as LedgerLine[] }))
+    .map((row) => ({ at: timestamp(row.posted_at), lines: ledgerLines(row.lines) }))
     // Future-dated postings are excluded so the headline agrees with the chart's last point.
     .filter((e) => e.at > 0 && e.at <= now)
     .sort((a, b) => a.at - b.at);

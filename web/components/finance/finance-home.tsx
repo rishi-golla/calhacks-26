@@ -4,16 +4,13 @@
  * back office that keeps it, in real time. Everything renders from `useOps()`
  * (live SpacetimeDB or the labeled browser simulation); nothing polls.
  *
- * Top to bottom: header → 4 KPI tiles → cash + forecast | needs attention.
+ * Top to bottom: 4 KPI tiles → cash + forecast | needs attention.
  * Operations and invoices live on their own routes (/operations, /invoices).
  */
 import { Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useOps } from "@/components/data-provider";
-import { AGENT_IDS } from "@/lib/agents";
-import { fmtAgo } from "@/lib/ops";
 import { fmtSince } from "@/lib/view-epoch";
-import { EpochNote } from "@/components/shell/view-epoch";
 import { AttentionQueue } from "./attention-queue";
 import { ForecastBars, LineChart, Sparkline } from "./charts";
 import { CountUp } from "./count-up";
@@ -28,7 +25,6 @@ const reveal = (i: number) => ({ "--delay": `${i * 70}ms` }) as CSSProperties;
 export default function FinanceHome() {
   return (
     <div className="fl-page fh fh-overview">
-      <Header />
       <KpiTiles />
       <div className="fh-row fh-row-main fl-reveal" style={reveal(2)}>
         <CashPanel />
@@ -38,55 +34,6 @@ export default function FinanceHome() {
         <FocusFromQuery />
       </Suspense>
     </div>
-  );
-}
-
-/* ------------------------------- header ------------------------------- */
-
-function Header() {
-  const { source, simulated, ops, workloads, attention, now, lastUpdated } = useOps();
-  const total = AGENT_IDS.length;
-  const online = Math.min(total, ops.agentsOnline);
-  // Orphaned `working` rows are not in flight; nothing is advancing them.
-  const inFlight = Math.max(0, ops.tasksActive - AGENT_IDS.reduce((s, id) => s + workloads[id].stalled, 0));
-  const provenance = simulated ? "Simulated" : source === "live" ? "Live" : source === "fallback" ? "Snapshot" : source === "connecting" ? "Connecting" : "Offline";
-  return (
-    <header className="fh-header fl-reveal" style={reveal(0)}>
-      <div className="fh-header-id">
-        <div className="fl-section" style={{ "--accent": simulated ? "var(--lilac)" : "var(--teal)" } as CSSProperties}>
-          Financial health · {provenance}
-        </div>
-        <h1 className="fl-display fh-wordmark">
-          <span className="ln">
-            <span>Golden Gate Freight</span>
-          </span>
-        </h1>
-        <div className="fh-header-sub">
-          Autonomous back office · <span className="fl-num">{count(ops.casesActive)}</span> open cases ·{" "}
-          <span className="fl-num">{count(inFlight)}</span> tasks in flight
-        </div>
-      </div>
-      <div className="fh-header-status">
-        <div className="fh-chips">
-          {simulated && (
-            <span className="fl-chip agent outline" title="Rows are generated in this browser and are not recorded anywhere">
-              Simulated
-            </span>
-          )}
-          <span className={`fl-chip outline ${online === total ? "ok" : online > 0 ? "warn" : ""}`}>
-            <i className={`fl-dot ${online ? "pulse" : ""}`} />
-            {online}/{total} agents online
-          </span>
-          <a href="#attention" className={`fl-chip outline ${attention.length ? "hot" : source === "live" || simulated ? "ok" : ""}`}>
-            {attention.length} need attention
-          </a>
-        </div>
-        <div className="fl-micro" suppressHydrationWarning>
-          {lastUpdated ? `Updated ${fmtAgo(lastUpdated, now)}` : source === "connecting" ? "Connecting…" : "No updates yet"}
-        </div>
-        <EpochNote />
-      </div>
-    </header>
   );
 }
 

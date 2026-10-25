@@ -4,6 +4,7 @@
  * documents, tool calls, outputs, communication, audit trail) or the case log.
  * Filtered by the replay cursor like the graph.
  */
+import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { ArrowDownRight, ArrowUpLeft, Phone, X } from "lucide-react";
 import { ApifyFinding, ApifyMark } from "@/components/apify";
@@ -13,6 +14,7 @@ import { CheckList, Workings } from "@/components/workings";
 import { agentColor, agentLabel, skillLabel } from "@/lib/agents";
 import { apifyEvidence, APIFY_TOOLS } from "@/lib/apify";
 import { json, num, str, timestamp, type Row } from "@/lib/data";
+import { idList, learnedLines, memoryNote, reviewRefs, type MemoryNote } from "@/lib/lessons";
 import { fmtMoney, type TimelineEvent } from "@/lib/ops";
 import {
   approvalRequestedAt,
@@ -190,6 +192,15 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
   const reviewsOf = trace.slice.review.filter((r) => r.target_task_id === node.id && timestamp(r.ts) <= cursor);
   const ownReview = t.agent === "validator" ? trace.slice.review.find((r) => str(r.id) === `REV-${node.id}` && timestamp(r.ts) <= cursor) : undefined;
   const artifact = done ? t.artifact : null;
+  const memory = new Map(trace.slice.agent_memory.map((m) => [str(m.id, ""), m]));
+  const loaded = idList(t.row.memory_ids);
+  const used = loaded.flatMap((id) => (memory.has(id) ? [memoryNote(memory.get(id)!)] : []));
+  const instrVersion = num(t.row.instr_version);
+  // What this task's review taught: lessons and instruction versions pointing at its review (live) or the task (sim).
+  const teachRefs = reviewRefs(node.id, t.artifact);
+  const taught =
+    t.agent === "validator" ? trace.slice.agent_memory.filter((m) => teachRefs.has(str(m.source_ref, "")) && timestamp(m.created_at) <= cursor).map(memoryNote) : [];
+  const published = t.agent === "validator" ? trace.slice.instruction_version.filter((v) => teachRefs.has(str(v.source_ref, "")) && timestamp(v.created_at) <= cursor) : [];
 
   return (
     <>
@@ -220,6 +231,42 @@ function TaskDetails({ trace, node, cursor, onSelect }: PanelProps) {
           <p className="ct-quote">{routingReason(str(trace.nodeById.get(incoming.from)?.dispatch?.reason, ""))}</p>
         )}
       </Section>
+
+      {loaded.length > 0 && (
+        <Section title="Lessons used" count={loaded.length}>
+          {instrVersion > 0 && <p className="ct-line fl-mute">Ran on instructions v{instrVersion}.</p>}
+          <ul className="ct-lessons">
+            {used.map((m) => (
+              <MemoryItem key={m.id} note={m} caseId={trace.caseId} />
+            ))}
+          </ul>
+          {loaded.length > used.length && (
+            <p className="ct-line fl-mute">
+              {loaded.length - used.length} more {loaded.length - used.length === 1 ? "memory is" : "memories are"} no longer recorded.
+            </p>
+          )}
+        </Section>
+      )}
+
+      {(taught.length > 0 || published.length > 0) && (
+        <Section title="Lessons written" count={taught.length}>
+          <ul className="ct-lessons">
+            {taught.map((m) => (
+              <MemoryItem key={m.id} note={m} caseId={trace.caseId} to={m.agent} />
+            ))}
+            {published.map((v) => (
+              <li key={str(v.id)} style={{ "--agent": agentColor(str(v.agent)) } as CSSProperties}>
+                <div className="who">
+                  → {agentLabel(str(v.agent))} · instructions v{num(v.version)}
+                </div>
+                {learnedLines(v.diff).map((line, i) => (
+                  <p key={i}>{line}</p>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
 
       {docs.length > 0 && (
         <Section title="Documents" count={docs.length}>
@@ -415,6 +462,32 @@ function CallRecord({ call, cursor }: { call: Row; cursor: number }) {
       {finished && <Json value={call.findings_json} label="findings" />}
       {finished && str(call.transcript_redacted, "") && <p className="ct-transcript">{str(call.transcript_redacted)}</p>}
     </div>
+  );
+}
+
+/** A memory the task loaded (or, with `to`, a lesson this review wrote for that agent). */
+function MemoryItem({ note: m, caseId, to }: { note: MemoryNote; caseId: string; to?: string }) {
+  return (
+    <li style={{ "--agent": agentColor(to ?? (m.byValidator ? "validator" : "human")) } as CSSProperties}>
+      <div className="who">
+        {to ? `→ ${agentLabel(to)}` : m.byValidator ? "Lesson from Settlement Quality Review" : "Note from a person"}
+        {!m.active && " · since retired"}
+      </div>
+      <p>{m.text}</p>
+      {m.scope.length > 0 && (
+        <div className="scope">
+          {m.scope.map((c) => (
+            <span key={c}>{c}</span>
+          ))}
+        </div>
+      )}
+      {!to && m.sourceCase && m.sourceCase !== caseId && (
+        <div className="foot">
+          learned on{" "}
+          <Link href={`/cases/${encodeURIComponent(m.sourceCase)}`}>{m.sourceCase.replace(/^CASE-/, "")}</Link> · {clock(m.at)}
+        </div>
+      )}
+    </li>
   );
 }
 

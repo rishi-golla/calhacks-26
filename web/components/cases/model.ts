@@ -7,6 +7,7 @@
  * scenario can produce different graphs, exactly as in production.
  */
 import { emptySnapshot, json, num, str, timestamp, type Row, type Snapshot } from "@/lib/data";
+import { caseMemory } from "@/lib/lessons";
 import {
   buildTimeline,
   buildToolCalls,
@@ -151,6 +152,8 @@ export function sliceCase(snapshot: Snapshot, caseId: string): Snapshot {
       const ts = timestamp(r.ts) || docAudits.get(taskId)?.[k] || timestamp(tasks.get(taskId)?.started_at) || 0;
       return { ...r, case_id: caseId, ts: ts ? new Date(ts).toISOString() : "" };
     });
+  // Memory has no case: keep what this case's tasks loaded and what its reviews taught.
+  Object.assign(out, caseMemory(snapshot, out.task, out.review));
   return out;
 }
 

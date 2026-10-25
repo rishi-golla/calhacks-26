@@ -23,6 +23,8 @@ export type NodeView = {
   /** Case chips: "CASE-4831~P1|CASE-4829~P3". */
   chips: string;
   more: number;
+  /** Active Validator lessons this agent holds (learners), or has sent (the Validator). */
+  lessons?: number;
 };
 
 type Props = NodeView & {
@@ -49,18 +51,20 @@ const breathOffset = (id: string) => {
   return h % 4000;
 };
 
-function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, stretch, state, focus, order, selectedCase, onHover, onSelect, onCase }: Props) {
+function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, lessons = 0, engine, stretch, state, focus, order, selectedCase, onHover, onSelect, onCase }: Props) {
   const meta = isAgentId(id) ? AGENT_META[id] : NODE_META[id as "intake" | "human"];
   const pos = nodePos(id);
   const size = MASCOT_SIZE[id];
   const flash = useRef<HTMLSpanElement>(null);
   const bump = useRef<HTMLSpanElement>(null);
   const ticker = useRef<HTMLSpanElement>(null);
+  const lesson = useRef<HTMLSpanElement>(null);
+  const hasLessons = lessons > 0;
 
   useEffect(() => {
-    engine.registerNode(id, { flash: flash.current, bump: bump.current, ticker: ticker.current });
+    engine.registerNode(id, { flash: flash.current, bump: bump.current, ticker: ticker.current, lesson: lesson.current });
     return () => engine.unregisterNode(id);
-  }, [engine, id]);
+  }, [engine, id, hasLessons]);
 
   const parts = counts.split("|");
   const cells: [string, string][] = [];
@@ -82,7 +86,7 @@ function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, st
       <button
         type="button"
         className="au-hit"
-        aria-label={[meta.name, ...shown.map(([v, k]) => `${v} ${k}`)].join(", ")}
+        aria-label={[meta.name, ...shown.map(([v, k]) => `${v} ${k}`), ...(hasLessons ? [`${lessons} lessons`] : [])].join(", ")}
         onPointerEnter={() => onHover(id)}
         onPointerLeave={() => onHover(null)}
         onFocus={() => onHover(id)}
@@ -98,6 +102,18 @@ function AgentNodeImpl({ id, mood, bubble, tone, counts, chips, more, engine, st
           <Mascot id={id} mood={mood} size={size} bubble={bubble} />
           <span className="au-nick">{meta.nick}</span>
           {order > 0 && <span className="au-order">{order}</span>}
+          {hasLessons && (
+            <span
+              className="au-lessons"
+              ref={lesson}
+              title={id === "validator" ? `${lessons} active lessons sent to other agents` : `${lessons} active lessons from Settlement Quality Review`}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden>
+                <path d="M8 1.8a4.2 4.2 0 0 0-2.4 7.6c.5.4.8.9.8 1.5v.6h3.2v-.6c0-.6.3-1.1.8-1.5A4.2 4.2 0 0 0 8 1.8zM6.4 13.2h3.2M7 14.6h2" />
+              </svg>
+              {lessons}
+            </span>
+          )}
         </span>
         <span className="au-name">{meta.name}</span>
         {shown.length > 0 && (

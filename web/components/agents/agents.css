@@ -7,6 +7,8 @@
 
 .au {
   --rail-w: 348px;
+  /* Validator lessons: a warm gold no agent or priority uses. */
+  --lesson: #f2c14e;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--rail-w);
   height: calc(100dvh - var(--topbar));
@@ -108,6 +110,98 @@
   text-anchor: middle;
   dominant-baseline: middle;
   animation: au-edge-in 300ms var(--ease-out) both;
+}
+
+/* ------------------------------ lessons ------------------------------ */
+/* Validator → learner: a gold dotted line whose dots drift toward the learner. */
+.au-lesson-edge,
+.au-lesson-flow {
+  fill: none;
+  stroke: var(--lesson);
+  stroke-linecap: round;
+}
+.au-lesson-edge {
+  stroke-width: 1.4;
+  opacity: 0.35;
+}
+.au-lesson-flow {
+  stroke-width: 3.2;
+  stroke-dasharray: 0.1 12;
+  opacity: 0.85;
+  animation: au-lesson-flow 2.4s linear infinite;
+}
+.au-lesson.focus .au-lesson-edge {
+  opacity: 0.7;
+}
+.au-lesson.focus .au-lesson-flow {
+  opacity: 1;
+}
+.au-edges.dimmed .au-lesson {
+  opacity: 0.15;
+}
+@keyframes au-lesson-flow {
+  to {
+    stroke-dashoffset: -12.1;
+  }
+}
+.au-lesson-count {
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--ts));
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  fill: var(--lesson);
+  paint-order: stroke;
+  stroke: var(--bg-0);
+  stroke-width: 5px;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  opacity: 0.95;
+}
+.au-lesson.focus .au-lesson-count {
+  opacity: 1;
+}
+/* The light-bulb badge on a node that has learned (or taught) lessons. */
+.au-lessons {
+  position: absolute;
+  right: -18%;
+  top: -2%;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 4px 0 2px;
+  height: calc(17px * var(--ts));
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: calc(10.5px * var(--ts));
+  color: #000;
+  background: var(--lesson);
+  animation: au-node-in 400ms var(--ease-out) both;
+}
+.au-lessons svg {
+  width: calc(13px * var(--ts));
+  height: calc(13px * var(--ts));
+  fill: none;
+  stroke: #000;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.au-ticker[data-tone="lesson"] {
+  color: var(--lesson);
+  opacity: 1;
+}
+.au-pk-card.k-lesson {
+  padding: 1px;
+  background: var(--lesson);
+  border-left: 0;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 18px color-mix(in srgb, var(--lesson) 80%, transparent);
+}
+.au-pk-card.k-lesson + .au-pk-tag {
+  background: var(--lesson);
 }
 
 /* ------------------------------- nodes ------------------------------- */
@@ -927,6 +1021,95 @@
   white-space: nowrap;
 }
 
+/* Panel: lessons learned / sent. */
+.au-instr {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--lesson);
+  background: color-mix(in srgb, var(--lesson) 7%, transparent);
+}
+.au-instr .fl-micro {
+  color: var(--lesson);
+}
+.au-instr p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+}
+.au-lesson-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.au-lesson-list li {
+  padding: 8px 0 8px 10px;
+  border-left: 2px solid var(--lesson);
+  margin-bottom: 8px;
+  animation: au-chip-in 360ms var(--ease-out) both;
+}
+.au-lesson-list .to {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c);
+  margin-bottom: 3px;
+}
+.au-lesson-list .txt {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  cursor: pointer;
+}
+.au-lesson-list .txt.open {
+  -webkit-line-clamp: unset;
+}
+.au-lesson-list .scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 5px;
+}
+.au-lesson-list .scope span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.au-lesson-list .foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mute);
+}
+.au-lesson-list .foot a {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+}
+.au-lesson-list .foot .hot {
+  color: var(--lesson);
+}
+.au-lesson-more {
+  margin-top: 2px;
+}
+
 @media (max-width: 1100px) {
   .au {
     --rail-w: 300px;
@@ -944,7 +1127,8 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .au-spin {
+  .au-spin,
+  .au-lesson-flow {
     animation: none;
   }
 }

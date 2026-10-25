@@ -1669,3 +1669,63 @@
 .fl .cx-more-group .cx-toggles {
   align-self: flex-start;
 }
+
+/* Validator lessons a task loaded, or a review wrote (lib/lessons). Gold matches the agent map. */
+.fl .ct-lessons {
+  --lesson: #f2c14e;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fl .ct-lessons li {
+  padding: 6px 10px;
+  border-left: 2px solid var(--lesson);
+  background: color-mix(in srgb, var(--lesson) 6%, transparent);
+}
+.fl .ct-lessons .who {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--lesson);
+}
+.fl .ct-lessons p {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text);
+}
+.fl .ct-lessons .scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 5px;
+}
+.fl .ct-lessons .scope span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fl .ct-lessons .foot {
+  margin-top: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mute);
+}
+.fl .ct-lessons .foot a {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+}
+.fl .ct-card .ct-lesson-count {
+  color: #f2c14e;
+}

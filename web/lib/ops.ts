@@ -9,6 +9,7 @@
 import { AGENT_IDS, AGENT_META, isAgentId, type AgentId } from "./agents";
 import { json, num, str, timestamp, type Row, type Snapshot } from "./data";
 import { isImportedId } from "./history";
+import { idList, isLessonRow, sourceCase } from "./lessons";
 
 /* ------------------------------ tasks ------------------------------ */
 
@@ -983,7 +984,13 @@ export type LiveEvent =
   | { type: "approval"; at: number; caseId: string; agent: string; amount: number; decision: string }
   | { type: "call"; at: number; caseId: string; taskId: string; status: string }
   | { type: "review"; at: number; caseId: string; verdict: string }
-  | { type: "journal"; at: number; caseId: string; amount: number; memo: string };
+  | { type: "journal"; at: number; caseId: string; amount: number; memo: string }
+  /** The Validator wrote a lesson into an agent's memory (lib/lessons). */
+  | { type: "lesson"; at: number; caseId: string; agent: string; lessonId: string; text: string }
+  /** The Validator published a new instruction version for an agent. */
+  | { type: "instruction"; at: number; caseId: string; agent: string; version: number }
+  /** A task loaded one or more lessons. */
+  | { type: "lesson_recalled"; at: number; caseId: string; taskId: string; agent: string; lessonIds: string[] };
 
 export function diffSnapshots(prev: Snapshot | null, next: Snapshot): LiveEvent[] {
   const events: LiveEvent[] = [];
@@ -1018,8 +1025,18 @@ export function diffSnapshots(prev: Snapshot | null, next: Snapshot): LiveEvent[
     if (!before && !isImportedId(c.case_id)) events.push({ type: "case_opened", at: timestamp(c.opened_at), caseId: str(c.case_id), agent: "intake" });
   for (const { row: d, before } of delta("dispatch", "event_id"))
     if (!before) events.push({ type: "dispatch", at: timestamp(d.ts), caseId: str(d.case_id), taskId: str(d.task_id), to: str(d.agent), skill: str(d.skill) });
+  // memory_ids lists every memory a task loaded, human notes included; only Validator lessons count as recalls.
+  let lessonIds: Set<string> | null = null;
+  const lessonsIn = (ids: string[]) => {
+    lessonIds ??= new Set(next.agent_memory.filter(isLessonRow).map((m) => str(m.id, "")));
+    return ids.filter((id) => lessonIds!.has(id));
+  };
   for (const { row, before } of delta("task", "task_id")) {
     const t = taskView(row);
+    const loaded = idList(row.memory_ids);
+    const recalled = loaded.length && (!before || idList(before.memory_ids).join() !== loaded.join()) ? lessonsIn(loaded) : [];
+    if (recalled.length)
+      events.push({ type: "lesson_recalled", at: t.updatedAt || t.startedAt, caseId: t.caseId, taskId: t.taskId, agent: t.agent, lessonIds: recalled });
     if (!before) {
       if (t.state === "working") events.push({ type: "task_started", at: t.startedAt, caseId: t.caseId, taskId: t.taskId, agent: t.agent, skill: t.skill });
     } else if (before.a2a_state !== row.a2a_state) {
@@ -1073,6 +1090,16 @@ export function diffSnapshots(prev: Snapshot | null, next: Snapshot): LiveEvent[
     if (!before || before.status !== c.status) events.push({ type: "call", at: timestamp(c.ended_at) || timestamp(c.started_at) || Date.now(), caseId: str(c.case_id), taskId: str(c.task_id), status: str(c.status) });
   for (const { row: r, before } of delta("review", "id"))
     if (!before) events.push({ type: "review", at: timestamp(r.ts), caseId: str(r.case_id), verdict: str(r.verdict) });
+  const lessons = delta("agent_memory", "id").filter(({ row, before }) => !before && isLessonRow(row) && row.active !== false);
+  const instructions = delta("instruction_version", "id").filter(({ row, before }) => !before && str(row.author, "") === "validator");
+  if (lessons.length || instructions.length) {
+    const reviews = new Map(next.review.map((r) => [str(r.id, ""), r]));
+    const tasks = new Map(next.task.map((r) => [str(r.task_id, ""), r]));
+    for (const { row: m } of lessons)
+      events.push({ type: "lesson", at: timestamp(m.created_at), caseId: sourceCase(str(m.source_ref, ""), reviews, tasks), agent: str(m.agent), lessonId: str(m.id), text: str(m.text, "") });
+    for (const { row: v } of instructions)
+      events.push({ type: "instruction", at: timestamp(v.created_at), caseId: sourceCase(str(v.source_ref, ""), reviews, tasks), agent: str(v.agent), version: num(v.version) });
+  }
   return events;
 }
 

@@ -1,16 +1,18 @@
 "use client";
 /**
  * Activity panel for one node: a particle portrait of its mascot, non-default status,
- * model, workload, its current tool calls, the cases it is working and its
- * last ten events.
+ * model, workload, its current tool calls, the cases it is working, the
+ * lessons it has learned from (or, for Settlement Quality Review, sent to)
+ * other agents, and its last ten events.
  * Slides over the case explorer; hover previews, click pins.
  */
 import Link from "next/link";
 import { useMemo, useState, type CSSProperties } from "react";
 import { Pin, X } from "lucide-react";
 import { Mascot, type Mood } from "@/components/mascot";
-import { AGENT_META, NODE_META, agentLabel, isAgentId, skillLabel, type NodeId } from "@/lib/agents";
+import { AGENT_META, NODE_META, agentLabel, isAgentId, skillLabel, type AgentId, type NodeId } from "@/lib/agents";
 import { num, str, timestamp, type Row, type Snapshot } from "@/lib/data";
+import type { Lesson, LessonIndex } from "@/lib/lessons";
 import { buildTimeline, buildToolCalls, fmtAgo, fmtMoney, type AgentWorkload, type CaseView, type TimelineEvent } from "@/lib/ops";
 import { PRIORITY_COLOR, shortCase } from "./agent-node";
 import { MascotPortrait, useWebGl2 } from "./mascot-portrait";
@@ -21,6 +23,7 @@ type Props = {
   mood: Mood;
   snapshot: Snapshot;
   workload: AgentWorkload | undefined;
+  lessons: LessonIndex;
   cases: Map<string, CaseView>;
   now: number;
   onClose: () => void;
@@ -55,7 +58,7 @@ const EVENT_ACCENT: Partial<Record<TimelineEvent["kind"], string>> = {
 
 const STATUS_CHIP: Record<string, string> = { working: "ok", idle: "info", offline: "", stale: "warn", error: "bad" };
 
-export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, now, onClose, onPin, onCase, onEnter, onLeave }: Props) {
+export function AgentPanel({ id, pinned, mood, snapshot, workload, lessons, cases, now, onClose, onPin, onCase, onEnter, onLeave }: Props) {
   const meta = isAgentId(id) ? AGENT_META[id] : NODE_META[id as "intake" | "human"];
   // The human controller has no generated character, so it keeps the flat blob.
   const [portraitFailed, setPortraitFailed] = useState(false);
@@ -131,6 +134,7 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, now, o
         {workload && (
           <WorkloadSection workload={workload} />
         )}
+        {isAgentId(id) && <Lessons id={id} index={lessons} now={now} />}
         {id === "intake" && (
           <KVSection
             items={[
@@ -246,6 +250,57 @@ function WorkloadSection({ workload }: { workload: AgentWorkload }) {
   );
 }
 
+/** Lessons shown before "+N more". */
+const LESSONS_SHOWN = 6;
+
+/** What this agent learned from Settlement Quality Review; for the Validator, what it taught. */
+function Lessons({ id, index, now }: { id: AgentId; index: LessonIndex; now: number }) {
+  const [all, setAll] = useState(false);
+  const teacher = id === "validator";
+  const list = teacher ? index.all.filter((l) => l.agent !== "validator") : (index.byAgent.get(id) ?? []);
+  const instructions = teacher ? undefined : index.instructions.get(id);
+  if (!list.length && !instructions) return null;
+  const recalled = list.reduce((n, l) => n + l.recalled, 0);
+  const shown = all ? list : list.slice(0, LESSONS_SHOWN);
+  return (
+    <section className="au-panel-sec au-learn">
+      <div className="fl-section" style={{ "--accent": "var(--lesson)" } as CSSProperties}>
+        {teacher ? "Lessons sent" : "Lessons learned"}
+      </div>
+      <div className="au-kv">
+        <KV v={list.length} k={teacher ? "Active" : "Lessons"} />
+        {teacher ? <KV v={new Set(list.map((l) => l.agent)).size} k="Agents" /> : <KV v={instructions ? `v${instructions.version}` : "—"} k="Instructions" />}
+        <KV v={recalled.toLocaleString()} k="Recalled" />
+      </div>
+      {instructions && (instructions.learned.length > 0 || instructions.author === "human") && (
+        <div className="au-instr">
+          <div className="fl-micro">
+            Instructions v{instructions.version}
+            {instructions.author === "human" && (instructions.revertsVersion ? ` · rolled back to v${instructions.revertsVersion} by a person` : " · edited by a person")} ·{" "}
+            {fmtAgo(instructions.at, now)}
+          </div>
+          {instructions.learned.map((line, i) => (
+            <p key={i}>{line}</p>
+          ))}
+          {!instructions.learned.length && <p className="fl-dim">No learned rules in effect.</p>}
+        </div>
+      )}
+      {list.length > 0 && (
+        <ul className="au-lesson-list">
+          {shown.map((l) => (
+            <LessonItem key={l.id} lesson={l} teacher={teacher} now={now} />
+          ))}
+        </ul>
+      )}
+      {list.length > LESSONS_SHOWN && (
+        <button className="fl-btn quiet small au-lesson-more" onClick={() => setAll((v) => !v)}>
+          {all ? "Show fewer" : `Show all ${list.length}`}
+        </button>
+      )}
+    </section>
+  );
+}
+
 function KVSection({ items }: { items: [number, string, boolean?][] }) {
   if (!items.some(([v]) => v > 0)) return null;
   return (
@@ -264,6 +319,39 @@ function KVGrid({ items }: { items: [number, string, boolean?][] }) {
         <KV key={k} v={v.toLocaleString()} k={k} hot={hot} />
       ))}
     </div>
+  );
+}
+
+function LessonItem({ lesson: l, teacher, now }: { lesson: Lesson; teacher: boolean; now: number }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li style={{ "--c": AGENT_META[l.agent].color } as CSSProperties}>
+      {teacher && <div className="to">→ {AGENT_META[l.agent].name}</div>}
+      <button type="button" className={`txt ${open ? "open" : ""}`} onClick={() => setOpen((v) => !v)} title={open ? "Collapse" : "Expand"}>
+        {l.text}
+      </button>
+      {l.scope.length > 0 && (
+        <div className="scope">
+          {l.scope.map((c) => (
+            <span key={c}>{c}</span>
+          ))}
+        </div>
+      )}
+      <div className="foot">
+        {l.caseId ? (
+          <>
+            from{" "}
+            <Link href={`/cases/${encodeURIComponent(l.caseId)}`}>
+              {shortCase(l.caseId)}
+            </Link>
+          </>
+        ) : (
+          "from a review"
+        )}
+        <span>· {fmtAgo(l.at, now)}</span>
+        <span className={l.recalled ? "hot" : ""}>· {l.recalled ? `used ${l.recalled}×` : "not used yet"}</span>
+      </div>
+    </li>
   );
 }
 

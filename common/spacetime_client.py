@@ -103,14 +103,13 @@ class SpacetimeHTTPError(SpacetimeError):
         super().__init__(f"SpacetimeDB HTTP {status_code} ({self.kind})")
 
 
-_REASON = re.compile(r"[A-Za-z0-9 _.,:;'()<>=/%+\-\u2013]{1,200}")
+_REASON = re.compile(r"[A-Za-z0-9 _.,:;'()=/%+\-\u2013]{1,200}")
 _SECRETISH = re.compile(r"(?:bearer|token|secret|password|sk-|pk-|@)", re.IGNORECASE)
 
 
 def reducer_reason(body: str) -> str:
     """The first line of a refused reducer's message when it is plain module text, else ''."""
     line = (body or "").strip().splitlines()[0].strip() if (body or "").strip() else ""
-    line = line[:200]
     if not _REASON.fullmatch(line) or _SECRETISH.search(line):
         return ""
     return line

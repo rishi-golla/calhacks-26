@@ -607,3 +607,155 @@ async def test_rejected_projection_is_terminal_and_later_rows_still_deliver(tmp_
         assert len(seen) == 2 and len(set(seen)) == 2
         await agent.flush_projections()
         assert len(seen) == 2, "the rejected row was replayed"
+
+
+async def test_rows_queued_for_another_database_wait_instead_of_being_rejected(tmp_path, monkeypatch):
+    """Pre-wipe Oct 24: a stack restarted against a local database flushed the Maincloud outbox into it. Every row
+    was refused there (its task did not exist) and dropped as terminal, leaving 37 Maincloud tasks `working`."""
+    from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError
+    monkeypatch.setenv("SPACETIME_DISABLED", "0")
+    monkeypatch.setenv("A2A_PROJECTION_DELIVERY", "inline")
+    monkeypatch.setenv("SPACETIME_URL", "https://maincloud.example")
+    monkeypatch.setenv("SPACETIME_DB", "freightops")
+    delivered = []
+
+    async def mutate(self, reducer, payload):
+        if reducer == "agent_heartbeat":
+            return
+        if self.url != "https://maincloud.example":
+            raise SpacetimeHTTPError(530, mutation=True)
+        delivered.append((payload["a2a_state"], payload["write_id"]))
+    monkeypatch.setattr(SpacetimeClient, "mutate", mutate)
+    async with running(tmp_path) as (handler, agent, _):
+        from common.spacetime_client import SpacetimeTransportError
+
+        async def outage(self, reducer, payload):
+            raise SpacetimeTransportError(timeout=True, may_have_committed=False)
+        monkeypatch.setattr(SpacetimeClient, "mutate", outage)
+        result = await handler.on_message_send(request(), ServerCallContext())
+        assert result.status.state == TaskState.TASK_STATE_COMPLETED
+        queued = [event["id"] for event in await agent.store.pending_projections("risk")]
+        assert len(queued) == 2
+        monkeypatch.setattr(SpacetimeClient, "mutate", mutate)
+        monkeypatch.setenv("SPACETIME_URL", "http://127.0.0.1:3000")  # pointed at a rehearsal database
+        await agent.flush_projections()
+        assert [event["id"] for event in await agent.store.pending_projections("risk")] == queued
+        monkeypatch.setenv("SPACETIME_URL", "https://maincloud.example")
+        await agent.flush_projections()
+        assert delivered == [("working", queued[0]), ("completed", queued[1])]
+        assert not await agent.store.pending_projections("risk")
+
+
+async def test_refused_terminal_projection_falls_back_to_the_state_alone(tmp_path, monkeypatch):
+    from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError
+    monkeypatch.setenv("SPACETIME_DISABLED", "0")
+    monkeypatch.setenv("A2A_PROJECTION_DELIVERY", "inline")
+    delivered = []
+
+    async def mutate(_self, reducer, payload):
+        if reducer == "agent_heartbeat":
+            return
+        if payload.get("a2a_state") == "completed" and "artifact_json" in payload:
+            raise SpacetimeHTTPError(530, mutation=True)  # e.g. a refused memory or instruction reference
+        delivered.append(payload)
+    monkeypatch.setattr(SpacetimeClient, "mutate", mutate)
+    async with running(tmp_path) as (handler, agent, _):
+        result = await handler.on_message_send(request(), ServerCallContext())
+        assert result.status.state == TaskState.TASK_STATE_COMPLETED
+        await agent.flush_projections()  # the fallback row was queued behind the refusal
+        assert [row["a2a_state"] for row in delivered] == ["working", "completed"]
+        fallback = delivered[-1]
+        assert set(fallback) == {"write_id", "task_id", "case_id", "agent", "skill", "parent_task_id",
+                                 "a2a_state", "business_status"}
+        assert not await agent.store.pending_projections("risk")
+
+
+async def test_failure_is_projected_even_when_the_a2a_store_cannot_record_it(tmp_path, monkeypatch):
+    from a2a.server.tasks import TaskUpdater
+
+    from common.spacetime_client import SpacetimeClient
+    monkeypatch.setenv("SPACETIME_DISABLED", "0")
+    monkeypatch.setenv("A2A_PROJECTION_DELIVERY", "inline")
+    delivered = []
+
+    async def mutate(_self, reducer, payload):
+        if reducer != "agent_heartbeat":
+            delivered.append(payload["a2a_state"])
+    monkeypatch.setattr(SpacetimeClient, "mutate", mutate)
+
+    class Broken(CountingAgent):
+        async def handle(self, env, meta, task_id, updater):
+            raise RuntimeError("domain failure")
+
+    async def failed(_self, *args, **kwargs):
+        raise RuntimeError("event queue closed")
+    monkeypatch.setattr(TaskUpdater, "failed", failed)
+    async with running(tmp_path, Broken) as (handler, agent, _):
+        message = request()
+        message.configuration.return_immediately = True
+        task = await handler.on_message_send(message, ServerCallContext())
+        async with asyncio.timeout(5):
+            while (await agent.store.get(task.id))["status"] != "failed":
+                await asyncio.sleep(0.02)
+        assert delivered == ["working", "failed"]
+
+
+async def test_sweep_requeues_the_final_state_of_an_orphaned_task(tmp_path, monkeypatch):
+    from common.spacetime_client import SpacetimeClient
+    monkeypatch.setenv("SPACETIME_DISABLED", "0")
+    monkeypatch.setenv("A2A_PROJECTION_DELIVERY", "inline")
+    delivered = []
+    remote = {}
+
+    async def mutate(_self, reducer, payload):
+        if reducer == "agent_heartbeat":
+            return
+        delivered.append(payload)
+        if reducer == "upsert_task":
+            remote[payload["task_id"]] = payload["a2a_state"]
+
+    async def query_rows(_self, sql):
+        assert "agent = 'risk'" in sql
+        state = sql.rsplit("'", 2)[-2]
+        return [{"task_id": task_id, "case_id": "case-one", "skill": "investigate_charge", "parent_task_id": "",
+                 "a2a_state": a2a, "updated_at": "2026-10-25T04:19:36.219827Z"}
+                for task_id, a2a in remote.items() if a2a == state]
+    monkeypatch.setattr(SpacetimeClient, "mutate", mutate)
+    monkeypatch.setattr(SpacetimeClient, "query_rows", query_rows)
+    async with running(tmp_path) as (handler, agent, _):
+        result = await handler.on_message_send(request(), ServerCallContext())
+        assert remote[result.id] == "completed"
+        remote[result.id] = "working"  # its final row was lost: the dashboard still shows it running
+        delivered.clear()
+        async with asyncio.timeout(5):
+            while (await agent.store.get(result.id))["status"] != "completed":
+                await asyncio.sleep(0.02)
+        assert await agent.sweep_orphaned_tasks() == 1
+        await agent.flush_projections()
+        assert remote[result.id] == "completed"
+        assert delivered[-1]["outcome"] == "clear" and delivered[-1]["business_status"] == "resolved"
+        # Repaired once; a later sweep does not queue it again even if the dashboard read is stale.
+        remote[result.id] = "working"
+        assert await agent.sweep_orphaned_tasks() == 0
+
+
+async def test_sweep_leaves_tasks_alone_while_their_own_rows_are_pending(tmp_path, monkeypatch):
+    from common.spacetime_client import SpacetimeClient, SpacetimeTransportError
+    monkeypatch.setenv("SPACETIME_DISABLED", "0")
+
+    async def mutate(_self, reducer, payload):
+        raise SpacetimeTransportError(timeout=True, may_have_committed=False)
+    task_ids = []
+
+    async def query_rows(_self, sql):
+        if "'working'" not in sql:
+            return []
+        return [{"task_id": task_id, "a2a_state": "working", "updated_at": "2026-10-25T04:19:36Z"}
+                for task_id in task_ids]
+    monkeypatch.setattr(SpacetimeClient, "mutate", mutate)
+    monkeypatch.setattr(SpacetimeClient, "query_rows", query_rows)
+    async with running(tmp_path) as (handler, agent, _):
+        result = await handler.on_message_send(request(), ServerCallContext())
+        task_ids.append(result.id)
+        assert await agent.store.pending_projections("risk", result.id)
+        assert await agent.sweep_orphaned_tasks() == 0

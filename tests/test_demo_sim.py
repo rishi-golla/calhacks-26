@@ -389,3 +389,75 @@ def test_injection_attempt_picks_at_most_a_template_and_leaks_nothing():
 def test_mapper_bounds_its_input(text):
     with pytest.raises(ValueError):
         classify_scenario(text)
+
+
+class LeasingRedis(FakeRedis):
+    """FakeRedis plus the hash and lease commands in-flight tracking uses."""
+
+    def __init__(self):
+        super().__init__()
+        self.hashes: dict = {}
+
+    async def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.kv:
+            return None
+        self.kv[key] = value
+        return True
+
+    async def delete(self, key):
+        self.kv.pop(key, None)
+
+    async def hset(self, name, key, value):
+        self.hashes.setdefault(name, {})[key] = value
+
+    async def hgetall(self, name):
+        return {k.encode(): v.encode() for k, v in self.hashes.get(name, {}).items()}
+
+    async def hdel(self, name, key):
+        self.hashes.get(name, {}).pop(key, None)
+
+
+def test_injected_load_resumes_its_remaining_steps_after_the_stream_dies(world, frozen):
+    """Pre-wipe Oct 24: burst loads stream inside the gateway, and 52 of them never got their shipper payment
+    because the streaming process stopped. A restarted gateway must finish them from their saved progress."""
+    p = demo.PRESETS["phone"]
+    load, scenario = demo_load(world, "phone")
+    r = LeasingRedis()
+
+    async def die_mid_stream():
+        with pytest.raises(StopStreaming):
+            await generator.stream_load(r, load, scenario, random.Random(), source="demo",
+                                        fast_forward_to=p.trigger_step, pins=p.pins)
+    asyncio.run(die_mid_stream())
+    before = [ev["type"] for ev in r.raw]
+    saved = json.loads(r.hashes[generator.INFLIGHT_KEY][load["load_id"]])
+    assert saved["emitted"] > 0 and "bank.event" not in before
+    assert r.kv[generator._lease_key(load["load_id"])]
+
+    async def restart(lease_expired: bool):
+        if lease_expired:
+            await r.delete(generator._lease_key(load["load_id"]))
+        tasks = await generator.resume_inflight(r)
+        await asyncio.gather(*tasks)
+        return tasks
+
+    assert asyncio.run(restart(False)) == [], "a load whose lease is still held belongs to a live stream"
+    frozen.at = NOW + timedelta(days=30)  # the business clock ran on while the gateway was down
+    assert len(asyncio.run(restart(True))) == 1
+    after = [ev["type"] for ev in r.raw][len(before):]
+    assert "bank.event" in after and "load.tendered" not in after, "only the steps not yet emitted are replayed"
+    assert load["load_id"] not in r.hashes[generator.INFLIGHT_KEY]
+    assert generator._lease_key(load["load_id"]) not in r.kv
+    answers = [json.loads(line) for line in (generator.data_dir() / "answer_key.jsonl").read_text().splitlines()]
+    assert [a["load_id"] for a in answers].count(load["load_id"]) == 1
+
+
+def test_simulator_loads_are_not_tracked_for_resume(world, frozen):
+    load = generator.new_load(world, random.Random(3))
+    r = LeasingRedis()
+
+    async def run():
+        with pytest.raises(StopStreaming):
+            await generator.stream_load(r, load, "clean", random.Random())
+    asyncio.run(run())
+    assert not r.hashes

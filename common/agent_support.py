@@ -125,6 +125,66 @@ async def rows(agent: str, table: str, field: str, value: str) -> list[dict]:
     return await SpacetimeClient(actor=agent).query_rows(f"SELECT * FROM {table} WHERE {field} = '{escaped}'")
 
 
+def billing_journal_id(shipper_invoice_id: str) -> str:
+    """One billing journal per shipper invoice, however many reconciliations run."""
+    return identifier(f"{shipper_invoice_id}", "revenue_journal_request")
+
+
+def payable_journal_id(invoice_id: str) -> str:
+    """One payable journal per carrier invoice, however many payment proposals run."""
+    return identifier(f"{invoice_id}", "payable_journal_request")
+
+
+def billing_lines(amount: Decimal) -> list[dict]:
+    """Customer billing: the shipper owes the invoice and the brokerage earns it."""
+    return [{"account": "accounts_receivable", "debit": number(amount), "credit": 0},
+            {"account": "freight_revenue", "debit": 0, "credit": number(amount)}]
+
+
+def payable_lines(amount: Decimal) -> list[dict]:
+    """Carrier settlement: the carrier's cost is incurred and owed. Nothing is paid, so AP stays open."""
+    return [{"account": "freight_expense", "debit": number(amount), "credit": 0},
+            {"account": "accounts_payable", "debit": 0, "credit": number(amount)}]
+
+
+async def journal_requests(agent: str, env: TaskEnvelope, source: dict, *request_ids: str) -> list[dict]:
+    """This case's journal requests, plus any named request wherever it is stored.
+
+    A deterministic request ID can only be inserted once, so a lookup by ID also finds one another case
+    already holds; ``request_journal`` then refuses it instead of the reducer failing on the insert.
+    """
+    from common.source_repository import source_fixtures_only
+    if source_fixtures_only():
+        return list(source.get("journal_requests", []))
+    found = list(await rows(agent, "journal_request", "case_id", env.case_id))
+    for request_id in request_ids:
+        if not any(item.get("id") == request_id for item in found):
+            found.extend(await rows(agent, "journal_request", "id", request_id))
+    return found
+
+
+async def request_journal(agent, env: TaskEnvelope, task_id: str, existing: list[dict], request_id: str, *,
+                          period: str, lines: list[dict], memo: str, label: str = "journal") -> dict:
+    """Request one journal entry at most once.
+
+    Returns ``{"receipt", "posted_entry_id", "pending"}``. A posted request reports its entry and needs
+    nothing more; a stored, unposted one is pending without a second request (the reducer's insert fails
+    on a repeated ID); a new one is requested and is pending only once actually recorded, because a
+    fixture write is only a proposal until it exists in source data.
+    """
+    stored = next((item for item in existing if item.get("id") == request_id), None)
+    if stored and stored.get("case_id") != env.case_id:
+        raise SourceUnavailable(f"{label} journal belongs to a different case")
+    if stored and stored.get("posted_entry_id"):
+        return {"receipt": None, "posted_entry_id": stored["posted_entry_id"], "pending": False}
+    if stored:
+        return {"receipt": {"executed": False, "existing": True, "request_id": request_id,
+                            "simulated": fixture_mode()}, "posted_entry_id": None, "pending": True}
+    receipt = await mutate(agent, env, task_id, "request_journal_entry", {
+        "id": request_id, "period": period, "lines": lines, "memo": memo})
+    return {"receipt": receipt, "posted_entry_id": None, "pending": bool(receipt.get("executed"))}
+
+
 def child_envelope(env: TaskEnvelope, skill: str, **extra) -> TaskEnvelope:
     # Extra fields describe a requested operation; destination agents re-read
     # the source and reducer state before executing it.

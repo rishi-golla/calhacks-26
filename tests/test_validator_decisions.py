@@ -6,7 +6,14 @@ same source field names the W4 export produces (ingest/source_export.py).
 import pytest
 
 from agents.validator.tools import ADVISORY, ISSUE, deterministic_review, grounded_issues, lesson_text
-from common.agent_support import identifier
+from common.agent_support import (
+    billing_journal_id,
+    billing_lines,
+    identifier,
+    money,
+    payable_journal_id,
+    payable_lines,
+)
 from common.envelope import ResultArtifact
 
 TASK = "task-ap"
@@ -35,8 +42,13 @@ def approve(src, **findings):
     proposal = {"executed": False, "simulated": True, "proposed_payload": {
         "id": identifier(TASK, "payment_proposal"), "invoice_id": src["invoice_id"],
         "amount": round(src["invoice_amount"] - src.get("paid_amount", 0), 2)}}
+    # The proposed bill is booked once: Dr freight expense / Cr accounts payable.
+    payable = {"executed": False, "simulated": True, "proposed_payload": {
+        "id": payable_journal_id(src["invoice_id"]),
+        "lines": payable_lines(money(src["invoice_amount"]) - money(src.get("paid_amount", 0)))}}
     return ResultArtifact(outcome="approve", evidence_refs=REFS,
-                          findings={"match": match(src), "payment_proposal": proposal, **findings}).model_dump()
+                          findings={"match": match(src), "payment_proposal": proposal,
+                                    "journal_requests": [payable], **findings}).model_dump()
 
 
 def hold(src, **findings):
@@ -191,6 +203,8 @@ def test_shipper_ar_outcome_follows_balance_and_short_pay_is_advisory():
     artifact = ResultArtifact(outcome="partial", evidence_refs=REFS, findings={
         "matched_amount": 2400, "balance": 200, "matched_deposit_ids": ["D-1"],
         "journal_requests": [{"executed": False, "simulated": True, "proposed_payload": {
+            "id": billing_journal_id("SINV-1"), "lines": billing_lines(money(2600))}},
+            {"executed": False, "simulated": True, "proposed_payload": {
             "id": request_id, "lines": [{"account": "cash", "debit": 2400, "credit": 0},
                                         {"account": "accounts_receivable", "debit": 0, "credit": 2400}]}}]}).model_dump()
     review = deterministic_review(bundle(src, artifact, "shipper_ar", "reconcile_customer_payment"))

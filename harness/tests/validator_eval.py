@@ -27,7 +27,7 @@ from pathlib import Path
 from unittest import mock
 
 from agents.validator.tools import FINANCIAL_AGENTS, ISSUE, deterministic_review
-from common.agent_support import identifier
+from common.agent_support import identifier, payable_journal_id, payable_lines
 from common.config import AGENTS, MAX_DELEGATION_DEPTH, SKILL_OWNER
 from common.envelope import DelegationMeta, ResultArtifact, TaskEnvelope
 from common.policy import APPROVAL_THRESHOLD_USD
@@ -274,6 +274,9 @@ def flip_decision(row: dict, artifact: dict, source: dict) -> dict | None:
             findings["payment_proposal"] = {"executed": False, "simulated": True, "proposed_payload": {
                 "id": identifier(row["task_id"], "payment_proposal"), "invoice_id": source.get("invoice_id"),
                 "amount": float(amount)}}
+            # A real approval also books the proposed bill (Dr expense / Cr payable) once.
+            findings["journal_requests"] = [{"executed": False, "simulated": True, "proposed_payload": {
+                "id": payable_journal_id(source.get("invoice_id")), "lines": payable_lines(amount)}}]
             return mutated
         return None
     if agent == "controller" and skill == "review_hold":

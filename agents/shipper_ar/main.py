@@ -50,6 +50,11 @@ class ShipperArAgent(FreightAgent):
             total += money(deposit.get("amount"))
         balance = owed - total
         applied = deposit_inputs(matched)
+        # Cash whose bank reference named no invoice, matched here only by shipper and amount. It is never applied
+        # automatically: a person confirms the match first, so this reconciliation cannot come out `verified`.
+        unapplied = source.get("unapplied_deposits") or []
+        if not isinstance(unapplied, list) or not all(isinstance(item, dict) for item in unapplied):
+            raise SourceUnavailable("source unapplied deposits must be a list of objects")
         invoice_refs = refs_for(source, "shipper_invoice_amount")
         findings = {"shipper_invoice_id": invoice_id, "invoice_amount": number(owed),
                     "matched_amount": number(total), "balance": number(balance),
@@ -63,6 +68,13 @@ class ShipperArAgent(FreightAgent):
                                 {"shipper_invoice_amount": owed, "matched_amount": total}, balance,
                                 evidence_refs=invoice_refs, basis="short pay is partial, overpayment is suspicious"),
                     ]}
+        if unapplied or env.subject.get("reference_mismatch") is True:
+            findings.update(reference_mismatch=True, cash_applied_automatically=False,
+                            unapplied_deposit_ids=sorted(str(item.get("id")) for item in unapplied),
+                            unapplied_amount=number(sum((money(item.get("amount")) for item in unapplied),
+                                                        Decimal(0))),
+                            review_reason="deposit reference matches no shipper invoice; a person must confirm "
+                                          "the shipper-and-amount match before the cash is applied")
         if env.task_type == "reconcile_customer_payment" and total > 0:
             if not source.get("period"):
                 raise SourceUnavailable("journal period is required")
@@ -102,7 +114,10 @@ class ShipperArAgent(FreightAgent):
                     env, "approve_entry", request_ids=pending), meta, task_id,
                     invocation_key="post_receivable_journals:" + identifier(",".join(pending), "journal_batch")))
             findings["journal_requests"], findings["controller"] = requests, posted
-        if env.task_type == "chase_overdue" and balance > 0:
+        if env.task_type == "chase_overdue" and balance > 0 and unapplied:
+            # The shipper may already have paid under the wrong reference: apply that cash before chasing them.
+            findings["outreach_needed"] = False
+        elif env.task_type == "chase_overdue" and balance > 0:
             if not source.get("overdue"):
                 return await finish(self, env, task_id, outcome="clear", findings={**findings,
                                     "outreach_needed": False}, evidence_refs=refs)
@@ -120,7 +135,8 @@ class ShipperArAgent(FreightAgent):
             findings["cash_impact"] = await self.delegate("assess_financial_impact", child_envelope(
                 env, "assess_financial_impact"), meta, task_id, invocation_key="receivable_cash_impact")
         return await finish(self, env, task_id, outcome="partial" if balance > 0 else
-                            "suspicious" if balance < 0 else "verified", findings=findings, evidence_refs=refs)
+                            "suspicious" if balance < 0 else "hold" if unapplied else "verified",
+                            findings=findings, evidence_refs=refs)
 
 
 if __name__ == "__main__":

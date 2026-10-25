@@ -194,9 +194,15 @@ def test_ingestion_extracts_and_routes_raw_scenario(world, scenario):
         assert bank.aba_valid(change["new_routing"])
 
     if scenario == "misapplied_payment":
-        assert not any(event["type"] == "shipper_payment.received" for event in derived)
-        assert any(event["type"] == "bank.event" and
-                   event["payload"]["reference"].startswith("SINV-MISSING-") for event in derived)
+        # Unreferenced cash is matched to the load's open invoice by shipper and amount, flagged, never applied.
+        payment = next(event["payload"] for event in derived if event["type"] == "shipper_payment.received")
+        assert payment["case_id"] == f"{load['case_id']}-AR" and payment["invoice_id"] == f"SINV-{load['load_id']}"
+        assert payment["reference_mismatch"] is True and payment["invoices_applied"] == []
+        assert payment["remittance_ref"] == f"SINV-MISSING-{load['load_id']}"
+        # The remittance advice that came with the cash cites the load's PO, which confirms the match.
+        assert payment["match_basis"] == "shipper_and_amount_and_remittance_po"
+        assert payment["counterparty"] == load["shipper"]["name"] and payment["shipper_known"] is True
+        assert not any(event["type"] == "bank.event" for event in derived)
         return
     payment = next(event["payload"] for event in derived if event["type"] == "shipper_payment.received")
     assert payment["chase"] == (scenario == "shipper_short_pay")
@@ -597,7 +603,7 @@ def test_offline_40_loads_follow_w1_routing_contract(world, tmp_path, monkeypatc
             assert payload["text"].strip()
             assert all(key in payload for key in ("from", "to", "subject", "date", "evidence_refs"))
             assert event["evidence_refs"] == payload["evidence_refs"]
-        if event["type"] == "shipper_payment.received":
+        if event["type"] == "shipper_payment.received" and not payload.get("reference_mismatch"):
             assert sum(item["amount"] for item in payload["invoices_applied"]) == payload["amount"]
 
     reserved = {"event_type", "doc_type", "needs_review", "review_notes", "redacted_tokens"}

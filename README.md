@@ -120,9 +120,18 @@ arrival metadata to Redis `raw` rather than extracted answers. The simulator als
 combines them with the structured TMS feed, and publishes exactly the routable case events to Redis `events`.
 The ASUS/W1 router consumes `events`; extracted and reviewable document results go separately to Redis
 `documents` for audit and W2 workflows, never to the router. All three stream names are configurable through
-`RAW_STREAM`, `EVENTS_STREAM`, and `DOCUMENTS_STREAM` (defaults: `raw`, `events`, and `documents`). Its
+`RAW_STREAM`, `EVENTS_STREAM`, and `DOCUMENTS_STREAM` (defaults: `raw`, `events`, and `documents`). Ingest caps
+`events` and `documents` at `EVENTS_STREAM_MAXLEN` and `DOCUMENTS_STREAM_MAXLEN` (approximate, default 200000 each;
+entries past the cap are trimmed whether or not they were read). Its
 transactional load, invoice, remittance, and bank-offset state lives in `data/ingest.db`. Use `make world` to
 refresh the public counterparty directory and `make ingest` to run the consumer.
+
+A deposit whose remittance reference names no shipper invoice is unapplied cash. Ingest matches it like a
+collections clerk: the one open invoice of the remitting shipper with exactly that open balance (any shipper when
+the remitter is unknown; the PO on a remittance advice for that reference breaks ties). A match is routed as
+`shipper_payment.received` with `reference_mismatch: true` and listed in the receivable case's
+`unapplied_deposits`, never as applied cash, so Shipper Billing & Collections reviews it. No match, or more than
+one, leaves an unrouted `bank.event` and a `needs_review` `bank_deposit` document.
 
 Ingest also keeps the agents' source dataset current in `data/source.json` (`SOURCE_EXPORT_PATH`), the file live
 agents read through `SOURCE_DATA_PATH`. It is rewritten atomically before any case-opening event is published, so

@@ -78,6 +78,14 @@ class SpacetimeTransportError(SpacetimeError):
 HTTPFailure = Literal["authorization", "not_found", "conflict", "rate_limited", "rejected", "server"]
 
 
+REDUCER_REFUSED_STATUS = 530
+"""SpacetimeDB 2.x answers a reducer that threw (a refused write) with HTTP 530.
+
+That is a deterministic rejection whose transaction rolled back, not a server
+fault: it is classified ``rejected`` and never ``may_have_committed``.
+"""
+
+
 class SpacetimeHTTPError(SpacetimeError):
     """Non-success HTTP status, without potentially sensitive server error text."""
 
@@ -85,9 +93,10 @@ class SpacetimeHTTPError(SpacetimeError):
         self.status_code = status_code
         self.kind: HTTPFailure = {
             401: "authorization", 403: "authorization", 404: "not_found",
-            409: "conflict", 429: "rate_limited",
+            409: "conflict", 429: "rate_limited", REDUCER_REFUSED_STATUS: "rejected",
         }.get(status_code, "server" if status_code >= 500 else "rejected")
-        self.may_have_committed = mutation and (status_code >= 500 or status_code == 408)
+        self.may_have_committed = mutation and (
+            status_code == 408 or (status_code >= 500 and status_code != REDUCER_REFUSED_STATUS))
         super().__init__(f"SpacetimeDB HTTP {status_code} ({self.kind})")
 
 

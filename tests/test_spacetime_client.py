@@ -321,6 +321,7 @@ async def test_scoped_human_approval_receipt_is_not_claim_of_success(monkeypatch
     (400, "rejected", False), (401, "authorization", False), (403, "authorization", False),
     (404, "not_found", False), (409, "conflict", False), (429, "rate_limited", False),
     (500, "server", True), (503, "server", True), (307, "rejected", False),
+    (530, "rejected", False),   # a reducer that threw: the write rolled back, nothing committed
 ])
 async def test_http_failures_classified_without_retry_redirect_or_body_leak(status, kind, uncertain):
     requests = []

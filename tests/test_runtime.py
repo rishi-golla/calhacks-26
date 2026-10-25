@@ -582,3 +582,28 @@ async def test_inline_projection_delivery_can_be_configured(tmp_path, monkeypatc
         assert result.status.state == TaskState.TASK_STATE_COMPLETED
         assert delivered == ["upsert_task", "upsert_task"]
         assert not await agent.store.pending_projections("risk")
+
+
+async def test_rejected_projection_is_terminal_and_later_rows_still_deliver(tmp_path, monkeypatch):
+    """A reducer that throws (HTTP 530) is deterministic: the row must not be replayed forever, and the task's
+    later rows must get their own attempt on the next pass. Transport failures still retry."""
+    from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError
+    monkeypatch.setenv("SPACETIME_DISABLED", "0")
+    monkeypatch.setenv("A2A_PROJECTION_DELIVERY", "inline")
+    seen = []
+
+    async def mutate(_self, reducer, payload):
+        if reducer == "agent_heartbeat":
+            return
+        seen.append(payload["write_id"])
+        if payload.get("a2a_state") == "working":
+            raise SpacetimeHTTPError(530, mutation=True)
+    monkeypatch.setattr(SpacetimeClient, "mutate", mutate)
+    async with running(tmp_path) as (handler, agent, _):
+        result = await handler.on_message_send(request(), ServerCallContext())
+        assert result.status.state == TaskState.TASK_STATE_COMPLETED
+        # The rejected "working" row is terminal and the later "completed" row was delivered on its own pass.
+        assert not await agent.store.pending_projections("risk")
+        assert len(seen) == 2 and len(set(seen)) == 2
+        await agent.flush_projections()
+        assert len(seen) == 2, "the rejected row was replayed"

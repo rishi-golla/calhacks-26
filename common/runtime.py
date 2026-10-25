@@ -30,6 +30,12 @@ WAIT_STATES = {TaskState.TASK_STATE_INPUT_REQUIRED, TaskState.TASK_STATE_AUTH_RE
 _execution: ContextVar[tuple[str, str, int] | None] = ContextVar("freight_execution", default=None)
 
 
+def projection_rejected(status_code: int) -> bool:
+    """SpacetimeDB answers 530 when a reducer throws; other 4xx (except timeouts and rate limits) are the
+    request itself being refused. Both are deterministic for the same write ID and payload."""
+    return status_code == 530 or (400 <= status_code < 500 and status_code not in {408, 429})
+
+
 class DelegationRefused(ValueError):
     pass
 
@@ -183,8 +189,13 @@ class FreightAgent(AgentExecutor):
             except LeaseLost:
                 final_status = "queued"
             except Exception as error:  # noqa: BLE001 -- executor boundary records a safe failure artifact
-                log.warning("%s task %s failed: %s", self.name, task_id, type(error).__name__)
-                await updater.add_artifact(parts=[new_data_part({"error": type(error).__name__})],
+                from common.providers import ProviderError
+                failure = {"error": type(error).__name__}
+                if isinstance(error, ProviderError):  # its message is written to be safe: no response, key or prompt
+                    failure["detail"] = str(error)[:200]
+                log.warning("%s task %s failed: %s%s", self.name, task_id, type(error).__name__,
+                            f" ({failure['detail']})" if "detail" in failure else "")
+                await updater.add_artifact(parts=[new_data_part(failure)],
                     artifact_id=stable_id("artifact", task_id, "error"), name="error")
                 await updater.failed()
                 try:
@@ -264,7 +275,6 @@ class FreightAgent(AgentExecutor):
         from common.policy import check
         from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError, SpacetimeTransportError
         blocked = set()
-        rejected: Exception | None = None
         async with self._projection_lock:
             for event in await self.store.pending_projections(self.name, task_id):
                 if event["task_id"] in blocked:
@@ -280,13 +290,14 @@ class FreightAgent(AgentExecutor):
                     await self.store.acknowledge_projection(event["id"])
                 except (SpacetimeTransportError, SpacetimeHTTPError) as error:
                     blocked.add(event["task_id"])
-                    if isinstance(error, SpacetimeHTTPError) and error.status_code not in {408, 429} and error.status_code < 500:
-                        rejected = rejected or error
-                        log.warning("Task projection rejected (HTTP %s); its task's later rows wait", error.status_code)
+                    if isinstance(error, SpacetimeHTTPError) and projection_rejected(error.status_code):
+                        # The module refused this exact write (a reducer that threw, or a malformed row). It is
+                        # deterministic, so the row is terminal; the task's later rows get their own attempt next pass.
+                        await self.store.reject_projection(event["id"])
+                        log.warning("Task projection rejected by SpacetimeDB (HTTP %s); row %s is terminal",
+                                    error.status_code, event["id"])
                         continue
                     log.warning("Task projection queued for retry: %s", type(error).__name__)
-        if rejected is not None:
-            raise rejected
 
     async def queue_tool_audit(self, payload: dict) -> None:
         """Persist tool telemetry in the task's ordered outbox before best-effort delivery.

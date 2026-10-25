@@ -196,6 +196,29 @@
 .fl-dim {
   color: var(--text-dim);
 }
+/* "Start fresh" status line and its inline text buttons. */
+.fl-epoch {
+  white-space: nowrap;
+}
+.fl-textbtn {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.fl-textbtn:hover {
+  color: var(--text);
+}
+.fl-textbtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .fl-mute {
   color: var(--text-mute);
 }

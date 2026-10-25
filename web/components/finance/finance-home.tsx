@@ -12,6 +12,8 @@ import { useSearchParams } from "next/navigation";
 import { useOps } from "@/components/data-provider";
 import { AGENT_IDS } from "@/lib/agents";
 import { fmtAgo } from "@/lib/ops";
+import { fmtSince } from "@/lib/view-epoch";
+import { EpochNote } from "@/components/shell/view-epoch";
 import { AttentionQueue } from "./attention-queue";
 import { ForecastBars, LineChart, Sparkline } from "./charts";
 import { CountUp } from "./count-up";
@@ -82,6 +84,7 @@ function Header() {
         <div className="fl-micro" suppressHydrationWarning>
           {lastUpdated ? `Updated ${fmtAgo(lastUpdated, now)}` : source === "connecting" ? "Connecting…" : "No updates yet"}
         </div>
+        <EpochNote />
       </div>
     </header>
   );
@@ -117,7 +120,10 @@ function Delta({ change: c, good }: { change: { abs: number; pct: number | null 
 }
 
 function KpiTiles() {
-  const { finance, snapshot, source } = useOps();
+  const { finance, snapshot, source, viewEpoch, now } = useOps();
+  // After "Start fresh" the tiles total ledger activity since the epoch, not all-time balances.
+  const since = viewEpoch.active && viewEpoch.epoch ? fmtSince(viewEpoch.epoch.since, now) : "";
+  const sinceDelta = since ? <span className="fh-delta flat">since {since}</span> : null;
   const hasLedger = snapshot.ledger_entry.length > 0;
   const series = useMemo(
     () => ({
@@ -139,7 +145,7 @@ function KpiTiles() {
       color: "var(--teal)",
       series: series.cash,
       good: "up",
-      delta: <Delta change={cashChange} good="up" />,
+      delta: sinceDelta ?? <Delta change={cashChange} good="up" />,
     },
     {
       key: "ap",
@@ -149,7 +155,7 @@ function KpiTiles() {
       color: "var(--aqua)",
       series: series.ap,
       good: "none",
-      delta: <Delta change={change(finance.trends.ap)} good="none" />,
+      delta: sinceDelta ?? <Delta change={change(finance.trends.ap)} good="none" />,
       foot: (
         <>
           <b className="fl-num">{count(finance.outstandingInvoices.count)}</b> open<span className="fh-long"> invoices</span> · <b className="fl-num">{count(finance.heldInvoices.count)}</b> held
@@ -164,7 +170,7 @@ function KpiTiles() {
       color: "var(--lilac)",
       series: series.ar,
       good: "none",
-      delta: <Delta change={change(finance.trends.ar)} good="none" />,
+      delta: sinceDelta ?? <Delta change={change(finance.trends.ar)} good="none" />,
       foot: dso ? (
         <>
           DSO <b className="fl-num">{Math.round(dso)}</b> days
@@ -179,10 +185,10 @@ function KpiTiles() {
       color: "var(--yellow)",
       series: series.revenue,
       good: "up",
-      delta: <span className="fh-delta flat">30d {usdShort(finance.revenue30d)}</span>,
+      delta: sinceDelta ?? <span className="fh-delta flat">30d {usdShort(finance.revenue30d)}</span>,
       foot: (
         <>
-          Margin <b className="fl-num">{pct1(finance.grossMarginPct)}</b> · 30 days
+          Margin <b className="fl-num">{pct1(finance.grossMarginPct)}</b> · {since ? `since ${since}` : "30 days"}
         </>
       ),
     },
@@ -213,7 +219,7 @@ function KpiTiles() {
 /* ---------------------------- cash position ---------------------------- */
 
 function CashPanel() {
-  const { finance, snapshot, source } = useOps();
+  const { finance, snapshot, source, viewEpoch, now } = useOps();
   const [range, setRange] = useState<7 | 30>(30);
   const [hover, setHover] = useState<number | null>(null);
   const points = useMemo(() => finance.trends.cash.slice(-(range + 1)), [finance.trends.cash, range]);
@@ -226,6 +232,7 @@ function CashPanel() {
     <section className="fl-panel fh-cash" aria-label="Cash position">
       <header className="fl-panel-head">
         <span className="fl-section">Cash</span>
+        {viewEpoch.active && viewEpoch.epoch && <span className="fl-micro">Net since {fmtSince(viewEpoch.epoch.since, now)}</span>}
         <span className="fh-head-meta">
           {hovered && (
             <span className="fh-cash-hover fl-num">

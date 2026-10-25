@@ -28,6 +28,8 @@ import {
 } from "@/lib/live-queries";
 
 type ConnectionState = "connecting" | "live" | "fallback" | "offline";
+/** Whether an optional table (see `lib/live-queries`) exists on this module. */
+export type OptionalTableState = "pending" | "ready" | "absent";
 type LiveContext = {
   data: Snapshot;
   state: ConnectionState;
@@ -44,6 +46,8 @@ type LiveContext = {
   epoch: number;
   /** Append-only tables hold rows newer than `since` only (null: no window). */
   historyWindow: { minutes: number; since: string | null };
+  /** Optional tables on the live connection: absent on an older module or older bindings. */
+  optionalTables: Partial<Record<TableName, OptionalTableState>>;
   /**
    * Keep one case's full history live, whatever its age, until the returned
    * release function is called. Reference-counted per case id.
@@ -89,6 +93,9 @@ export function LiveProvider({
   const [lastUpdated, setLastUpdated] = useState(0);
   const [attempt, setAttempt] = useState(0);
   const [epoch, setEpoch] = useState(0);
+  const [optionalTables, setOptionalTables] = useState<
+    Partial<Record<TableName, OptionalTableState>>
+  >({});
   const [minutes] = useState(() => liveWindowMinutes());
   const [since, setSince] = useState<string | null>(() =>
     windowCutoff(Date.now(), minutes),
@@ -108,6 +115,7 @@ export function LiveProvider({
     const controller = new AbortController();
     connected.current = false;
     setState("connecting");
+    setOptionalTables({});
     const token = localStorage.getItem(tokenKey) ?? undefined;
     const fallback = async () => {
       if (disposed || ready || polling) return;
@@ -205,6 +213,8 @@ export function LiveProvider({
           };
           for (const name of plan.tables) {
             const table = tables[camel(name)];
+            // Bindings generated before an optional table existed have no handle for it.
+            if (!table) continue;
             const touch = () => {
               dirty.add(name);
               schedule();
@@ -266,6 +276,24 @@ export function LiveProvider({
           const failed = (message: string) =>
             lost(`Subscription unavailable: ${message}`);
           subscribe(plan.base, applied, failed);
+          // Each optional table alone: a module without it fails only that query.
+          const markOptional = (name: TableName, value: OptionalTableState) =>
+            setOptionalTables((prev) => ({ ...prev, [name]: value }));
+          for (const query of plan.optional) {
+            if (!tables[camel(query.table)]) {
+              markOptional(query.table, "absent");
+              continue;
+            }
+            markOptional(query.table, "pending");
+            subscribe(
+              [query],
+              () => {
+                markOptional(query.table, "ready");
+                bulkLoaded([query]);
+              },
+              () => markOptional(query.table, "absent"),
+            );
+          }
           let windowSub = plan.windowed.length
             ? subscribe(plan.windowed, applied, failed)
             : undefined;
@@ -367,9 +395,14 @@ export function LiveProvider({
       );
     const reducers = connection.current.reducers as unknown as Record<
       string,
-      (args: { payload: string }) => Promise<void>
+      ((args: { payload: string }) => Promise<void>) | undefined
     >;
-    await reducers[camel(name)]({
+    const reducer = reducers[camel(name)];
+    if (typeof reducer !== "function")
+      throw new Error(
+        `This dashboard's database bindings have no ${name} reducer yet. It needs a module update.`,
+      );
+    await reducer({
       payload: JSON.stringify({ ...payload, write_id: crypto.randomUUID() }),
     });
   }, []);
@@ -385,6 +418,7 @@ export function LiveProvider({
         lastUpdated,
         epoch,
         historyWindow: { minutes, since },
+        optionalTables,
         focusCase,
         reconnect: () => {
           retries.current = 0;

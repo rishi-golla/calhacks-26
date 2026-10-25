@@ -14,6 +14,11 @@
  *   - default ("auto"): use the database when it is live or has a fallback
  *     snapshot with rows; otherwise show the simulation so the product is
  *     never a blank page.
+ *
+ * "Start fresh": when a `view_epoch` is set, `snapshot` and every derived view
+ * are scoped to activity since it (lib/view-epoch), unless this viewer chose
+ * "Show earlier activity". `fullSnapshot` and `allCases` stay unscoped for the
+ * case page, so a direct link to an earlier case still opens.
  */
 import {
   createContext,
@@ -44,15 +49,57 @@ import {
 } from "@/lib/ops";
 import type { AgentId } from "@/lib/agents";
 import { caseIdFromPath } from "@/lib/live-queries";
+import {
+  readViewEpoch,
+  scopeEvents,
+  scopeSnapshot,
+  showEarlierApplies,
+  showEarlierValue,
+  SHOW_EARLIER_KEY,
+  viewScope,
+  type ViewEpoch,
+  type ViewScope,
+} from "@/lib/view-epoch";
 import { LiveProvider, useCaseFocus, useLive } from "./live-provider";
 
 export type DataSource = "live" | "fallback" | "simulation" | "connecting" | "offline";
 export type DataMode = "auto" | "live" | "sim";
 
 type EventListener = (events: LiveEvent[]) => void;
+type EventScope = { unscoped?: boolean };
+
+/**
+ * `ready`: Start fresh works here. `pending`: the live module is still being
+ * asked. `absent`: the module (or these bindings) predate `view_epoch`.
+ * `read-only`: not on a live connection. `observer`: this browser's identity
+ * has no human or admin role, so `set_view_epoch` would be refused.
+ */
+export type ViewEpochSupport = "ready" | "pending" | "absent" | "read-only" | "observer";
+
+export const OBSERVER_HINT = "Only the controller's dashboard can start fresh.";
+
+export type ViewEpochControl = {
+  /** The shared epoch (the simulation keeps its own), or null. */
+  epoch: ViewEpoch | null;
+  /** True when rows before the epoch are hidden for this viewer. */
+  active: boolean;
+  /** This viewer chose "Show earlier activity" for the current epoch. */
+  showEarlier: boolean;
+  setShowEarlier: (on: boolean) => void;
+  support: ViewEpochSupport;
+  /** Cases opened before the epoch kept because they were still in flight. */
+  carried: number;
+  /** Hide everything before now. Nothing is deleted. */
+  set: () => Promise<void>;
+  /** Remove the epoch for everyone. */
+  clear: () => Promise<void>;
+};
 
 type OpsContext = {
+  /** Rows in view: scoped to the "Start fresh" epoch when one applies. */
   snapshot: Snapshot;
+  /** Every row, whatever the epoch (the case page). */
+  fullSnapshot: Snapshot;
   source: DataSource;
   mode: DataMode;
   setMode: (mode: DataMode) => void;
@@ -67,16 +114,19 @@ type OpsContext = {
   databaseName: string;
   reconnect: () => void;
   mutate: (name: HumanReducer, payload: Row) => Promise<void>;
-  /** Subscribe to deltas between consecutive snapshots (for animation). */
-  subscribe: (listener: EventListener) => () => void;
+  /** Subscribe to deltas between consecutive snapshots (for animation); scoped unless `unscoped`. */
+  subscribe: (listener: EventListener, options?: EventScope) => () => void;
   /** Simulation controls (no-ops on live). */
   sim: {
     ratePerMinute: number;
     setRate: (perMinute: number) => void;
     inject: (scenario?: string) => string | null;
   };
+  viewEpoch: ViewEpochControl;
   /* Derived views, memoized on the snapshot. */
   cases: Map<string, CaseView>;
+  /** Every case, whatever the epoch (the case page). */
+  allCases: Map<string, CaseView>;
   caseList: CaseView[];
   workloads: Record<AgentId, AgentWorkload>;
   ops: OpsMetrics;
@@ -108,6 +158,7 @@ function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?:
   const [simRate, setSimRate] = useState(simOptions?.ratePerMinute ?? 8);
   const sim = useRef<DemoSim | null>(null);
   const listeners = useRef(new Set<EventListener>());
+  const unscopedListeners = useRef(new Set<EventListener>());
   const previous = useRef<Snapshot | null>(null);
   const seenEpoch = useRef(live.epoch);
   const mountedAt = useRef(Date.now());
@@ -175,45 +226,131 @@ function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [simulated]);
 
-  const snapshot = simulated ? simSnapshot : live.data;
+  const fullSnapshot = simulated ? simSnapshot : live.data;
 
-  // Emit deltas to subscribers.
+  /* -------- Start fresh: one scope for every view -------- */
+  const epoch = useMemo(() => readViewEpoch(fullSnapshot), [fullSnapshot]);
+  const [showEarlierFor, setShowEarlierFor] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      setShowEarlierFor(localStorage.getItem(SHOW_EARLIER_KEY));
+    } catch {
+      /* storage unavailable */
+    }
+  }, []);
+  const showEarlier = showEarlierApplies(showEarlierFor, epoch);
+  const setShowEarlier = useCallback(
+    (on: boolean) => {
+      const value = on && epoch ? showEarlierValue(epoch) : null;
+      setShowEarlierFor(value);
+      try {
+        if (value) localStorage.setItem(SHOW_EARLIER_KEY, value);
+        else localStorage.removeItem(SHOW_EARLIER_KEY);
+      } catch {
+        /* storage unavailable */
+      }
+    },
+    [epoch],
+  );
+  const since = epoch && !showEarlier ? epoch.since : undefined;
+  const scope = useMemo<ViewScope | null>(() => (since === undefined ? null : viewScope(fullSnapshot, since)), [fullSnapshot, since]);
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+  const previousScoped = useRef<Snapshot | null>(null);
+  const snapshot = useMemo(() => {
+    const next = scope ? scopeSnapshot(fullSnapshot, scope, previousScoped.current) : fullSnapshot;
+    previousScoped.current = scope ? next : null;
+    return next;
+  }, [fullSnapshot, scope]);
+  // `set_view_epoch` accepts the human and admin roles (as the legacy dashboard checks for flags).
+  const canWrite = useMemo(
+    () =>
+      Boolean(live.identity) &&
+      fullSnapshot.principal.some((row) => row.identity === live.identity && (row.role === "human" || row.role === "admin") && row.active !== false),
+    [fullSnapshot.principal, live.identity],
+  );
+  const support: ViewEpochSupport = simulated
+    ? "ready"
+    : source !== "live"
+      ? "read-only"
+      : live.optionalTables.view_epoch === "absent"
+        ? "absent"
+        : live.optionalTables.view_epoch !== "ready"
+          ? "pending"
+          : canWrite
+            ? "ready"
+            : "observer";
+  const liveMutate = live.mutate;
+  const changeEpoch = useCallback(
+    async (change: { clear?: true }) => {
+      if (simulated) {
+        if (!sim.current) return;
+        sim.current.setViewEpoch(change);
+        setSimSnapshot(sim.current.snapshot());
+        return;
+      }
+      if (support === "absent") throw new Error("Start fresh needs a module update: this database has no view_epoch table yet.");
+      if (support === "observer") throw new Error(OBSERVER_HINT);
+      await liveMutate("set_view_epoch", change);
+    },
+    [simulated, support, liveMutate],
+  );
+  const setEpochNow = useCallback(() => changeEpoch({}), [changeEpoch]);
+  const clearEpoch = useCallback(() => changeEpoch({ clear: true }), [changeEpoch]);
+  const viewEpoch = useMemo<ViewEpochControl>(
+    () => ({ epoch, active: since !== undefined, showEarlier, setShowEarlier, support, carried: scope?.carried.size ?? 0, set: setEpochNow, clear: clearEpoch }),
+    [epoch, since, showEarlier, setShowEarlier, support, scope, setEpochNow, clearEpoch],
+  );
+
+  // Emit deltas to subscribers. Diffs run on every row so a change of scope
+  // never replays history; each event is then scoped like the rows.
   useEffect(() => {
     // The first snapshot after mount or a source switch is history, not news:
     // emitting it would replay thousands of events into the animations. So is
     // a bulk load on the live connection (a case's history, the window sliding).
     const baseline = previous.current;
-    previous.current = snapshot;
+    previous.current = fullSnapshot;
     const bulk = !simulated && seenEpoch.current !== live.epoch;
     seenEpoch.current = live.epoch;
     if (!baseline || bulk) return;
-    const events = diffSnapshots(baseline, snapshot);
-    if (events.length) for (const l of listeners.current) l(events);
+    const events = diffSnapshots(baseline, fullSnapshot);
+    if (!events.length) return;
+    for (const l of unscopedListeners.current) l(events);
+    const scoped = scopeRef.current ? scopeEvents(events, scopeRef.current) : events;
+    if (scoped.length) for (const l of listeners.current) l(scoped);
     // live.epoch changes in the same render as the bulk-loaded snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot]);
+  }, [fullSnapshot]);
   // Reset diff baseline when the source flips so a switch does not replay history as "new".
   useEffect(() => {
     previous.current = null;
   }, [simulated]);
 
-  const subscribe = useCallback((listener: EventListener) => {
-    listeners.current.add(listener);
+  const subscribe = useCallback((listener: EventListener, options?: EventScope) => {
+    const set = options?.unscoped ? unscopedListeners.current : listeners.current;
+    set.add(listener);
     return () => {
-      listeners.current.delete(listener);
+      set.delete(listener);
     };
   }, []);
 
-  const cases = useMemo(() => buildCases(snapshot), [snapshot]);
+  // A case's view reads only its own rows, which scoping keeps whole, so the
+  // scoped map is a filter of the full one.
+  const allCases = useMemo(() => buildCases(fullSnapshot), [fullSnapshot]);
+  const cases = useMemo(
+    () => (scope ? new Map([...allCases].filter(([id]) => scope.cases.has(id))) : allCases),
+    [allCases, scope],
+  );
   const caseList = useMemo(() => [...cases.values()].sort((a, b) => b.openedAt - a.openedAt), [cases]);
-  const workloads = useMemo(() => buildWorkloads(snapshot, now), [snapshot, now]);
+  const workloads = useMemo(() => buildWorkloads(snapshot, now, { since }), [snapshot, now, since]);
   const ops = useMemo(() => buildOpsMetrics(snapshot, cases, now), [snapshot, cases, now]);
-  const finance = useMemo(() => buildFinance(snapshot, now), [snapshot, now]);
+  const finance = useMemo(() => buildFinance(snapshot, now, { ledgerOnly: since !== undefined }), [snapshot, now, since]);
   const attention = useMemo(() => buildAttention(snapshot, cases, now), [snapshot, cases, now]);
 
   const value = useMemo<OpsContext>(
     () => ({
       snapshot,
+      fullSnapshot,
       source,
       mode,
       setMode,
@@ -235,14 +372,16 @@ function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?:
         },
         inject: (scenario?: string) => (sim.current ? sim.current.inject(scenario as never) : null),
       },
+      viewEpoch,
       cases,
+      allCases,
       caseList,
       workloads,
       ops,
       finance,
       attention,
     }),
-    [snapshot, source, mode, setMode, simulated, now, live.lastUpdated, live.error, live.identity, live.serverUrl, live.databaseName, live.reconnect, live.mutate, subscribe, simRate, cases, caseList, workloads, ops, finance, attention],
+    [snapshot, fullSnapshot, source, mode, setMode, simulated, now, live.lastUpdated, live.error, live.identity, live.serverUrl, live.databaseName, live.reconnect, live.mutate, subscribe, simRate, viewEpoch, cases, allCases, caseList, workloads, ops, finance, attention],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
@@ -261,10 +400,13 @@ export function useOps(): OpsContext {
   return value;
 }
 
-/** Convenience: subscribe to live events with a stable handler. */
-export function useLiveEvents(handler: EventListener) {
+/**
+ * Convenience: subscribe to live events with a stable handler. Events are
+ * scoped to the "Start fresh" epoch unless `unscoped` (the case page).
+ */
+export function useLiveEvents(handler: EventListener, { unscoped = false }: EventScope = {}) {
   const { subscribe } = useOps();
   const ref = useRef(handler);
   ref.current = handler;
-  useEffect(() => subscribe((events) => ref.current(events)), [subscribe]);
+  useEffect(() => subscribe((events) => ref.current(events), { unscoped }), [subscribe, unscoped]);
 }

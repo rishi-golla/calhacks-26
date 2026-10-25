@@ -11,6 +11,9 @@
  *   cutoff is an ISO-8601 literal; every timestamp column in this schema is a
  *   UTC `...Z` string, so string order is time order.
  * - `none`: tables no view in this profile reads.
+ * - `optional`: tables only newer modules publish. Each is subscribed on its
+ *   own, so an older module that lacks one still loads everything else, and
+ *   reads as empty.
  *
  * A case page adds per-case queries (`caseQueries`) so its trace still shows
  * the case's whole history, whatever its age.
@@ -26,6 +29,7 @@ export type LiveProfile = "app" | "ops";
 export type TablePolicy =
   | { kind: "full" }
   | { kind: "none" }
+  | { kind: "optional" }
   | { kind: "window"; sql: (cutoff: string) => string };
 
 export const DEFAULT_WINDOW_MINUTES = 15;
@@ -53,6 +57,9 @@ const DOC_READ: TablePolicy = {
     `SELECT "doc_read".* FROM "doc_read" JOIN "task" ON "doc_read"."task_id" = "task"."task_id" WHERE "task"."updated_at" > ${sqlString(cutoff)}`,
 };
 
+/** Published by newer modules only (the shared "Start fresh" epoch). */
+const OPTIONAL = new Set<TableName>(["view_epoch"]);
+
 /** Read only by the legacy /ops views (audit workspace, outbox, learning, harness). */
 const OPS_ONLY = new Set<TableName>(["change_set", "cell_change", "routing_outbox", "llm_call", "memory_revision"]);
 
@@ -71,6 +78,7 @@ const OPS_WINDOWED: Partial<Record<TableName, TablePolicy>> = {
 export function tablePolicy(profile: LiveProfile, table: TableName): TablePolicy {
   if (table === "audit_event") return AUDIT;
   if (table === "doc_read") return DOC_READ;
+  if (OPTIONAL.has(table)) return { kind: "optional" };
   if (profile === "app" && OPS_ONLY.has(table)) return { kind: "none" };
   return (profile === "ops" && OPS_WINDOWED[table]) || { kind: "full" };
 }
@@ -110,17 +118,20 @@ export type SubscriptionPlan = {
   base: PlannedQuery[];
   /** Queries that depend on the cutoff and are re-issued as the window slides. */
   windowed: PlannedQuery[];
+  /** One query per optional table, each subscribed alone; a failure means "absent". */
+  optional: PlannedQuery[];
   /** Every table that has rows in this plan. */
   tables: TableName[];
 };
 
 export function subscriptionPlan(profile: LiveProfile, cutoff: string | null): SubscriptionPlan {
-  const plan: SubscriptionPlan = { base: [], windowed: [], tables: [] };
+  const plan: SubscriptionPlan = { base: [], windowed: [], optional: [], tables: [] };
   for (const table of TABLES) {
     const policy = tablePolicy(profile, table);
     if (policy.kind === "none") continue;
     plan.tables.push(table);
-    if (policy.kind === "window" && cutoff) plan.windowed.push({ table, sql: policy.sql(cutoff) });
+    if (policy.kind === "optional") plan.optional.push({ table, sql: all(table) });
+    else if (policy.kind === "window" && cutoff) plan.windowed.push({ table, sql: policy.sql(cutoff) });
     else plan.base.push({ table, sql: all(table) });
   }
   return plan;

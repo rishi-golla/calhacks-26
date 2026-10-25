@@ -184,7 +184,7 @@
 }
 .fl .cx-row {
   display: grid;
-  grid-template-columns: 120px minmax(200px, 1fr) 40px 112px 84px 132px 64px 172px;
+  grid-template-columns: 152px minmax(200px, 1fr) 40px 100px 84px 132px 64px 172px;
   align-items: center;
   gap: 0 12px;
   height: 48px;
@@ -791,6 +791,8 @@
   color: var(--text-dim);
 }
 .fl .ct-tool-name {
+  font-family: var(--font-body);
+  font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1278,7 +1280,7 @@
 
 @media (max-width: 1100px) {
   .fl .cx-row {
-    grid-template-columns: 120px minmax(160px, 1fr) 46px 110px 90px 120px 70px;
+    grid-template-columns: 152px minmax(160px, 1fr) 46px 100px 90px 120px 70px;
   }
   .fl .cx-row > :last-child {
     display: none;
@@ -1596,4 +1598,74 @@
   .fl .cf-body {
     max-height: 46vh;
   }
+}
+
+/* expandable rows (tool calls): the row itself opens to its payload */
+.fl .ct-expand {
+  margin-top: 0;
+}
+.fl .ct-expand > summary.ct-line {
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  align-items: center;
+}
+.fl .ct-expand > summary.ct-line:hover {
+  color: var(--text);
+}
+.fl .ct-expand > pre[data-label]::before {
+  content: attr(data-label);
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-mute);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.fl .ct-audit-fold .ct-audit {
+  margin-top: 8px;
+}
+.fl .ct-audit-fold .ct-audit li {
+  grid-template-columns: 58px minmax(0, 1fr);
+}
+
+/* explorer: rarely used filter groups folded behind one button (cx-more) */
+.fl .cx-more {
+  position: relative;
+}
+.fl .cx-more > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  padding: 5px 8px;
+}
+.fl .cx-more > summary::-webkit-details-marker {
+  display: none;
+}
+.fl .cx-more[open] > summary {
+  border-color: var(--line-strong);
+}
+.fl .cx-more[open] > summary:not(.on) {
+  color: var(--text);
+}
+/* positioned here; surface comes from .fl-popover */
+.fl .cx-more-panel {
+  top: calc(100% + 6px);
+  left: 0;
+  right: auto;
+  width: max-content;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fl .cx-more-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.fl .cx-more-group .cx-toggles {
+  align-self: flex-start;
 }

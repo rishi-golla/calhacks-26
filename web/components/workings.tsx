@@ -40,8 +40,8 @@ function Recheck({ w }: { w: Working }) {
   if (r.status === "unchecked") return null;
   if (r.status === "match")
     return (
-      <span className="wk-recheck ok" title="The dashboard recomputed this from the inputs shown and got the same result.">
-        ✓ recomputed
+      <span className="wk-recheck ok" title="Recomputed from the inputs shown: same result">
+        ✓
       </span>
     );
   return (
@@ -51,18 +51,20 @@ function Recheck({ w }: { w: Working }) {
   );
 }
 
-/** One working: label, substituted equation, symbolic formula, basis and sources. */
+/** One working: label, substituted equation (symbolic formula on hover), basis and sources. */
 export function WorkingRow({ working, nested = false }: { working: Working; nested?: boolean }) {
   const w = working;
   const parts = w.formula ? substituteFormula(w) : [];
   return (
     <div className={`wk-row ${nested ? "nested" : ""}`}>
       <div className="wk-head">
-        <span className="wk-label">{w.label}</span>
-        <BasisChip basis={w.basis} />
+        <span className="wk-label" title={w.basis && !isPolicyId(w.basis) ? w.basis : undefined}>
+          {w.label}
+        </span>
+        {isPolicyId(w.basis) && <BasisChip basis={w.basis} />}
         <Recheck w={w} />
       </div>
-      <div className="wk-eq fl-mono">
+      <div className="wk-eq fl-mono" title={w.formula || undefined}>
         {parts.length > 0 && (
           <>
             <span className="wk-expr">
@@ -83,11 +85,6 @@ export function WorkingRow({ working, nested = false }: { working: Working; nest
         )}
         <strong className={`wk-result ${w.unit === "bool" ? (w.result === true ? "yes" : w.result === false ? "no" : "") : ""}`}>{formatValue(w.result, w.unit)}</strong>
       </div>
-      {w.formula && (
-        <div className="wk-sym fl-mono" title="Formula as published by the agent">
-          {w.formula}
-        </div>
-      )}
       {w.evidence_refs.length > 0 && (
         <div className="wk-refs">
           {w.evidence_refs.map((r) => (
@@ -121,21 +118,32 @@ export function Workings({ items, title = "Shown work" }: { items: unknown; titl
   );
 }
 
-const compact = (value: unknown, unit: WorkingUnit) => {
+const brief = (value: unknown, unit: WorkingUnit) => {
   if (value === undefined) return "—";
   const numeric = typeof value === "number" || (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value)));
   return formatValue(value, numeric && unit !== "bool" ? unit : typeof value === "boolean" ? "bool" : "text");
 };
 
-/** One Validator check: result, name, severity, basis, expected vs actual, and its working when present. */
-export function CheckRow({ check }: { check: Check | Record<string, unknown> }) {
+/** One Validator check. Full form (failures): name, basis, expected vs actual and its working. Compact (passes): name only, detail on hover. */
+export function CheckRow({ check, compact = false }: { check: Check | Record<string, unknown>; compact?: boolean }) {
   // Accepts raw rows too: older rows lack severity/basis/work.
   const c = parseCheck(check);
   if (!c) return null;
   const work = c.work;
   const unit = work?.unit ?? "text";
-  const tone = c.severity === "advisory" ? "info" : c.ok ? "warn" : "bad";
   const showValues = c.expected !== undefined || c.actual !== undefined;
+  const hover = [c.basis, showValues ? `expected ${brief(c.expected, unit)} · actual ${brief(c.actual, unit)}` : ""].filter(Boolean).join("\n");
+  if (compact)
+    return (
+      <div className={`wk-check compact ${c.ok ? "ok" : "fail"} ${c.severity}`} title={hover || undefined}>
+        <div className="wk-check-head">
+          <span className="wk-glyph" aria-label={c.ok ? "passed" : "failed"}>
+            {c.ok ? "✓" : "✗"}
+          </span>
+          <span className="wk-check-name">{readableName(c.name)}</span>
+        </div>
+      </div>
+    );
   return (
     <div className={`wk-check ${c.ok ? "ok" : "fail"} ${c.severity}`}>
       <div className="wk-check-head">
@@ -145,16 +153,16 @@ export function CheckRow({ check }: { check: Check | Record<string, unknown> }) 
         <span className="wk-check-name" title={c.name}>
           {readableName(c.name)}
         </span>
-        <span className={`fl-chip outline wk-chip wk-sev ${tone}`}>{c.severity}</span>
+        {c.severity === "advisory" && <span className="fl-chip outline wk-chip wk-sev info">advisory</span>}
         <BasisChip basis={c.basis} />
       </div>
       {showValues && (
         <div className="wk-ea fl-mono">
           <span>
-            <span className="wk-ea-k">expected</span> {compact(c.expected, unit)}
+            <span className="wk-ea-k">expected</span> {brief(c.expected, unit)}
           </span>
           <span>
-            <span className="wk-ea-k">actual</span> {compact(c.actual, unit)}
+            <span className="wk-ea-k">actual</span> {brief(c.actual, unit)}
           </span>
         </div>
       )}
@@ -163,25 +171,24 @@ export function CheckRow({ check }: { check: Check | Record<string, unknown> }) 
   );
 }
 
-/** Checks with issues first and advisories folded into a collapsed group. */
+/** Failed checks in full, blocking ones first; everything that passed folded into one line. */
 export function CheckList({ checks }: { checks: unknown }) {
   const list = parseChecks(checks);
   if (!list.length) return null;
-  const issues = list.filter((c) => c.severity !== "advisory");
-  const advisories = list.filter((c) => c.severity === "advisory");
+  const failed = list.filter((c) => !c.ok).sort((a, b) => Number(a.severity === "advisory") - Number(b.severity === "advisory"));
+  const passed = list.filter((c) => c.ok);
   return (
     <div className="wk-checks">
-      {issues.map((c, i) => (
+      {failed.map((c, i) => (
         <CheckRow key={`${c.name}:${i}`} check={c} />
       ))}
-      {advisories.length > 0 && (
-        <details className="wk-advisories">
+      {passed.length > 0 && (
+        <details className="wk-advisories wk-passed">
           <summary>
-            Advisories <span className="wk-count">{advisories.length}</span>
-            {advisories.some((c) => !c.ok) && <span className="wk-adv-note">{advisories.filter((c) => !c.ok).length} not met</span>}
+            <span className="wk-passed-n">✓ {failed.length ? passed.length : `All ${passed.length}`}</span> passed
           </summary>
-          {advisories.map((c, i) => (
-            <CheckRow key={`${c.name}:${i}`} check={c} />
+          {passed.map((c, i) => (
+            <CheckRow key={`${c.name}:${i}`} check={c} compact />
           ))}
         </details>
       )}

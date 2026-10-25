@@ -38,6 +38,10 @@ export const shortDur = (ms: number) => {
   return `${Math.floor(s / 86_400)}d ${Math.floor((s % 86_400) / 3_600)}h`;
 };
 
+/** A tool call's name in plain words: "read_load_record" → "Read load record". */
+const TOOL_LABEL: Record<string, string> = { execute_current_skill: "Run workflow" };
+export const toolLabel = (name: string) => TOOL_LABEL[name] ?? name.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
+
 /** mm:ss (or h:mm:ss) for running timers and the scrubber readout. */
 export const timer = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -294,6 +298,12 @@ export function dispatchReason(reason: string): string {
   for (const [type, label] of Object.entries(EVENT_LABEL)) out = out.replaceAll(type, label.toLowerCase());
   return out.trim();
 }
+
+/** The routing reason worth showing: the router's delivery receipt says nothing, so it reads as no reason. */
+export const routingReason = (reason: string) => {
+  const out = dispatchReason(reason);
+  return /^delivered by dispatch worker$/i.test(out) ? "" : out;
+};
 
 /** A `not_routed` dispatch is a logged lifecycle event, not a routing decision. */
 export const isMilestone = (d: Row) => str(d.status, "") === "not_routed";

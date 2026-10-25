@@ -1,6 +1,6 @@
 "use client";
 /**
- * Activity panel for one node: a particle portrait of its mascot, status,
+ * Activity panel for one node: a particle portrait of its mascot, non-default status,
  * model, workload, its current tool calls, the cases it is working and its
  * last ten events.
  * Slides over the case explorer; hover previews, click pins.
@@ -77,7 +77,16 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, now, o
     for (const r of sub.delegation_edge) edges.add(str(r.task_id, ""));
     const timeline = buildTimeline(sub)
       .filter((e) => (e.agent === id || e.to === id) && !(e.kind === "delegation" && e.id.startsWith("audit:") && edges.has(e.taskId)))
-      .map((e) => (e.kind === "delegation" && e.from && e.to ? { ...e, title: `${agentLabel(e.from)} → ${agentLabel(e.to)}`, detail: skillLabel(e.detail) } : e));
+      .map((e) =>
+        e.kind === "delegation" && e.from && e.to
+          ? { ...e, title: `${agentLabel(e.from)} → ${agentLabel(e.to)}`, detail: skillLabel(e.detail) }
+          : // The routing reason and a started task's id are plumbing; the title already says what happened.
+            e.kind === "dispatch"
+            ? { ...e, title: `→ ${agentLabel(e.to)}`, detail: "" }
+            : e.kind === "task_started"
+              ? { ...e, title: skillLabel(e.row.skill ?? e.title), detail: "" }
+              : e,
+      );
     const activeIds = new Set(workload?.activeTasks.map((t) => t.taskId) ?? []);
     const calls = buildToolCalls(sub).filter((c) => activeIds.has(c.taskId));
     const open = calls.filter((c) => !c.endedAt);
@@ -105,10 +114,7 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, now, o
           <div className="fl-micro" style={{ color: meta.color }}>
             {meta.nick}
           </div>
-          <h2>{meta.name}</h2>
-          <div className="fl-dim" style={{ fontSize: 12, marginTop: 3 }}>
-            {meta.role}
-          </div>
+          <h2 title={meta.role}>{meta.name}</h2>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 4, alignSelf: "start" }}>
           <button className="fl-btn quiet small" onClick={onClose} aria-label="Close panel">
@@ -123,29 +129,16 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, now, o
       </header>
       <div className="au-panel-body">
         {workload && (
-          <section className="au-panel-sec">
-            <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 10 }}>
-              <span className={`fl-chip outline ${STATUS_CHIP[workload.status] ?? ""}`}>{workload.status}</span>
-              <span className="fl-chip">{workload.model}</span>
-              {!workload.enabled && <span className="fl-chip outline warn">disabled</span>}
-            </div>
-            <div className="au-kv">
-              <KV v={workload.active} k="Active" />
-              <KV v={workload.queued} k="Queued" />
-              {workload.stalled > 0 && <KV v={workload.stalled} k="Stalled" hot />}
-              <KV v={workload.done.toLocaleString()} k="Done" />
-              {workload.errors > 0 && <KV v={workload.errors} k="Errors" hot />}
-            </div>
-          </section>
+          <WorkloadSection workload={workload} />
         )}
         {id === "intake" && (
-          <section className="au-panel-sec">
-            <div className="au-kv">
-              <KV v={snapshot.case.filter((c) => c.status === "open").length} k="Awaiting" />
-              <KV v={snapshot.case.length.toLocaleString()} k="Cases" />
-              <KV v={snapshot.dispatch.filter((d) => now - timestamp(d.ts) < 300_000).length} k="Routed 5m" />
-            </div>
-          </section>
+          <KVSection
+            items={[
+              [snapshot.case.filter((c) => c.status === "open").length, "Awaiting"],
+              [snapshot.case.length, "Cases"],
+              [snapshot.dispatch.filter((d) => now - timestamp(d.ts) < 300_000).length, "Routed 5m"],
+            ]}
+          />
         )}
         {id === "human" && (
           <section className="au-panel-sec">
@@ -199,13 +192,12 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, now, o
             <div className="fl-section">Events</div>
             <ul className="au-events">
               {events.map((e) => (
-                <li key={e.id} style={{ "--accent": EVENT_ACCENT[e.kind] } as CSSProperties}>
+                <li key={e.id} style={{ "--accent": EVENT_ACCENT[e.kind] } as CSSProperties} title={e.kind.replaceAll("_", " ")}>
                   <i />
                   <div style={{ minWidth: 0 }}>
                     <div className="t">{e.title}</div>
-                    <div className="d">
-                      {e.kind.replace("_", " ")} · {e.caseId}
-                      {e.detail ? ` · ${e.detail}` : ""}
+                    <div className="d" title={e.caseId}>
+                      {[shortCase(e.caseId), e.detail].filter(Boolean).join(" · ")}
                     </div>
                   </div>
                   <time>{fmtAgo(e.at, now)}</time>
@@ -216,6 +208,62 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, now, o
         )}
       </div>
     </aside>
+  );
+}
+
+/** Workload counters with the zeros left out; status and model only when they are not the default. */
+function WorkloadSection({ workload }: { workload: AgentWorkload }) {
+  const chips = [
+    workload.status !== "idle" && (
+      <span key="s" className={`fl-chip outline ${STATUS_CHIP[workload.status] ?? ""}`}>
+        {workload.status}
+      </span>
+    ),
+    workload.model && workload.model !== "auto" && (
+      <span key="m" className="fl-chip">
+        {workload.model}
+      </span>
+    ),
+    !workload.enabled && (
+      <span key="d" className="fl-chip outline warn">
+        disabled
+      </span>
+    ),
+  ].filter(Boolean);
+  const items: [number, string, boolean?][] = [
+    [workload.active, "Active"],
+    [workload.queued, "Queued"],
+    [workload.stalled, "Stalled", true],
+    [workload.done, "Done"],
+    [workload.errors, "Errors", true],
+  ];
+  if (!chips.length && !items.some(([v]) => v > 0)) return null;
+  return (
+    <section className="au-panel-sec">
+      {chips.length > 0 && <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 10 }}>{chips}</div>}
+      <KVGrid items={items} />
+    </section>
+  );
+}
+
+function KVSection({ items }: { items: [number, string, boolean?][] }) {
+  if (!items.some(([v]) => v > 0)) return null;
+  return (
+    <section className="au-panel-sec">
+      <KVGrid items={items} />
+    </section>
+  );
+}
+
+function KVGrid({ items }: { items: [number, string, boolean?][] }) {
+  const shown = items.filter(([v]) => v > 0);
+  if (!shown.length) return null;
+  return (
+    <div className="au-kv">
+      {shown.map(([v, k, hot]) => (
+        <KV key={k} v={v.toLocaleString()} k={k} hot={hot} />
+      ))}
+    </div>
   );
 }
 

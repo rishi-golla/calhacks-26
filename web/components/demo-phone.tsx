@@ -58,15 +58,13 @@ export function DemoPhone() {
       <div className="demo-phone-heading">
         <span className="demo-phone-icon"><Phone size={22} aria-hidden="true" /></span>
         <div>
-          <span className="eyebrow">Dispatcher Outreach · Cartesia</span>
-          <h2 id="demo-phone-title">Hear your agents at work.</h2>
-          <p>A real AI demo call to your team phone. Demo calls can run outside business hours.</p>
+          <h2 id="demo-phone-title" title="Dispatcher Outreach · Cartesia">Demo call</h2>
         </div>
       </div>
       <div className="demo-phone-action">
         <div>
           <span className="demo-phone-label">Team phone</span>
-          <strong>{status?.destination_suffix ? `••• ••• ${status.destination_suffix}` : "Checking configured phone…"}</strong>
+          <strong>{status?.destination_suffix ? `••• ••• ${status.destination_suffix}` : "—"}</strong>
         </div>
         <button
           type="button"
@@ -79,28 +77,26 @@ export function DemoPhone() {
         </button>
       </div>
       <div className="demo-phone-status" role="status" aria-live="polite" aria-atomic="true">
-        {loading ? <p>Checking call readiness…</p> : null}
-        {!loading && status?.ready && !request ? <p>You can start another demo as soon as the previous call finishes.</p> : null}
+        {loading ? <p>Checking…</p> : null}
         {!loading && status && !status.ready && !action.active ? <p>{status.reason || "Demo calling is not available yet."}</p> : null}
         {request ? (
           <div>
             <p className="demo-phone-progress">
               {action.terminal ? <Check size={14} aria-hidden="true" /> : null}
               {request.state === "uncertain" && !request.retryable
-                ? "The call status is being reconciled. We’ll keep checking this request."
+                ? "Checking call status…"
                 : request.message || `Call ${(request.call_status || request.state).replaceAll("_", " ")}.`}
             </p>
-            {action.terminal && status?.ready ? <p>You can start another demo right away with the button above.</p> : null}
           </div>
         ) : null}
-        {action.retry && !error ? <p>Your saved call request is awaiting confirmation. Retry will use the same request.</p> : null}
+        {action.retry && !error ? <p>Awaiting confirmation; retry reuses the same request.</p> : null}
         {error ? <p className="error-text">{error}</p> : null}
       </div>
       <details className="demo-phone-guide">
-        <summary>Demo call guide <span>What to say</span></summary>
+        <summary>Script</summary>
         <div className="demo-phone-guide-body">
           <span className="demo-phone-guide-badge">Fictional demo data</span>
-          <p>You play the dispatcher at Sierra Valley Transport. Use these prompts in any order.</p>
+          <p>You’re the Sierra Valley Transport dispatcher. Any order.</p>
           <dl className="demo-phone-guide-facts">
             <div><dt>Load</dt><dd>GG-1042 · Oakland → Sacramento, CA</dd></div>
             <div><dt>Delivery</dt><dd>October 23, 2026 · 9:00 a.m. PDT</dd></div>
@@ -111,11 +107,10 @@ export function DemoPhone() {
             {DEMO_GUIDE.map((line) => (
               <li key={line.say}>
                 <strong>“{line.say}”</strong>
-                <p><span className="demo-phone-guide-label">Listen for:</span> {line.expect}</p>
+                <p>{line.expect}</p>
               </li>
             ))}
           </ol>
-          <p className="demo-phone-guide-note">This call gathers facts and requests missing evidence. It does not approve or send a payment.</p>
         </div>
       </details>
     </section>

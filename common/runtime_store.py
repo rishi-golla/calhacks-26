@@ -79,6 +79,9 @@ projections = Table(
     Column("task_id", String(36), nullable=False, index=True), Column("agent", String(80), nullable=False),
     Column("payload", Text, nullable=False), Column("delivered", Integer, nullable=False, default=0),
     Column("created_at", Float, nullable=False),
+    # The SpacetimeDB database (URL/name) a row is for; '' for rows queued before targets were recorded, which
+    # any database may receive. Added in place to existing tables by RuntimeStore.initialize.
+    Column("target", Text, nullable=False, default="", server_default=""),
 )
 
 
@@ -100,6 +103,45 @@ def digest(value: Any) -> str:
 
 def stable_id(*parts: str) -> str:
     return str(uuid.uuid5(NAMESPACE, canonical(list(parts))))
+
+
+def projection_target() -> str:
+    """The SpacetimeDB database activity is written to, as SpacetimeClient resolves it from the environment."""
+    url = os.getenv("SPACETIME_URL", "http://localhost:3000").rstrip("/")
+    return f"{url}/{os.getenv('SPACETIME_DB', 'freightops')}"
+
+
+def _add_missing_columns(sync_conn) -> None:
+    """Additive, in-place schema upgrades for tables create_all already made (it never alters them).
+
+    Adding `freight_projections.target` backfills every pending row in the same transaction: from the `_target`
+    an earlier build kept inside the payload, else the database this service is configured for now, which is where
+    the row would have been delivered without targets. Row IDs and write IDs are unchanged, so a write the reducer
+    already received stays idempotent."""
+    from sqlalchemy import inspect
+    columns = {column["name"] for column in inspect(sync_conn).get_columns(projections.name)}
+    if "target" in columns:
+        return
+    sync_conn.execute(text(f"ALTER TABLE {projections.name} ADD COLUMN target TEXT NOT NULL DEFAULT ''"))
+    current = projection_target()
+    rows = sync_conn.execute(select(projections.c.id, projections.c.payload).where(
+        projections.c.delivered == 0)).all()
+    for row_id, raw in rows:
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("_target"), str) and payload["_target"]:
+            target = payload.pop("_target")
+            sync_conn.execute(update(projections).where(projections.c.id == row_id).values(
+                target=target, payload=canonical(payload)))
+        else:
+            sync_conn.execute(update(projections).where(projections.c.id == row_id).values(target=current))
+
+
+def projection_row_id(write_id: str, target: str) -> str:
+    """One outbox row per (target, write_id): the same event may be owed to two databases."""
+    return stable_id("outbox", target, write_id) if target else write_id
 
 
 def task_id_for(agent: str, sender: str, case_id: str, key: str) -> str:
@@ -141,6 +183,7 @@ class RuntimeStore:
             if not self._initialized:
                 async with self.schema_lock(), self.engine.begin() as conn:
                     await conn.run_sync(metadata.create_all)
+                    await conn.run_sync(_add_missing_columns)
                 self._initialized = True
 
     @asynccontextmanager
@@ -390,25 +433,49 @@ class RuntimeStore:
         return [row for task_id in ids if (row := await self.get(task_id)) is not None]
 
     async def queue_projection(self, agent: str, payload: dict) -> None:
+        """Queue one activity row. A payload's `_target` names the database it is for (stored as a column, not
+        content); the row's identity is (target, write_id), so each database keeps its own ordered copy."""
         await self.initialize()
+        payload = dict(payload)
+        target = payload.pop("_target", "") or ""
+        row_id = projection_row_id(payload["write_id"], target)
         try:
             async with self.engine.begin() as conn:
-                await conn.execute(insert(projections).values(id=payload["write_id"], task_id=payload["task_id"],
-                    agent=agent, payload=canonical(payload), delivered=0, created_at=time.time()))
+                await conn.execute(insert(projections).values(id=row_id, task_id=payload["task_id"],
+                    agent=agent, payload=canonical(payload), delivered=0, created_at=time.time(), target=target))
         except IntegrityError:
             async with self.engine.connect() as conn:
                 previous = (await conn.execute(select(projections.c.payload).where(
-                    projections.c.id == payload["write_id"]))).scalar_one()
+                    projections.c.id == row_id))).scalar_one()
             if previous != canonical(payload):
                 raise IdempotencyConflict("projection key cannot be reused for a different event") from None
 
-    async def pending_projections(self, agent: str, task_id: str | None = None) -> list[dict]:
+    async def projection_exists(self, write_id: str, target: str = "") -> bool:
+        await self.initialize()
+        async with self.engine.connect() as conn:
+            return (await conn.execute(select(projections.c.id).where(
+                projections.c.id == projection_row_id(write_id, target)))).scalar_one_or_none() is not None
+
+    async def pending_projections(self, agent: str, task_id: str | None = None,
+                                  target: str | None = None) -> list[dict]:
+        """Undelivered rows in queue order; with `target`, only rows for it (and untargeted legacy rows)."""
         await self.initialize()
         query = select(projections).where(projections.c.agent == agent, projections.c.delivered == 0)
         if task_id:
             query = query.where(projections.c.task_id == task_id)
+        if target is not None:
+            query = query.where(projections.c.target.in_((target, "")))
         async with self.engine.connect() as conn:
             return [dict(row) for row in (await conn.execute(query.order_by(projections.c.created_at))).mappings()]
+
+    async def held_projections(self, agent: str, target: str) -> int:
+        """Undelivered rows owed to some other database, which this target never delivers."""
+        await self.initialize()
+        from sqlalchemy import func
+        async with self.engine.connect() as conn:
+            return (await conn.execute(select(func.count()).select_from(projections).where(
+                projections.c.agent == agent, projections.c.delivered == 0,
+                projections.c.target.not_in((target, ""))))).scalar_one()
 
     async def acknowledge_projection(self, projection_id: str) -> None:
         async with self.engine.begin() as conn:

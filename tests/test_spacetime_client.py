@@ -634,3 +634,21 @@ def test_journal_lines_normalizes_sql_triples_for_policy_and_reducers():
     assert spacetime.journal_lines([["cash", 1]]) == [["cash", 1]] and spacetime.journal_lines(None) is None
     assert policy.check("post_journal_entry", "controller", {"requested_by": "shipper_ar",
                         "lines": spacetime.journal_lines(stored)}).result == "allow"
+
+
+@pytest.mark.parametrize(("status", "body", "reason"), [
+    (530, "audit task does not exist", "audit task does not exist"),
+    (530, "summary must be a string of at most 4096 characters\n    at finish (operations.ts:94)",
+     "summary must be a string of at most 4096 characters"),
+    (530, "Bearer abc.def leaked", ""),
+    (530, "<html>" + "x" * 300, ""),
+    (500, "audit task does not exist", ""),
+])
+async def test_refused_reducer_keeps_only_a_bounded_module_reason(status, body, reason):
+    def handler(_request):
+        return httpx.Response(status, text=body)
+
+    with pytest.raises(spacetime.SpacetimeHTTPError) as error:
+        await client_with(handler, actor="validator").mutate("append_audit", {"write_id": "w"})
+    assert error.value.reason == reason
+    assert body not in str(error.value)

@@ -97,7 +97,22 @@ class SpacetimeHTTPError(SpacetimeError):
         }.get(status_code, "server" if status_code >= 500 else "rejected")
         self.may_have_committed = mutation and (
             status_code == 408 or (status_code >= 500 and status_code != REDUCER_REFUSED_STATUS))
+        # A refused reducer's own error text (module-authored, e.g. "audit task does not exist"), bounded and
+        # never part of str(self). Empty for every other status.
+        self.reason = ""
         super().__init__(f"SpacetimeDB HTTP {status_code} ({self.kind})")
+
+
+_REASON = re.compile(r"[A-Za-z0-9 _.,:;'()=/%+\-\u2013]{1,200}")
+_SECRETISH = re.compile(r"(?:bearer|token|secret|password|sk-|pk-|@)", re.IGNORECASE)
+
+
+def reducer_reason(body: str) -> str:
+    """The first line of a refused reducer's message when it is plain module text, else ''."""
+    line = (body or "").strip().splitlines()[0].strip() if (body or "").strip() else ""
+    if not _REASON.fullmatch(line) or _SECRETISH.search(line):
+        return ""
+    return line
 
 
 class SpacetimeProtocolError(SpacetimeError):
@@ -285,7 +300,10 @@ class SpacetimeClient:
                 may_have_committed=mutation and not definitely_not_sent,
             ) from None
         if not response.is_success:
-            raise SpacetimeHTTPError(response.status_code, mutation=mutation)
+            error = SpacetimeHTTPError(response.status_code, mutation=mutation)
+            if response.status_code == REDUCER_REFUSED_STATUS:
+                error.reason = reducer_reason(response.text)
+            raise error
         return response
 
     async def _stored_row(self, table: str, row_id: Any) -> dict[str, Any]:

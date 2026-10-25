@@ -56,6 +56,8 @@ def _meta_dict(message) -> dict:
 
 class FreightAgent(AgentExecutor):
     name: str = ""
+    # Environment settings live service readiness requires for this role.
+    live_required_env: tuple[str, ...] = ()
 
     def __init__(self, *, store: RuntimeStore | None = None):
         self.store = store or RuntimeStore()

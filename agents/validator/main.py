@@ -1,14 +1,18 @@
 from agents.validator.card import DESCRIPTIONS
 from agents.validator.tools import (
+    ISSUE,
+    brief,
     deterministic_review,
+    drafted_lesson,
     grounded_issues,
     instruction_proposal,
+    learned_line,
     load_review,
 )
 from common.agent_support import identifier, mutate
 from common.envelope import DelegationMeta, Lesson, ResultArtifact, TaskEnvelope
 from common.learning import reconstruct_instructions
-from common.providers import infer
+from common.providers import ProviderConfigurationError, ProviderError, infer
 from common.runtime import FreightAgent
 from common.server import serve
 from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError
@@ -59,6 +63,11 @@ class ValidatorAgent(FreightAgent):
             review.checks.append({"name": "qualitative_review", "ok": False, "severity": "advisory",
                                   "expected": "concerns anchored to checks or evidence", "actual": ungrounded,
                                   "basis": "unanchored model commentary never changes a verdict"})
+        draft = {}
+        if review.lessons:
+            draft = await self.step(task_id, "lesson_draft", lambda: self.draft_lesson(review_env, target, review))
+            for lesson in review.lessons:
+                lesson.text_or_diff = drafted_lesson(draft) or lesson.text_or_diff
         review_id = identifier(task_id, "review")
         receipts = []
         superseded = False
@@ -74,7 +83,8 @@ class ValidatorAgent(FreightAgent):
                     "scope": lesson.scope, "text": lesson.text_or_diff,
                     "source_ref": review_id, "active": True,
                 }))
-                outcome = await self.publish_instruction(env, task_id, bundle, db, lesson, review_id)
+                outcome = await self.publish_instruction(env, task_id, bundle, db, lesson, review_id,
+                                                         learned_line(draft))
                 if outcome["receipt"]:
                     receipts.append(outcome["receipt"])
                 if outcome["patch"]:
@@ -98,8 +108,27 @@ class ValidatorAgent(FreightAgent):
                       else "simulated" if bundle["simulated"] else "not_needed"},
             evidence_refs=refs, policy_ids=["P-012"], model_used=assessment.get("model_used"))
 
+    async def draft_lesson(self, env: TaskEnvelope, target: dict, review) -> dict:
+        """Model-drafted lesson and instruction line from the failed checks only.
+
+        The model sees check names, bounded expected/actual values and their basis, never the source
+        documents or earlier model commentary, so document text cannot steer what agents learn.
+        Any provider failure falls back to the code-generated lesson.
+        """
+        failed = [{"name": x["name"], "expected": brief(x["expected"]), "actual": brief(x["actual"]),
+                   "basis": x.get("basis", "")}
+                  for x in review.checks if not x["ok"] and x.get("severity") == ISSUE
+                  and x["name"] != "qualitative_review"][:12]
+        try:
+            result = await infer(self.name, env, {"reviewed_agent": target.get("agent"),
+                                                  "reviewed_skill": target.get("skill"),
+                                                  "failed_checks": failed}, purpose="lesson")
+        except (ProviderError, ProviderConfigurationError):
+            return {}
+        return result.get("assessment", {})
+
     async def publish_instruction(self, env, task_id: str, bundle: dict, db: SpacetimeClient,
-                                  lesson: Lesson, review_id: str) -> dict:
+                                  lesson: Lesson, review_id: str, line: str = "") -> dict:
         """Publish the code-generated reminder against the reviewed base version.
 
         The plan (patch + base version) is checkpointed so retries reuse the same write. If the
@@ -113,7 +142,7 @@ class ValidatorAgent(FreightAgent):
         async def prepare_instruction():
             history = [] if bundle["simulated"] else await db.get_instruction_history(agent)
             original, base_version = reconstruct_instructions(agent, history)
-            return {"patch": instruction_proposal(original), "base_version": base_version}
+            return {"patch": instruction_proposal(original, line), "base_version": base_version}
 
         async def publish():
             plan = await self.step(task_id, f"instruction_plan:{agent}", prepare_instruction)

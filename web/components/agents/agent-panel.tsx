@@ -4,11 +4,11 @@
  * model, workload, its current tool calls, the cases it is working, the
  * lessons it has learned from (or, for Settlement Quality Review, sent to)
  * other agents, and its last ten events.
- * Slides over the case explorer; hover previews, click pins.
+ * Slides over the case explorer when a node is clicked.
  */
 import Link from "next/link";
 import { useMemo, useState, type CSSProperties } from "react";
-import { Pin, X } from "lucide-react";
+import { X } from "lucide-react";
 import { Mascot, type Mood } from "@/components/mascot";
 import { AGENT_META, NODE_META, agentLabel, isAgentId, skillLabel, type AgentId, type NodeId } from "@/lib/agents";
 import { num, str, timestamp, type Row, type Snapshot } from "@/lib/data";
@@ -19,7 +19,6 @@ import { MascotPortrait, useWebGl2 } from "./mascot-portrait";
 
 type Props = {
   id: NodeId;
-  pinned: boolean;
   mood: Mood;
   snapshot: Snapshot;
   workload: AgentWorkload | undefined;
@@ -27,10 +26,7 @@ type Props = {
   cases: Map<string, CaseView>;
   now: number;
   onClose: () => void;
-  onPin: () => void;
   onCase: (caseId: string) => void;
-  onEnter: () => void;
-  onLeave: () => void;
 };
 
 /** Newest `n` rows by a timestamp field, without assuming table order. */
@@ -58,7 +54,7 @@ const EVENT_ACCENT: Partial<Record<TimelineEvent["kind"], string>> = {
 
 const STATUS_CHIP: Record<string, string> = { working: "ok", idle: "info", offline: "", stale: "warn", error: "bad" };
 
-export function AgentPanel({ id, pinned, mood, snapshot, workload, lessons, cases, now, onClose, onPin, onCase, onEnter, onLeave }: Props) {
+export function AgentPanel({ id, mood, snapshot, workload, lessons, cases, now, onClose, onCase }: Props) {
   const meta = isAgentId(id) ? AGENT_META[id] : NODE_META[id as "intake" | "human"];
   // The human controller has no generated character, so it keeps the flat blob.
   const [portraitFailed, setPortraitFailed] = useState(false);
@@ -109,7 +105,7 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, lessons, case
   const activeCases = id === "human" ? approvals.map((a) => str(a.case_id, "")) : id === "intake" ? [] : (workload?.activeCases ?? []);
 
   return (
-    <aside className="au-panel" aria-label={`${meta.name} activity`} onPointerEnter={onEnter} onPointerLeave={onLeave}>
+    <aside className="au-panel" aria-label={`${meta.name} activity`}>
       {portrait && <MascotPortrait id={id} onError={() => setPortraitFailed(true)} />}
       <header className={`au-panel-head${portrait ? " no-mascot" : ""}`} style={{ "--c": meta.color } as CSSProperties}>
         {!portrait && <Mascot id={id} mood={mood} size={58} />}
@@ -119,16 +115,9 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, lessons, case
           </div>
           <h2 title={meta.role}>{meta.name}</h2>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, alignSelf: "start" }}>
-          <button className="fl-btn quiet small" onClick={onClose} aria-label="Close panel">
-            <X size={14} />
-          </button>
-          {!pinned && (
-            <button className="fl-btn quiet small" onClick={onPin} aria-label="Pin panel" title="Pin">
-              <Pin size={13} />
-            </button>
-          )}
-        </div>
+        <button className="fl-btn quiet small" onClick={onClose} aria-label="Close panel" style={{ alignSelf: "start" }}>
+          <X size={14} />
+        </button>
       </header>
       <div className="au-panel-body">
         {workload && (

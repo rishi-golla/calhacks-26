@@ -144,7 +144,8 @@ export default function AgentUniverse() {
     if (id) setSelectedCase(id);
   }, []);
   const [hover, setHover] = useState<NodeId | null>(null);
-  const [pinned, setPinned] = useState<NodeId | null>(null);
+  /** The node whose panel is open; only a click opens it, hover just highlights. */
+  const [opened, setOpened] = useState<NodeId | null>(null);
   const hoverTimer = useRef(0);
 
   useEffect(() => {
@@ -262,14 +263,13 @@ export default function AgentUniverse() {
     window.clearTimeout(hoverTimer.current);
     hoverTimer.current = window.setTimeout(() => setHover(id), id ? 160 : 280);
   }, []);
-  const holdHover = useCallback(() => window.clearTimeout(hoverTimer.current), []);
-  const onSelectNode = useCallback((id: NodeId) => setPinned((p) => (p === id ? null : id)), []);
+  const onSelectNode = useCallback((id: NodeId) => setOpened((p) => (p === id ? null : id)), []);
   const onChip = useCallback((caseId: string) => setSelectedCase((c) => (c === caseId ? "" : caseId)), []);
   useEffect(() => () => window.clearTimeout(hoverTimer.current), []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      setPinned(null);
+      setOpened(null);
       setHover(null);
       setSelectedCase("");
     };
@@ -277,8 +277,8 @@ export default function AgentUniverse() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const panelId = pinned ?? hover;
-  const focus = panelId;
+  const panelId = opened;
+  const focus = opened ?? hover;
 
   /* ---------- node views ---------- */
 
@@ -432,7 +432,6 @@ export default function AgentUniverse() {
           <AgentPanel
             key={panelId}
             id={panelId}
-            pinned={pinned === panelId}
             mood={views.find((v) => v.id === panelId)?.mood ?? "idle"}
             snapshot={snapshot}
             workload={isAgentId(panelId) ? workloads[panelId] : undefined}
@@ -440,13 +439,10 @@ export default function AgentUniverse() {
             cases={cases}
             now={now}
             onClose={() => {
-              setPinned(null);
+              setOpened(null);
               setHover(null);
             }}
-            onPin={() => setPinned(panelId)}
             onCase={onChip}
-            onEnter={holdHover}
-            onLeave={() => !pinned && onHover(null)}
           />
         )}
       </section>

@@ -4,8 +4,10 @@
  * (scaleX / scaleY from 0, quint.inOut, staggered), wordmark fade, then the
  * overlay lifts. Plays on every full page load (a refresh or a typed URL), not
  * on in-app navigation, since the shell stays mounted. Skipped under reduced
- * motion, or when sessionStorage `freightline.intro.v1` is "1" (screenshot and
- * test scripts set it to land on the page directly).
+ * motion, or when sessionStorage `freightline.intro.skip` is "1" (screenshot and
+ * test scripts set it to land on the page directly). Not the old
+ * `freightline.intro.v1`, which earlier builds wrote after playing and which
+ * still sits in long-lived tabs.
  * `onDone` fires when the overlay starts lifting (or at once when skipped).
  *
  * The whole screen sits inside Canvas UI's Grid, so on Chrome with
@@ -18,7 +20,7 @@ import gsap from "gsap";
 import { Grid } from "@/components/canvasui/Grid";
 
 /** Opt-out for automation; the intro itself never sets it. */
-const SKIP_KEY = "freightline.intro.v1";
+const SKIP_KEY = "freightline.intro.skip";
 const COLS = 8;
 const ROWS = 5;
 /** Teal accent as 0..1 RGB for the lifted-tile tint. */

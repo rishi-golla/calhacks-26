@@ -1080,3 +1080,13 @@ a.fh-tick-text:hover {
     transition: none;
   }
 }
+
+/* "since" on each tile only where the top bar has no room for it (it hides there at 480px). */
+.fh-since-narrow {
+  display: none;
+}
+@media (max-width: 480px) {
+  .fh-since-narrow {
+    display: inline-flex;
+  }
+}

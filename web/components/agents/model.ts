@@ -169,6 +169,26 @@ const TOOL_DOING: Record<string, string> = {
   delegate_specialist: "Handing off",
   integration_availability: "Checking integrations",
   lookup_carrier_authority: "Looking up carrier authority",
+  // Simulation (lib/demo-sim) tool names that are nouns rather than verbs.
+  duplicate_check: "Checking for duplicates",
+  get_case_evidence: "Gathering case evidence",
+  gps_geofence_check: "Checking GPS geofence",
+  detention_calc: "Calculating detention",
+  receipt_lookup: "Looking up receipts",
+  anomaly_score: "Scoring anomalies",
+  fmcsa_lookup: "Looking up FMCSA record",
+  scrape_company: "Researching company",
+  directory_lookup: "Checking directory",
+  hold_ledger_check: "Checking holds",
+  policy_check: "Checking policy",
+  load_margin: "Calculating load margin",
+  cash_forecast_update: "Updating cash forecast",
+  collections_timing: "Timing collections",
+  transcript_extract: "Reading call transcript",
+  deterministic_checks: "Running checks",
+  friction_review: "Reviewing friction",
+  remittance_parse: "Parsing remittance",
+  aging_lookup: "Checking AR aging",
 };
 const VERBS = new Set([
   "read", "calculate", "match", "inspect", "check", "find", "audit", "verify", "review", "fetch", "search", "compute", "score",
@@ -209,20 +229,23 @@ export function agentActivity(snapshot: Snapshot, workloads: Record<AgentId, Age
   for (const id of AGENT_IDS) for (const t of workloads[id].activeTasks) live.add(t.taskId);
   if (!live.size) return {};
   const rows = snapshot.audit_event.filter((r) => r.kind === "tool_call" && live.has(str(r.task_id, "")));
-  const open = new Map<string, { name: string; status: string; at: number }>();
+  type Step = { name: string; status: string; at: number; running: boolean };
+  // A running call always beats a finished one still in its hold; among equals the newest wins.
+  const better = (a: Step, b: Step | undefined) => !b || (a.running !== b.running ? a.running : a.at > b.at);
+  const open = new Map<string, Step>();
   for (const c of buildToolCalls({ ...snapshot, audit_event: rows })) {
     if (c.endedAt && now - c.endedAt > ACTIVITY_HOLD_MS) continue;
-    const prev = open.get(c.taskId);
-    if (!prev || c.startedAt > prev.at) open.set(c.taskId, { name: c.name, status: c.status, at: c.startedAt });
+    const step: Step = { name: c.name, status: c.status, at: c.startedAt, running: !c.endedAt };
+    if (better(step, open.get(c.taskId))) open.set(c.taskId, step);
   }
   const out: Partial<Record<AgentId, Activity>> = {};
   for (const id of AGENT_IDS) {
     const tasks = workloads[id].activeTasks;
     if (!tasks.length) continue;
-    let best: { name: string; status: string; at: number } | undefined;
+    let best: Step | undefined;
     for (const t of tasks) {
       const c = open.get(t.taskId);
-      if (c && (!best || c.at > best.at)) best = c;
+      if (c && better(c, best)) best = c;
     }
     const doing = !best ? "Thinking…" : best.status === "waiting" ? "Waiting" : toolDoing(best.name);
     out[id] = { text: doing, more: tasks.length - 1, thinking: !best };

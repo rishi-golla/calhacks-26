@@ -12,6 +12,7 @@ import { useSearchParams } from "next/navigation";
 import { useOps } from "@/components/data-provider";
 import { ShowWork } from "@/components/show-work";
 import { dsoWorkings, marginWorkings } from "@/lib/show-work";
+import { fmtSince } from "@/lib/view-epoch";
 import { AttentionQueue } from "./attention-queue";
 import { CashFlowBars, LineChart, Sparkline } from "./charts";
 import { CountUp } from "./count-up";
@@ -68,9 +69,11 @@ function Delta({ change: c, good }: { change: { abs: number; pct: number | null 
 }
 
 function KpiTiles() {
-  const { finance, snapshot, source } = useOps();
+  const { finance, snapshot, source, now } = useOps();
   // After "Start fresh" (with no imported history) the tiles total ledger activity since the epoch, named once in the top bar, so no 30d deltas.
   const scoped = finance.since !== null;
+  // Phones hide the top bar's "since" label for room, so there the tiles carry it.
+  const sinceBadge = scoped ? <span className="fh-delta flat fh-since-narrow">since {fmtSince(finance.since!, now)}</span> : null;
   const hasLedger = snapshot.ledger_entry.length > 0;
   const series = useMemo(
     () => ({
@@ -92,7 +95,7 @@ function KpiTiles() {
       color: "var(--teal)",
       series: series.cash,
       good: "up",
-      delta: scoped ? null : <Delta change={cashChange} good="up" />,
+      delta: scoped ? sinceBadge : <Delta change={cashChange} good="up" />,
     },
     {
       key: "ap",
@@ -102,7 +105,7 @@ function KpiTiles() {
       color: "var(--aqua)",
       series: series.ap,
       good: "none",
-      delta: scoped ? null : <Delta change={change(finance.trends.ap)} good="none" />,
+      delta: scoped ? sinceBadge : <Delta change={change(finance.trends.ap)} good="none" />,
       foot: (
         <>
           <b className="fl-num">{count(finance.outstandingInvoices.count)}</b> open
@@ -123,7 +126,7 @@ function KpiTiles() {
       color: "var(--lilac)",
       series: series.ar,
       good: "none",
-      delta: scoped ? null : <Delta change={change(finance.trends.ar)} good="none" />,
+      delta: scoped ? sinceBadge : <Delta change={change(finance.trends.ar)} good="none" />,
       // Days of sales outstanding needs a 30-day revenue base, which an epoch does not give.
       foot: dso && !scoped ? (
         <>
@@ -141,7 +144,7 @@ function KpiTiles() {
       color: "var(--yellow)",
       series: series.revenue,
       good: "up",
-      delta: scoped ? null : <span className="fh-delta flat">30d {usdShort(finance.revenue30d)}</span>,
+      delta: scoped ? sinceBadge : <span className="fh-delta flat">30d {usdShort(finance.revenue30d)}</span>,
       foot: (
         <ShowWork workings={marginWorkings(finance, scoped ? "since the fresh start" : "last 30 days")} title="Gross margin">
           Margin <b className="fl-num">{pct1(finance.grossMarginPct)}</b>

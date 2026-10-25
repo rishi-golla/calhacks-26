@@ -502,7 +502,13 @@ function MoreFilters({ count, children }: { count: number; children: React.React
     const close = (e: PointerEvent | KeyboardEvent) => {
       const el = ref.current;
       if (!el?.open) return;
-      if (e instanceof KeyboardEvent ? e.key === "Escape" : !el.contains(e.target as Node)) el.open = false;
+      if (e instanceof KeyboardEvent) {
+        if (e.key !== "Escape") return;
+        // This Escape belongs to the open panel: keep it from also closing the Log, and give focus back to the button.
+        e.stopPropagation();
+        el.open = false;
+        el.querySelector("summary")?.focus();
+      } else if (!el.contains(e.target as Node)) el.open = false;
     };
     document.addEventListener("pointerdown", close);
     document.addEventListener("keydown", close);
@@ -513,7 +519,7 @@ function MoreFilters({ count, children }: { count: number; children: React.React
   }, []);
   return (
     <details className="cx-more" ref={ref}>
-      <summary className={`cx-toggle cx-more-btn ${count ? "on" : ""}`} aria-label="More filters" title="Type, needs you, agents handling">
+      <summary className={`cx-toggle cx-more-btn ${count ? "on" : ""}`} aria-label={count ? `More filters, ${count} on` : "More filters"} title="Type, needs you, agents handling">
         <SlidersHorizontal size={12} aria-hidden />
         {count ? count : null}
       </summary>

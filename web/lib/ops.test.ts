@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { emptySnapshot, type Row, type Snapshot } from "./data";
 import {
+  attentionAudience,
   buildAttention,
   buildCases,
   buildFinance,
+  buildOpsMetrics,
   buildTimeline,
   buildToolCalls,
   buildWorkloads,
@@ -13,7 +15,10 @@ import {
   fmtDuration,
   fmtMoney,
   intakeArriving,
+  needsPerson,
   taskView,
+  waitNote,
+  type AttentionItem,
 } from "./ops";
 
 const NOW = Date.parse("2026-10-24T12:00:00.000Z");
@@ -98,6 +103,134 @@ test("buildCases derives every attention kind", () => {
     hold: [{ id: "H1", case_id: "C1", status: "released" }],
   });
   assert.deepEqual(buildCases(clean).get("C1")!.attention, []);
+  // A task parked with no business status may be waiting on anyone: it needs you.
+  assert.deepEqual(buildCases(s).get("C1")!.needsYou, ["approval_pending", "task_failed", "input_required", "flag_open", "review_issue", "call_no_answer"]);
+  assert.deepEqual(buildCases(s).get("C1")!.agentsHandling, ["hold_active"]);
+});
+
+/* ----------------------- who acts: person or agents ----------------------- */
+
+test("attentionAudience: every kind but a hold needs a person", () => {
+  const person: AttentionItem["kind"][] = ["approval_pending", "task_failed", "policy_deny", "flag_open", "review_issue", "call_no_answer", "stale_agent"];
+  for (const kind of person) assert.equal(attentionAudience(kind), "person", kind);
+  assert.equal(attentionAudience("hold_active"), "agents");
+  // Kinds other than input_required ignore the task's status.
+  assert.equal(attentionAudience("task_failed", "awaiting_other_agent"), "person");
+});
+
+test("attentionAudience: input_required follows the business status", () => {
+  const table: [string, "person" | "agents"][] = [
+    ["awaiting_other_agent", "agents"],
+    ["awaiting_call", "agents"],
+    ["awaiting_external_verification", "agents"],
+    ["awaiting_invoice", "agents"],
+    ["awaiting_human_approval", "person"],
+    ["awaiting_human", "person"],
+    ["awaiting_approval", "person"],
+    // Unknown, empty and non-waiting statuses fall back to a person, so nothing is hidden.
+    ["awaiting_something_new", "person"],
+    ["investigating", "person"],
+    ["", "person"],
+  ];
+  for (const [status, audience] of table) assert.equal(attentionAudience("input_required", status, "input-required"), audience, status);
+  // auth-required asks for credentials: a person, whatever the status says.
+  assert.equal(attentionAudience("input_required", "awaiting_other_agent", "auth-required"), "person");
+});
+
+test("waitNote words each wait plainly", () => {
+  assert.equal(waitNote("awaiting_other_agent", ["risk"]), "Waiting on Scout");
+  assert.equal(waitNote("awaiting_other_agent", ["risk", "documents"]), "Waiting on Scout and Paper");
+  assert.equal(waitNote("awaiting_other_agent", ["risk", "documents", "controller", "cfo"]), "Waiting on Scout, Paper and 2 more");
+  assert.equal(waitNote("awaiting_other_agent", []), "Waiting on another agent");
+  assert.equal(waitNote("awaiting_other_agent", ["risk"], (id) => id.toUpperCase()), "Waiting on RISK");
+  assert.equal(waitNote("awaiting_call"), "Waiting on a call");
+  assert.equal(waitNote("awaiting_external_verification"), "Waiting on outside documents");
+  assert.equal(waitNote("awaiting_invoice"), "Waiting on the carrier invoice");
+});
+
+test("buildAttention splits items by audience and names who a parent waits on", () => {
+  const s = snap({
+    case: [{ case_id: "C1", title: "Case one" }],
+    task: [
+      // Parent parked on a running child.
+      task({ task_id: "P1", a2a_state: "input-required", business_status: "awaiting_other_agent", updated_at: at(-10) }),
+      task({ task_id: "K1", parent_task_id: "P1", agent: "risk", skill: "audit_accessorials", a2a_state: "working" }),
+      // Parent whose delegation is recorded but whose child has no task row yet.
+      task({ task_id: "P2", agent: "shipper_ar", skill: "chase_overdue", a2a_state: "input-required", business_status: "awaiting_other_agent", updated_at: at(-20) }),
+      // Parent with nothing in the snapshot to say who it waits on.
+      task({ task_id: "P3", a2a_state: "input-required", business_status: "awaiting_other_agent", updated_at: at(-30) }),
+      // A task parked on a person.
+      task({ task_id: "H1", agent: "controller", skill: "review_hold", a2a_state: "input-required", business_status: "awaiting_human", updated_at: at(-5) }),
+      task({ task_id: "V1", agent: "voice_desk", skill: "place_call", a2a_state: "input-required", business_status: "awaiting_call", updated_at: at(-40) }),
+    ],
+    delegation_edge: [{ id: "e1", case_id: "C1", task_id: "K9", parent_task_id: "P2", from_agent: "shipper_ar", to_agent: "voice_desk", ts: at(-21) }],
+    hold: [{ id: "HD1", case_id: "C1", invoice_id: "INV-1", status: "active", placed_by: "controller", reason_code: "UNSUPPORTED_ACCESSORIAL", amount: 300, placed_at: at(-2) }],
+  });
+  const items = buildAttention(s, buildCases(s), NOW);
+  const byId = new Map(items.map((i) => [i.id, i]));
+  assert.deepEqual(items.filter(needsPerson).map((i) => i.id), ["input:H1"]);
+  assert.equal(byId.get("input:H1")!.title, "review hold needs input");
+  assert.equal(byId.get("input:H1")!.detail, "awaiting human");
+
+  const p1 = byId.get("input:P1")!;
+  assert.equal(p1.audience, "agents");
+  assert.deepEqual(p1.waitingOn, ["risk"]);
+  assert.equal(p1.title, "process carrier invoice");
+  assert.equal(p1.detail, "Waiting on Scout");
+  assert.deepEqual(byId.get("input:P2")!.waitingOn, ["voice_desk"]);
+  assert.equal(byId.get("input:P2")!.detail, "Waiting on Ringo");
+  assert.equal(byId.get("input:P3")!.detail, "Waiting on another agent");
+  assert.equal(byId.get("input:V1")!.detail, "Waiting on a call");
+
+  const hold = byId.get("hold:HD1")!;
+  assert.equal(hold.audience, "agents");
+  assert.equal(hold.title, "Hold on INV-1");
+  assert.equal(hold.detail, "Held by Stamp · unsupported accessorial");
+});
+
+test("buildAttention: a parent whose children all finished names the agent it delegated to last", () => {
+  const s = snap({
+    case: [{ case_id: "C1" }],
+    task: [
+      task({ task_id: "P1", a2a_state: "input-required", business_status: "awaiting_other_agent" }),
+      task({ task_id: "K1", parent_task_id: "P1", agent: "risk", a2a_state: "completed", started_at: at(1) }),
+      task({ task_id: "K2", parent_task_id: "P1", agent: "documents", a2a_state: "failed", started_at: at(2) }),
+    ],
+    delegation_edge: [
+      { id: "e1", task_id: "K1", parent_task_id: "P1", to_agent: "risk", ts: at(1) },
+      { id: "e2", task_id: "K2", parent_task_id: "P1", to_agent: "documents", ts: at(2) },
+    ],
+  });
+  const parent = buildAttention(s, buildCases(s), NOW).find((i) => i.id === "input:P1")!;
+  assert.deepEqual(parent.waitingOn, ["documents"]);
+});
+
+test("cases count as needing you only for items a person must act on", () => {
+  const s = snap({
+    case: [
+      { case_id: "AGENTS", status: "in_progress" },
+      { case_id: "PERSON", status: "in_progress" },
+      { case_id: "BOTH", status: "in_progress" },
+      { case_id: "DONE", status: "resolved" },
+    ],
+    task: [
+      task({ task_id: "A1", case_id: "AGENTS", a2a_state: "input-required", business_status: "awaiting_other_agent" }),
+      task({ task_id: "P1", case_id: "PERSON", a2a_state: "input-required", business_status: "awaiting_human_approval" }),
+      task({ task_id: "B1", case_id: "BOTH", a2a_state: "input-required", business_status: "awaiting_call" }),
+      task({ task_id: "B2", case_id: "BOTH", a2a_state: "input-required", business_status: "something_unknown" }),
+      task({ task_id: "D1", case_id: "DONE", a2a_state: "input-required", business_status: "awaiting_human" }),
+    ],
+    hold: [{ id: "H1", case_id: "AGENTS", status: "active" }],
+  });
+  const cases = buildCases(s);
+  assert.deepEqual(cases.get("AGENTS")!.needsYou, []);
+  assert.deepEqual(cases.get("AGENTS")!.agentsHandling, ["input_required", "hold_active"]);
+  assert.deepEqual(cases.get("PERSON")!.needsYou, ["input_required"]);
+  assert.deepEqual(cases.get("PERSON")!.agentsHandling, []);
+  assert.deepEqual(cases.get("BOTH")!.needsYou, ["input_required"]);
+  assert.deepEqual(cases.get("BOTH")!.agentsHandling, ["input_required"]);
+  // Resolved cases never count.
+  assert.equal(buildOpsMetrics(s, cases, NOW).casesNeedingYou, 2);
 });
 
 test("buildTimeline orders events by time and maps audit kinds", () => {
@@ -381,6 +514,7 @@ test("buildAttention puts critical approvals first and sorts by severity then re
   });
   const items = buildAttention(s, buildCases(s), NOW);
   assert.deepEqual(items.map((i) => i.id), ["approval:A2", "approval:A1", "failed:T1", "hold:H1"]);
+  assert.deepEqual(items.map((i) => i.audience), ["person", "person", "person", "agents"]);
   assert.deepEqual(items.map((i) => i.severity), ["critical", "high", "high", "low"]);
   assert.equal(items[3].amount, 40);
   assert.equal(items[0].detail, "Case one");

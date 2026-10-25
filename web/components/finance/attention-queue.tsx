@@ -1,10 +1,12 @@
 "use client";
 /**
- * Needs-attention queue: everything that is waiting on a person, grouped by
- * kind, severity-colored, each row linking to its case. Approvals can be
- * decided inline on the live database (one-time code required, as in the ops
- * console); elsewhere the buttons stay visible but disabled, with one note on
- * the group heading.
+ * Work queue: every open item, split by who has to act. "Needs you" lists what
+ * is waiting on a person, grouped by kind, severity-colored; "Agents handling"
+ * lists, quietly, what the agents are working out between themselves (a parent
+ * waiting on its delegated child, an agent-placed hold). Each row links to its
+ * case. Approvals can be decided inline on the live database (one-time code
+ * required, as in the ops console); elsewhere the buttons stay visible but
+ * disabled, with one note on the group heading.
  */
 import Link from "next/link";
 import { useMemo, useState, type CSSProperties, type FormEvent } from "react";
@@ -13,7 +15,7 @@ import { useOps } from "@/components/data-provider";
 import { Mascot, moodForStatus, type Mood } from "@/components/mascot";
 import { isAgentId } from "@/lib/agents";
 import { str } from "@/lib/data";
-import { fmtAgo, type AttentionItem } from "@/lib/ops";
+import { fmtAgo, needsPerson, type AttentionItem } from "@/lib/ops";
 import { emptyNote, nick, usd } from "./format";
 import { useFresh, useSettled } from "./fresh";
 
@@ -46,36 +48,58 @@ const LIVE_ONLY = "Approvals need a live connection";
 export function AttentionQueue({ id }: { id?: string }) {
   const { attention, source } = useOps();
   const [filter, setFilter] = useState<Kind | "all">("all");
-  const [expanded, setExpanded] = useState<Set<Kind>>(new Set());
+  const [expanded, setExpanded] = useState<Set<Kind | "agents">>(new Set());
   // Rows that mount after the page settles flash once (new items arriving live).
   const settled = useSettled();
 
+  const { mine, handling } = useMemo(() => {
+    const mine: AttentionItem[] = [];
+    const handling: AttentionItem[] = [];
+    for (const item of attention) (needsPerson(item) ? mine : handling).push(item);
+    // The agents' work reads as a feed: newest first, no severity order.
+    handling.sort((a, b) => b.at - a.at);
+    return { mine, handling };
+  }, [attention]);
+  // Kind groups and their filter chips cover "Needs you" only.
   const groups = useMemo(() => {
     const by = new Map<Kind, AttentionItem[]>();
-    for (const item of attention) {
+    for (const item of mine) {
       const list = by.get(item.kind);
       if (list) list.push(item);
       else by.set(item.kind, [item]);
     }
     return KINDS.filter((k) => by.has(k.kind)).map((k) => ({ ...k, items: by.get(k.kind)! }));
-  }, [attention]);
+  }, [mine]);
   const active = filter !== "all" && !groups.some((g) => g.kind === filter) ? "all" : filter;
   const shown = active === "all" ? groups : groups.filter((g) => g.kind === active);
-  const critical = attention.filter((a) => a.severity === "critical").length;
+  const critical = mine.filter((a) => a.severity === "critical").length;
+  const toggleExpanded = (key: Kind | "agents") =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  const agentsOpen = expanded.has("agents");
 
   return (
-    <section className="fl-panel fh-att" id={id} aria-label={`Needs attention: ${attention.length} items`}>
+    <section className="fl-panel fh-att" id={id} aria-label={`Work queue: ${mine.length} need you, ${handling.length} agents handling`}>
       <header className="fl-panel-head">
         <span className="fl-section" style={{ "--accent": "var(--orange)" } as CSSProperties}>
-          Needs attention
+          Work queue
         </span>
         <span className="fh-head-meta">
           {critical > 0 && <span className="fl-chip bad outline">{critical} critical</span>}
-          <span className={`fl-chip ${attention.length ? "hot solid" : source === "live" || source === "simulation" ? "ok outline" : "outline"}`}>{attention.length}</span>
+          <span
+            className={`fl-chip ${mine.length ? "hot solid" : source === "live" || source === "simulation" ? "ok outline" : "outline"}`}
+            title={`${mine.length} need you`}
+          >
+            {mine.length}
+          </span>
         </span>
       </header>
       {groups.length > 1 && (
-        <div className="fh-att-filter" role="toolbar" aria-label="Filter by kind">
+        <div className="fh-att-filter" role="toolbar" aria-label="Filter what needs you by kind">
           <button className={active === "all" ? "on" : ""} onClick={() => setFilter("all")} aria-pressed={active === "all"}>
             All
           </button>
@@ -87,44 +111,59 @@ export function AttentionQueue({ id }: { id?: string }) {
         </div>
       )}
       <div className="fh-att-body">
-        {attention.length === 0 ? (
+        {mine.length === 0 ? (
           <div className="fh-empty">
             <Mascot id="validator" mood={source === "live" || source === "simulation" ? "success" : "sleeping"} size={56} />
-            <div className="fl-label strong">{emptyNote(source, "All clear")}</div>
+            <div className="fl-label strong">{emptyNote(source, "Nothing needs you")}</div>
           </div>
         ) : (
-          shown.map((g) => {
-            const open = active !== "all" || expanded.has(g.kind);
-            const items = open ? g.items : g.items.slice(0, PER_GROUP);
-            return (
-              <div className="fh-att-group" key={g.kind}>
-                <div className="fh-att-group-head">
-                  <span>{g.tag}</span>
-                  {g.kind === "approval_pending" && source !== "live" && <span className="fh-att-why">{LIVE_ONLY}</span>}
+          <>
+            <div className="fh-att-section">
+              <span>Needs you</span>
+              <b className="fl-num">{mine.length}</b>
+            </div>
+            {shown.map((g) => {
+              const open = active !== "all" || expanded.has(g.kind);
+              const items = open ? g.items : g.items.slice(0, PER_GROUP);
+              return (
+                <div className="fh-att-group" key={g.kind}>
+                  <div className="fh-att-group-head">
+                    <span>{g.tag}</span>
+                    {g.kind === "approval_pending" && source !== "live" && <span className="fh-att-why">{LIVE_ONLY}</span>}
+                  </div>
+                  <ul>
+                    {items.map((item) => (
+                      <AttentionRow key={item.id} item={item} settled={settled} />
+                    ))}
+                  </ul>
+                  {g.items.length > PER_GROUP && active === "all" && (
+                    <button className="fh-att-more" onClick={() => toggleExpanded(g.kind)}>
+                      {open ? "Show fewer" : `Show ${g.items.length - PER_GROUP} more`}
+                    </button>
+                  )}
                 </div>
-                <ul>
-                  {items.map((item) => (
-                    <AttentionRow key={item.id} item={item} settled={settled} />
-                  ))}
-                </ul>
-                {g.items.length > PER_GROUP && active === "all" && (
-                  <button
-                    className="fh-att-more"
-                    onClick={() =>
-                      setExpanded((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(g.kind)) next.delete(g.kind);
-                        else next.add(g.kind);
-                        return next;
-                      })
-                    }
-                  >
-                    {open ? "Show fewer" : `Show ${g.items.length - PER_GROUP} more`}
-                  </button>
-                )}
-              </div>
-            );
-          })
+              );
+            })}
+          </>
+        )}
+        {handling.length > 0 && (
+          <div className="fh-att-group fh-att-agents">
+            <div className="fh-att-section agents">
+              <span>Agents handling</span>
+              <span className="fh-att-why">No action needed</span>
+              <b className="fl-num">{handling.length}</b>
+            </div>
+            <ul>
+              {(agentsOpen ? handling : handling.slice(0, PER_GROUP)).map((item) => (
+                <HandlingRow key={item.id} item={item} settled={settled} />
+              ))}
+            </ul>
+            {handling.length > PER_GROUP && (
+              <button className="fh-att-more" onClick={() => toggleExpanded("agents")}>
+                {agentsOpen ? "Show fewer" : `Show ${handling.length - PER_GROUP} more`}
+              </button>
+            )}
+          </div>
         )}
       </div>
     </section>
@@ -169,6 +208,42 @@ function AttentionRow({ item, settled }: { item: AttentionItem; settled: boolean
         <div className="fh-att-link">{body}</div>
       )}
       {item.kind === "approval_pending" && <ApprovalActions item={item} />}
+    </li>
+  );
+}
+
+/** A quiet row for work the agents are handling: no severity color, the wait in plain words. */
+function HandlingRow({ item, settled }: { item: AttentionItem; settled: boolean }) {
+  const { now, workloads } = useOps();
+  const fresh = useFresh(settled);
+  const mood: Mood = isAgentId(item.agent) ? moodForStatus(workloads[item.agent]?.status ?? "idle") : "idle";
+  const body = (
+    <>
+      <Mascot id={item.agent || "human"} size={24} mood={mood} title={nick(item.agent)} />
+      <span className="fh-att-main">
+        <span className="fh-att-title">{item.title}</span>
+        <span className="fh-att-sub">
+          {item.caseId && <span className="fl-mono">{item.caseId}</span>}
+          {item.detail && <span>{item.detail}</span>}
+        </span>
+      </span>
+      <span className="fh-att-right">
+        {item.amount > 0 && <span className="fl-num fh-att-amt">{usd(item.amount)}</span>}
+        <span className="fh-att-age" suppressHydrationWarning>
+          {item.at ? fmtAgo(item.at, now) : ""}
+        </span>
+      </span>
+    </>
+  );
+  return (
+    <li className={`fh-att-row quiet ${fresh ? "fh-fresh" : ""}`}>
+      {item.caseId ? (
+        <Link href={`/cases/${encodeURIComponent(item.caseId)}`} className="fh-att-link" aria-label={`Agents handling: ${item.title}, ${item.detail}, ${item.caseId}`}>
+          {body}
+        </Link>
+      ) : (
+        <div className="fh-att-link">{body}</div>
+      )}
     </li>
   );
 }

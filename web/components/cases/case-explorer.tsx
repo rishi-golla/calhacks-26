@@ -45,7 +45,14 @@ export const ATTENTION_META: Record<AttentionKind, { label: string; tone: string
   hold_active: { label: "Hold", tone: "info" },
   call_no_answer: { label: "No answer", tone: "warn" },
 };
-const ATTENTION_KINDS = Object.keys(ATTENTION_META) as AttentionKind[];
+/** Kinds that can need a person (`attentionAudience`); a hold never does on its own. */
+const NEEDS_YOU_KINDS = (Object.keys(ATTENTION_META) as AttentionKind[]).filter((k) => k !== "hold_active");
+/** Kinds the agents handle among themselves, in quiet chips: a task parked on another agent, an agent-placed hold. */
+const HANDLING_META: Partial<Record<AttentionKind, { label: string }>> = {
+  input_required: { label: "Waiting" },
+  hold_active: { label: "Hold" },
+};
+const HANDLING_KINDS = Object.keys(HANDLING_META) as AttentionKind[];
 
 export function PriorityChip({ priority }: { priority: string }) {
   const tone = priority === "P0" ? "bad solid" : priority === "P1" ? "hot outline" : priority === "P2" ? "warn outline" : "";
@@ -69,12 +76,15 @@ type Filters = {
   q: string;
   status: StatusFilter;
   priorities: string[];
+  /** Matches `CaseView.needsYou`. */
   attention: AttentionKind[];
+  /** Matches `CaseView.agentsHandling`. */
+  handling: AttentionKind[];
   agents: AgentId[];
   kinds: CaseKind[];
   sort: SortKey;
 };
-const EMPTY: Filters = { q: "", status: "all", priorities: [], attention: [], agents: [], kinds: [], sort: "newest" };
+const EMPTY: Filters = { q: "", status: "all", priorities: [], attention: [], handling: [], agents: [], kinds: [], sort: "newest" };
 
 function readFilters(): Filters {
   if (typeof window === "undefined") return EMPTY;
@@ -86,7 +96,11 @@ function readFilters(): Filters {
     q: p.get("q") ?? "",
     status: STATUS_TABS.some((s) => s.id === status) ? status : "all",
     priorities: list("p").filter((v) => PRIORITIES.includes(v)),
-    attention: list("attn").filter((v): v is AttentionKind => v in ATTENTION_META),
+    attention: list("attn").filter((v): v is AttentionKind => (NEEDS_YOU_KINDS as string[]).includes(v)),
+    // Links from before the split carried holds in `attn`.
+    handling: [...new Set([...list("wait"), ...list("attn").filter((v) => v === "hold_active")])].filter((v): v is AttentionKind =>
+      (HANDLING_KINDS as string[]).includes(v),
+    ),
     agents: list("agent").filter((v): v is AgentId => v in AGENT_META),
     kinds: list("kind").filter((v): v is CaseKind => (KINDS as string[]).includes(v)),
     sort: SORTS.some((s) => s.id === sort) ? sort : "newest",
@@ -99,6 +113,7 @@ function writeFilters(f: Filters) {
   set("status", f.status === "all" ? "" : f.status);
   set("p", f.priorities.join(","));
   set("attn", f.attention.join(","));
+  set("wait", f.handling.join(","));
   set("agent", f.agents.join(","));
   set("kind", f.kinds.join(","));
   set("sort", f.sort === "newest" ? "" : f.sort);
@@ -187,7 +202,8 @@ export default function CaseExplorer() {
       if (filters.status === "human_owned" && c.status !== "human_owned") return false;
       if (filters.priorities.length && !filters.priorities.includes(c.priority)) return false;
       if (filters.kinds.length && !filters.kinds.includes(kind)) return false;
-      if (filters.attention.length && !filters.attention.some((k) => c.attention.includes(k))) return false;
+      if (filters.attention.length && !filters.attention.some((k) => c.needsYou.includes(k))) return false;
+      if (filters.handling.length && !filters.handling.some((k) => c.agentsHandling.includes(k))) return false;
       if (filters.agents.length && !filters.agents.every((a) => c.agents.includes(a))) return false;
       return terms.every((t) => text.includes(t));
     });
@@ -197,7 +213,13 @@ export default function CaseExplorer() {
   }, [indexed, filters, now]);
 
   const anyFilter =
-    filters.q || filters.status !== "all" || filters.priorities.length || filters.attention.length || filters.agents.length || filters.kinds.length;
+    filters.q ||
+    filters.status !== "all" ||
+    filters.priorities.length ||
+    filters.attention.length ||
+    filters.handling.length ||
+    filters.agents.length ||
+    filters.kinds.length;
 
   /* windowing */
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -229,7 +251,7 @@ export default function CaseExplorer() {
         <div className="cx-stats">
           <Stat label="Open" value={ops.casesActive} tone="var(--yellow)" />
           <Stat label="Resolved today" value={ops.casesResolvedToday} tone="var(--teal)" />
-          <Stat label="Needs attention" value={ops.casesNeedingAttention} tone="var(--orange)" />
+          <Stat label="Needs you" value={ops.casesNeedingYou} tone="var(--orange)" />
           <Stat label="Median resolution" value={fmtDuration(ops.medianResolutionS)} />
         </div>
       </header>
@@ -294,8 +316,8 @@ export default function CaseExplorer() {
               </button>
             ))}
           </div>
-          <div className="cx-toggles" role="group" aria-label="Needs attention">
-            {ATTENTION_KINDS.map((k) => (
+          <div className="cx-toggles" role="group" aria-label="Needs you">
+            {NEEDS_YOU_KINDS.map((k) => (
               <button
                 key={k}
                 className={`cx-toggle tone-${ATTENTION_META[k].tone} ${filters.attention.includes(k) ? "on" : ""}`}
@@ -303,6 +325,19 @@ export default function CaseExplorer() {
                 onClick={() => patch({ attention: toggle(filters.attention, k) })}
               >
                 {ATTENTION_META[k].label}
+              </button>
+            ))}
+          </div>
+          <div className="cx-toggles" role="group" aria-label="Agents handling">
+            {HANDLING_KINDS.map((k) => (
+              <button
+                key={k}
+                className={`cx-toggle ${filters.handling.includes(k) ? "on" : ""}`}
+                aria-pressed={filters.handling.includes(k)}
+                onClick={() => patch({ handling: toggle(filters.handling, k) })}
+                title="Agents are handling these"
+              >
+                {HANDLING_META[k]!.label}
               </button>
             ))}
           </div>
@@ -412,9 +447,14 @@ function CaseRow({ c, kind, now, top, fresh, verdict }: { c: CaseView; kind: Cas
       <span className={`num fl-mono cx-age ${resolved ? "" : "live"}`}>{c.openedAt ? shortDur(caseDuration(c, now)) : "—"}</span>
       <span className="cx-attn">
         {verdict === "pass" && <span className="fl-chip outline ok cx-chip">Validated</span>}
-        {c.attention.map((k) => (
+        {c.needsYou.map((k) => (
           <span key={k} className={`fl-chip outline ${ATTENTION_META[k].tone} cx-chip`}>
             {ATTENTION_META[k].label}
+          </span>
+        ))}
+        {c.agentsHandling.map((k) => (
+          <span key={`agents:${k}`} className="fl-chip outline cx-chip" title="Agents are handling this">
+            {HANDLING_META[k]?.label ?? ATTENTION_META[k].label}
           </span>
         ))}
       </span>

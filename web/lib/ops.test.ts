@@ -10,6 +10,7 @@ import {
   buildTimeline,
   buildToolCalls,
   buildWorkloads,
+  invoiceContractDelta,
   diffSnapshots,
   fmtAgo,
   fmtDuration,
@@ -659,4 +660,12 @@ test("buildFinance counts accessorial revenue and expense with freight", () => {
   assert.equal(f.ar, 1250);
   assert.equal(f.ap, 1050);
   assert.equal(f.since, null);
+});
+
+test("contract delta is the bill against its contract, not the open balance", () => {
+  // Partly paid: $1,000 of a $2,150 bill paid against a $2,000 contract is still $150 over.
+  assert.equal(invoiceContractDelta({ amount: 2150, paid_amount: 1000, contract_amount: 2000 }), 150);
+  assert.equal(invoiceContractDelta({ amount: "1900.10", contract_amount: "2000" }), -99.9);
+  assert.equal(invoiceContractDelta({ amount: 2150, contract_amount: 0 }), 0);
+  assert.equal(invoiceContractDelta({ amount: 2150 }), 0);
 });

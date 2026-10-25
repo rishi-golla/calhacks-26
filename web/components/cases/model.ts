@@ -225,6 +225,8 @@ export type SideEffect = {
   changedAt: number;
   label: string;
   amount: number;
+  /** Amount from `changedAt` on, when the change moved it (a partial hold release); else `amount` throughout. */
+  changedAmount?: number;
   status: string;
   /** Status before `changedAt`. */
   initialStatus: string;
@@ -516,6 +518,12 @@ function buildSideEffects(slice: Snapshot): SideEffect[] {
   const out: SideEffect[] = [];
   for (const h of slice.hold) {
     const released = timestamp(h.released_at);
+    const status = str(h.status, "active");
+    // A partial release leaves the hold active on the remainder (spacetime release_hold);
+    // released_at is the latest release, so several partial releases read as one change.
+    // A full release keeps the amount that was held, beside its "released" status.
+    const remaining = Math.max(0, num(h.amount) - num(h.released_amount));
+    const partial = status !== "released" && num(h.released_amount) > 0;
     out.push({
       id: `hold:${str(h.id)}`,
       kind: "hold",
@@ -523,7 +531,8 @@ function buildSideEffects(slice: Snapshot): SideEffect[] {
       changedAt: released,
       label: `Hold · ${str(h.invoice_id, "invoice")}`,
       amount: num(h.amount),
-      status: str(h.status, "active"),
+      ...(partial ? { changedAmount: remaining } : {}),
+      status,
       initialStatus: "active",
       taskId: str(h.id).startsWith("HOLD-") ? str(h.id).slice(5) : "",
       row: h,
@@ -626,6 +635,11 @@ export function sideEffectAt(s: SideEffect, cursor: number): string | null {
   if (s.at > cursor) return null;
   if (s.changedAt && s.changedAt > cursor) return s.initialStatus;
   return s.status;
+}
+
+/** A side effect's amount at the cursor: what was held before a partial release, the remainder after. */
+export function sideEffectAmountAt(s: SideEffect, cursor: number): number {
+  return s.changedAmount !== undefined && s.changedAt && s.changedAt <= cursor ? s.changedAmount : s.amount;
 }
 
 /* ------------------------------ layout ------------------------------ */

@@ -214,6 +214,44 @@ async def test_new_request_allowed_after_both_tasks_finish_without_a_call(store)
     assert (await store.get(request_id))["active_slot"] is None
 
 
+async def orphan(store, request_id, call_status):
+    """A runtime reset deletes the tasks but keeps the w3 request and the provider attempt."""
+    from common.runtime_store import tasks
+    await store.submit(request_id)
+    env, meta, task_id = await child(store, request_id)
+    await store.authorize_voice(env, meta, task_id, demo.COMPANY_ID, PHONE, PHONE)
+    async with store.engine.begin() as conn:
+        if call_status:
+            await conn.execute(insert(voice.attempts).values(id=str(uuid.uuid4()), task_id=task_id, case_id=demo.CASE_ID,
+                payload="{}", status=call_status, provider_id="", token_hash="test", created_at=time.time(), result="", delivered="0"))
+        await conn.execute(tasks.delete().where(tasks.c.id.in_((demo.root_task_id(request_id), task_id))))
+    return env, meta, task_id
+
+
+@pytest.mark.parametrize("call_status, state", [("completed", "completed"), ("no_answer", "failed"), (None, "failed")])
+async def test_request_orphaned_by_runtime_reset_finishes_and_releases_slot(store, call_status, state):
+    request_id = str(uuid.uuid4())
+    env, meta, task_id = await orphan(store, request_id, call_status)
+    result = await store.snapshot(request_id)
+    assert result["ready"] and result["request"]["state"] == state
+    assert not result["request"]["retryable"] and "processing the outcome" not in result["request"]["message"]
+    assert (await store.submit(request_id))[1] == 200 and demo.send_task.await_count == 1
+    next_id = str(uuid.uuid4())
+    assert (await store.submit(next_id))[1] == 202
+    assert (await store.get(request_id))["active_slot"] is None
+    with pytest.raises(demo.DemoCallBlocked):
+        await store.authorize_voice(env, meta, task_id, demo.COMPANY_ID, PHONE, PHONE)
+
+
+@pytest.mark.parametrize("call_status", ["dialing", "ringing", "uncertain"])
+async def test_orphaned_request_with_live_call_keeps_slot(store, call_status):
+    request_id = str(uuid.uuid4())
+    await orphan(store, request_id, call_status)
+    result = await store.snapshot(request_id)
+    assert not result["ready"] and result["request"]["state"] not in demo.TERMINAL
+    assert (await store.submit(str(uuid.uuid4())))[1] == 409
+
+
 @pytest.fixture
 def source(monkeypatch, tmp_path):
     path = tmp_path / "source.json"

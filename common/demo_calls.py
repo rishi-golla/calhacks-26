@@ -200,6 +200,9 @@ class DemoCallStore:
         active_execution = any(task and task["status"] not in TERMINAL for task in (root, child))
         finished = bool(root and root["status"] in TERMINAL and not active_execution and not live_call)
         unused_expired = not row["voice_task_id"] and not call and row["expires_at"] <= time.time()
+        # An accepted root that no longer exists was removed by a runtime reset; nothing can resume
+        # it, and authorize_voice() refuses a missing root, so only a live provider call keeps the slot.
+        orphaned = row["dispatch_state"] == "accepted" and not root and not child and not live_call
         if unused_expired:
             state, message, finished = "failed", "The unused call authorization expired. Start a new request.", True
         if call:
@@ -213,12 +216,19 @@ class DemoCallStore:
                            "failed": "The call failed.", "cancelled": "The call was canceled."}[call["status"]]
         elif finished and not unused_expired:
             message = "The agent task ended without starting a phone call."
+        if orphaned:
+            finished = True
+            state = "completed" if call and call["status"] == "completed" else "failed"
+            if state == "completed":
+                message = "The conversation finished; this request's agent task is no longer available."
+            elif not call:
+                message = "The agent task for this request is no longer available. Start a new request."
         if finished and state not in TERMINAL:
             state = "completed" if root and root["status"] == "completed" else "failed"
         if not finished and active_execution and state in TERMINAL:
             state, message = "waiting", "A delegated agent is still finishing this request."
         public = {"request_id": row["request_id"], "task_id": row["task_id"], "state": state, "message": message}
-        public["retryable"] = bool(not root and not child and not call and row["active_slot"] == "team"
+        public["retryable"] = bool(not orphaned and not root and not child and not call and row["active_slot"] == "team"
             and row["expires_at"] > time.time()
             and (row["dispatch_state"] in {"prepared", "uncertain"} or row["last_send_at"] < time.time() - 30))
         if call:

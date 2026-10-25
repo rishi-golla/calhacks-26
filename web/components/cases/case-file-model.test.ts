@@ -120,8 +120,10 @@ test("over-contract invoices, detention over GPS and identity flags", () => {
 
 test("unapplied deposits, short pays and bank change emails", () => {
   const f = file({
+    shipper_invoice_id: "SINV-9",
+    shipper_id: "S-1",
     shipper_invoice_amount: 3000,
-    deposits: [{ amount: 1000, id: "BNK-1" }],
+    deposits: [{ amount: 1000, id: "BNK-1", invoice_id: "SINV-9", shipper_id: "S-1" }],
     unapplied_deposits: [{ amount: 3280.4, id: "BNK-2", candidate_invoice_id: "SINV-9", remittance_ref: "SINV-MISSING-9", posted_at: "2026-11-10T08:17:33Z" }],
     bank_change: { new_payee: "Keystone Freight Capital LLC", new_account_last4: "0775", channel: "email", source_email: "MAIL-38af20d4f2", urgency_language: "URGENT", sender_matches_registered: false },
     evidence_refs: ["mail:MAIL-197b15f163", "fixture://x"],
@@ -129,7 +131,7 @@ test("unapplied deposits, short pays and bank change emails", () => {
   assert.deepEqual(
     f.bank.map((b) => [b.id, b.unapplied, b.invoiceId, b.remittanceRef]),
     [
-      ["BNK-1", false, "", ""],
+      ["BNK-1", false, "SINV-9", ""],
       ["BNK-2", true, "SINV-9", "SINV-MISSING-9"],
     ],
   );
@@ -138,6 +140,30 @@ test("unapplied deposits, short pays and bank change emails", () => {
   assert.deepEqual(f.emails, ["mail:MAIL-197b15f163", "mail:MAIL-38af20d4f2"]);
   assert.deepEqual(f.otherRefs, ["fixture://x"]);
   assert.deepEqual(f.bankChange, { payee: "Keystone Freight Capital LLC", accountLast4: "0775", via: "email", urgency: "URGENT", senderMatches: false });
+});
+
+test("received counts only cash applied to this invoice from this shipper", () => {
+  const f = file({
+    shipper_invoice_id: "SINV-A",
+    shipper_id: "S-1",
+    shipper_invoice_amount: 1000,
+    deposits: [
+      { amount: 300, id: "BNK-1", invoice_id: "SINV-A", shipper_id: "S-1" },
+      { amount: 700, id: "BNK-2", invoice_id: "SINV-B", shipper_id: "S-1" },
+      { amount: 50, id: "BNK-3", invoice_id: "SINV-A", shipper_id: "S-2" },
+    ],
+  });
+  // Every line is still listed; only the matching one is received.
+  assert.equal(f.bank.length, 3);
+  assert.equal(f.deposited, 300);
+});
+
+test("a shipper invoice already cited keeps its billed amount", () => {
+  const f = file({ evidence_refs: ["doc:SINV-A"], shipper_invoice_id: "SINV-A", shipper_invoice_amount: 1000 });
+  assert.deepEqual(
+    f.documents.map((d) => [d.ref, d.kind, d.amount]),
+    [["doc:SINV-A", "shipper_invoice", 1000]],
+  );
 });
 
 test("no row, other cases' rows and unreadable records", () => {

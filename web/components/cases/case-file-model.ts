@@ -129,15 +129,24 @@ export function buildCaseFile(rows: readonly Row[], caseId: string): CaseFileRes
 
   /* -------- documents -------- */
   const documents: CaseFileDoc[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, CaseFileDoc>();
   const addDoc = (ref: string, kind: string, extra: Partial<CaseFileDoc> = {}) => {
     const parsed = parseEvidenceRef(ref);
     if (parsed.kind !== "doc") return;
     // `doc:X#p2` and `doc:X` are one document.
     const key = parsed.previewable ? `doc:${parsed.id}` : ref;
-    if (seen.has(key)) return;
-    seen.add(key);
-    documents.push({ ref, kind, label: docKindLabel(kind), ...extra });
+    const existing = seen.get(key);
+    if (existing) {
+      // Already listed: keep it, but take what this mention adds (the shipper
+      // invoice's amount, a kind the ref prefix could not tell).
+      if (existing.kind === "document" && kind !== "document") Object.assign(existing, { kind, label: docKindLabel(kind) });
+      if (existing.signed === undefined && extra.signed !== undefined) existing.signed = extra.signed;
+      if (existing.amount === undefined && extra.amount !== undefined) existing.amount = extra.amount;
+      return;
+    }
+    const doc: CaseFileDoc = { ref, kind, label: docKindLabel(kind), ...extra };
+    seen.set(key, doc);
+    documents.push(doc);
   };
   for (const d of objects(record.documents)) {
     const ref = text(d.ref);
@@ -178,7 +187,14 @@ export function buildCaseFile(rows: readonly Row[], caseId: string): CaseFileRes
     const remittance = text(d.remittance_ref);
     bank.push({ id: text(d.id), amount: amount(d.amount), postedAt: text(d.posted_at), invoiceId, shipperId: text(d.shipper_id), unapplied: true, remittanceRef: remittance !== invoiceId ? remittance : "" });
   }
-  const deposited = round2(bank.filter((b) => !b.unapplied).reduce((sum, b) => sum + (b.amount ?? 0), 0));
+  // Received: only cash applied to this case's invoice from this case's shipper,
+  // the same match Shipper AR makes before it computes the balance.
+  const shipperId = text(record.shipper_id) || text(object(record.shipper)?.id);
+  const deposited = round2(
+    bank
+      .filter((b) => !b.unapplied && !!shipperInvoiceId && b.invoiceId === shipperInvoiceId && b.shipperId === shipperId)
+      .reduce((sum, b) => sum + (b.amount ?? 0), 0),
+  );
 
   /* -------- facts -------- */
   const c = object(record.carrier);

@@ -544,6 +544,8 @@ export function useCaseFocus(caseId: string) {
   useEffect(() => focusCase(caseId), [focusCase, caseId]);
 }
 const NO_ROWS: Row[] = [];
+const OFFLINE: SourceRecords = { state: "offline", rows: NO_ROWS };
+const LOADING: SourceRecords = { state: "loading", rows: NO_ROWS };
 /**
  * `caseId`'s `source_record` rows, live while the calling component is
  * mounted; "" watches nothing. The fallback snapshot does not carry them, so
@@ -556,6 +558,8 @@ export function useSourceRecords(caseId: string): SourceRecords {
     () => (caseId ? watchSourceRecords(caseId, (records) => setValue({ caseId, records })) : undefined),
     [caseId, watchSourceRecords],
   );
+  // Off the live connection the cached rows are stale: say so rather than show them.
+  if (state === "fallback" || state === "offline") return OFFLINE;
   if (value && value.caseId === caseId) return value.records;
-  return { state: state === "connecting" || state === "live" ? "loading" : "offline", rows: NO_ROWS };
+  return LOADING;
 }

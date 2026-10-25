@@ -95,6 +95,8 @@ def test_renumbered_duplicate_approval_uses_previous_invoices():
                                      "issued_at": "2026-10-20T00:00:00+00:00"}])
     review = deterministic_review(bundle(src, approve(src)))
     assert "approve_clear_of_duplicate_invoice" in failed(review)
+    # A duplicate is this carrier's billing behavior, so its lesson stays pinned to the carrier.
+    assert review.lessons[0].scope == {"carrier_id": "C-1", "skill": "process_carrier_invoice"}
     rejected = ResultArtifact(outcome="reject", evidence_refs=REFS, policy_ids=["P-007"], findings={
         "match": match(src), "duplicate_invoice_ids": ["INV-0"]}).model_dump()
     assert deterministic_review(bundle(src, rejected)).verdict == "pass"
@@ -233,7 +235,8 @@ def test_lessons_name_the_failed_control_and_never_carry_long_text():
                                                   {"kind": "fuel_surcharge", "amount": 500}])
     review = deterministic_review(bundle(src, approve(src)))
     lesson = review.lessons[0]
-    assert lesson.agent == "carrier_ap" and lesson.scope == {"carrier_id": "C-1", "skill": "process_carrier_invoice"}
+    # A procedural failure teaches every process_carrier_invoice task, not just this carrier's.
+    assert lesson.agent == "carrier_ap" and lesson.scope == {"skill": "process_carrier_invoice"}
     assert "approve_clear_of_above_tolerance" in lesson.text_or_diff and "P-001" in lesson.text_or_diff
     long = [{"name": "x", "expected": "y" * 500, "actual": "z" * 500, "basis": ""}] * 20
     text = lesson_text("skill", long)

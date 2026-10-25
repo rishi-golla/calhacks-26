@@ -241,7 +241,8 @@ def live_source(monkeypatch, tmp_path, *, carrier=None, shipper=None):
 
 async def test_apify_lookup_binds_ingested_identifiers_and_freezes_observation(monkeypatch, tmp_path):
     from integrations import apify
-    path = live_source(monkeypatch, tmp_path, carrier={"usdot": "123456", "mc": "MC123", "verified": False})
+    path = live_source(monkeypatch, tmp_path, carrier={"usdot": "123456", "mc": "MC123", "verified": False,
+                                                       "name": "Source Haul", "legal_name": "SOURCE HAUL LLC"})
     before = path.read_text()
     lookup = AsyncMock(return_value={"available": True, "identity_match": True,
         "records": [{"usdot": "123456", "authority_confirmed_active": True}],
@@ -254,7 +255,8 @@ async def test_apify_lookup_binds_ingested_identifiers_and_freezes_observation(m
         tools = registry_for(ctx)
         first = await tools["lookup_carrier_authority"].handler(ctx, {})
         assert await tools["lookup_carrier_authority"].handler(ctx, {}) == first
-        lookup.assert_awaited_once_with(agent, ctx.env, ctx.task_id, usdot="123456", mc="MC123")
+        lookup.assert_awaited_once_with(agent, ctx.env, ctx.task_id, usdot="123456", mc="MC123",
+                                        names=("SOURCE HAUL LLC", "Source Haul"))
         assert not first["contact_authority_verified"] and not first["financial_authorization"]
         artifact = (await tools["execute_current_skill"].handler(ctx, {}))["artifact"]
         assert artifact["outcome"] == "unverified", "public evidence cannot promote domain authorization"
@@ -270,6 +272,10 @@ async def test_apify_lookup_binds_ingested_identifiers_and_freezes_observation(m
     ({"available": True, "identity_match": False, "records": []}, "external_carrier_identity_mismatch"),
     ({"available": True, "records": [{"authority_confirmed_active": False}]}, "external_carrier_authority_not_active"),
     ({"available": True, "records": [{"authority_confirmed_active": None}]}, "external_carrier_authority_unconfirmed"),
+    # Another company's active authority under the same USDOT confirms nothing about this carrier.
+    ({"available": True, "identity_match": False,
+      "records": [{"authority_confirmed_active": True, "identity_match": False}]},
+     "external_carrier_authority_unconfirmed"),
     ({"available": True, "records": [{"authority_confirmed_active": True, "out_of_service": True}]},
      "external_carrier_out_of_service"),
 ])

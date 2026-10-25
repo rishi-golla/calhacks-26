@@ -343,7 +343,8 @@ async def lookup_carrier_authority(ctx: ToolContext, arguments: dict) -> dict:
         if usdot is None and mc is None:
             return {"available": False, "reason": "The case has no ingested USDOT or MC identifier.",
                     "missing_source_fields": ["carrier.usdot or carrier.mc"], "evidence_refs": []}
-        result = await lookup_carrier(ctx.agent, ctx.env, ctx.task_id, usdot=usdot, mc=mc)
+        result = await lookup_carrier(ctx.agent, ctx.env, ctx.task_id, usdot=usdot, mc=mc,
+                                      names=(company.get("legal_name"), company.get("name")))
         return {**result, "contact_authority_verified": False, "financial_authorization": False}
 
     return await _external_lookup(ctx, "apify_carrier", lookup)
@@ -411,7 +412,9 @@ async def _attach_external_checks(ctx: ToolContext, artifact):
     carrier = checks.get("apify_carrier")
     if carrier:
         records = carrier.get("records", [])
-        records = [record for record in records if isinstance(record, dict)] if isinstance(records, list) else []
+        # A record registered to a different company says nothing about this carrier's authority.
+        records = [record for record in records if isinstance(record, dict) and record.get("identity_match") is not False
+                   ] if isinstance(records, list) else []
         if carrier.get("available") is not True:
             signals.append("external_carrier_lookup_unavailable")
         if carrier.get("identity_match") is False:
@@ -524,7 +527,8 @@ _DESCRIPTIONS = {
     "check_review_quality": "Run independent exact-cent, provenance and policy-result checks on the assigned review target.",
     "lookup_carrier_authority": "Use Apify to look up public FMCSA records for this case's ingested USDOT/MC. "
                                 "Use for carrier authority or identity questions. Public data never authorizes payment "
-                                "or makes a contact verified; missing identifiers or credentials are reported explicitly.",
+                                "or makes a contact verified; missing identifiers or credentials are reported explicitly. A registration "
+                                "in another company's name is reported as an identity mismatch.",
     "inspect_company_website": "Use Apify to inspect the case company's ingested public website for contact evidence. "
                                "Discovered contacts remain unverified; do not dial or email them directly.",
     "inspect_outreach_readiness": "Check Cartesia configuration for this role's call purpose without placing a call "

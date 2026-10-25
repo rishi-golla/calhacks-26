@@ -109,7 +109,7 @@ def _ts(t: datetime) -> str:
 def directory_entry(world: dict, cid: str) -> dict:
     c = next(x for x in world["carriers"] + world["shippers"] if x["id"] == cid)
     keep = ("id", "name", "legal_name", "usdot", "mc", "cik", "ticker", "industry", "address", "city", "state",
-            "phone", "email", "lat", "lon", "terms", "directory", "source", "source_url")
+            "phone", "email", "website", "lat", "lon", "terms", "directory", "source", "source_url")
     return {k: c[k] for k in keep if k in c}
 
 

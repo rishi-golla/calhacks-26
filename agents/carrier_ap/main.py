@@ -19,6 +19,7 @@ from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import DelegationRefused, FreightAgent
 from common.server import serve
 from common.source_repository import SourceRepository, SourceUnavailable, source_fixtures_only
+from common.spacetime_client import REDUCER_REFUSED_STATUS, SpacetimeHTTPError
 from common.workings import refs_for, working
 
 
@@ -135,9 +136,18 @@ class CarrierAPAgent(FreightAgent):
             return {"payable_journal": {"request_id": request_id, "requested": False,
                                         "reason": "journal period is required"}}
         existing = await journal_requests(self.name, env, source, request_id)
-        result = await request_journal(self, env, task_id, existing, request_id, period=period,
-                                       lines=payable_lines(amount), memo="Carrier settlement: " + str(invoice_id),
-                                       label="payable")
+        try:
+            result = await request_journal(self, env, task_id, existing, request_id, period=period,
+                                           lines=payable_lines(amount), memo="Carrier settlement: " + str(invoice_id),
+                                           label="payable")
+        except SpacetimeHTTPError as error:
+            # The proposal is already stored, so a refused journal (e.g. the invoice's period is missing or
+            # locked) must not fail settlement: that would strand the proposal, whose reserved balance blocks
+            # any retry. Report the bill as not booked; the validator flags it for a person.
+            if error.status_code != REDUCER_REFUSED_STATUS:
+                raise
+            return {"payable_journal": {"request_id": request_id, "requested": False, "amount": number(amount),
+                                        "period": period, "reason": error.reason or str(error)}}
         booked = {"request_id": request_id, "requested": True, "amount": number(amount), "period": period}
         posted = [result["posted_entry_id"]] if result["posted_entry_id"] else []
         if result["pending"]:

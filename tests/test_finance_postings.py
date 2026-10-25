@@ -291,6 +291,43 @@ async def test_a_refused_posting_leaves_the_payable_pending_without_failing_sett
     assert [operation for operation, _ in recorded_writes] == ["propose_payment", "request_journal_entry"]
 
 
+async def test_a_refused_payable_journal_does_not_fail_settlement(monkeypatch):
+    # The proposal is stored first; a journal the reducer refuses (no open period for the invoice month) must
+    # leave settlement complete with the bill reported unbooked, not strand the proposal behind a failed task.
+    import agents.carrier_ap.main as carrier
+    from common.spacetime_client import REDUCER_REFUSED_STATUS, SpacetimeHTTPError
+    writes = []
+
+    async def mutate(agent, env, task_id, operation, payload):
+        writes.append(operation)
+        if operation == "request_journal_entry":
+            error = SpacetimeHTTPError(REDUCER_REFUSED_STATUS, mutation=True)
+            error.reason = "P-006: accounting period is missing or locked"
+            raise error
+        return {"executed": True, "simulated": False, "action": operation, "write_id": payload["id"]}
+    monkeypatch.setattr(agent_support, "mutate", mutate)
+    monkeypatch.setattr(carrier, "mutate", mutate)
+    delegations = Delegations()
+    result = await run(CarrierAPAgent, "process_carrier_invoice", case(period="2026-09"), delegations)
+    assert result.outcome == "approve"
+    assert writes == ["propose_payment", "request_journal_entry"]
+    assert result.findings["payable_journal"] == {
+        "request_id": payable_journal_id("INV-B"), "requested": False, "amount": 1275.5, "period": "2026-09",
+        "reason": "P-006: accounting period is missing or locked"}
+    assert delegations.calls == []
+    # Any other failure still fails the task.
+    writes.clear()
+
+    async def broken(agent, env, task_id, operation, payload):
+        if operation == "request_journal_entry":
+            raise SpacetimeHTTPError(500, mutation=True)
+        return {"executed": True, "simulated": False, "action": operation, "write_id": payload["id"]}
+    monkeypatch.setattr(agent_support, "mutate", broken)
+    monkeypatch.setattr(carrier, "mutate", broken)
+    with pytest.raises(SpacetimeHTTPError):
+        await run(CarrierAPAgent, "process_carrier_invoice", case(), Delegations())
+
+
 async def test_no_payable_without_an_allowed_proposal():
     # Fixture policy returns needs_approval above the threshold: nothing was proposed, so nothing is booked.
     source = case(invoice_amount=6400, contract_rate=6400, line_items=[{"kind": "linehaul", "amount": 6400}])

@@ -371,15 +371,18 @@ def build_app(executor: FreightAgent, descriptions: dict[str, str]) -> Starlette
             await snapshots.initialize()
             await events.initialize()
         recovery = asyncio.create_task(handler.recovery_loop())
-        presence = asyncio.create_task(agent_presence_loop(executor)) \
-            if os.getenv("SPACETIME_DISABLED", "1") != "1" else None
+        spacetime_on = os.getenv("SPACETIME_DISABLED", "1") != "1"
+        presence = asyncio.create_task(agent_presence_loop(executor)) if spacetime_on else None
+        projections = asyncio.create_task(executor.projection_loop()) \
+            if spacetime_on and not executor.inline_projections else None
+        workers = [task for task in (presence, projections) if task]
         try:
             yield
         finally:
             recovery.cancel()
-            if presence:
-                presence.cancel()
-            await asyncio.gather(recovery, *([presence] if presence else []), return_exceptions=True)
+            for task in workers:
+                task.cancel()
+            await asyncio.gather(recovery, *workers, return_exceptions=True)
             await handler.aclose()
             await executor.store.close()
 

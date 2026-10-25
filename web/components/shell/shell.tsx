@@ -7,6 +7,7 @@ import { useOps, type DataMode } from "../data-provider";
 import { agentLabel } from "@/lib/agents";
 import { fmtAgo, fmtMoney, type AttentionItem } from "@/lib/ops";
 import { Mascot } from "../mascot";
+import BurstControl from "./burst-control";
 import Intro from "./intro";
 
 const NAV = [
@@ -56,6 +57,7 @@ export default function Shell({ children }: { children: ReactNode }) {
           </span>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Notifications />
+            <BurstControl />
             <SourcePill />
           </div>
         </header>

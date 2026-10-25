@@ -108,12 +108,18 @@ function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?:
 
   useEffect(() => {
     const fromUrl = readModeFromUrl();
-    if (fromUrl) setModeState(fromUrl);
     try {
+      if (fromUrl) {
+        // A `?data=` choice sticks for later navigations without the param, so a
+        // link from a simulated case does not land on the live database.
+        setModeState(fromUrl);
+        localStorage.setItem("freightline.data-mode", fromUrl);
+        return;
+      }
       const saved = localStorage.getItem("freightline.data-mode");
-      if (!fromUrl && (saved === "sim" || saved === "live" || saved === "auto")) setModeState(saved);
+      if (saved === "sim" || saved === "live" || saved === "auto") setModeState(saved);
     } catch {
-      /* storage unavailable */
+      if (fromUrl) setModeState(fromUrl);
     }
   }, []);
   const setMode = useCallback((next: DataMode) => {

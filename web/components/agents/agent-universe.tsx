@@ -6,8 +6,8 @@
  * Human controller when an approval is waiting), with every dispatch and
  * delegation flying as a document packet between them. Work is aggregated
  * per node, never drawn one-workflow-per-case, so the map stays readable at
- * hundreds of concurrent cases. Packets, received counters and tickers are
- * imperative (`PacketEngine`); React renders the nodes, edges and rail.
+ * hundreds of concurrent cases. Packets and tickers are imperative
+ * (`PacketEngine`); React renders the nodes, edges and rail.
  */
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
@@ -16,17 +16,19 @@ import Backdrop from "@/components/fx/backdrop";
 import { useLiveEvents, useOps } from "@/components/data-provider";
 import { moodForStatus, type Mood } from "@/components/mascot";
 import { AGENT_IDS, AGENT_META, isAgentId, type AgentId, type NodeId } from "@/lib/agents";
+import { timestamp } from "@/lib/data";
 import type { LiveEvent } from "@/lib/ops";
 import { AgentNode, type NodeTone, type NodeView } from "./agent-node";
 import { AgentPanel } from "./agent-panel";
 import { CaseRail, type RailMetrics } from "./case-rail";
 import { Edges } from "./edges";
 import { STAGE_H, STAGE_W, setStretch } from "./layout";
-import { casePath, edgeTraffic, matchesTab, packetsFor, receivedCounts, type KindTab } from "./model";
+import { casePath, edgeTraffic, matchesTab, packetsFor, type KindTab } from "./model";
 import { PacketEngine } from "./packet-engine";
 import "./agents.css";
 
 const STALE_MS = 20_000;
+const WINDOW_MS = 5 * 60_000;
 const SUCCESS_MS = 1_500;
 const ALERT_MS = 3_200;
 
@@ -146,11 +148,14 @@ export default function AgentUniverse() {
 
   /* ---------- derived ---------- */
 
-  const received = useMemo(() => receivedCounts(snapshot), [snapshot]);
-  useEffect(() => engine.setBase(received), [engine, received]);
-
   const traffic = useMemo(() => [...edgeTraffic(snapshot, cases, now).values()], [snapshot, cases, now]);
   const handoffs5m = useMemo(() => traffic.reduce((s, e) => s + (e.from === "human" || e.to === "human" ? 0 : e.recent), 0), [traffic]);
+
+  const toolCalls5m = useMemo(() => {
+    let n = 0;
+    for (const e of snapshot.audit_event) if (e.kind === "tool_call" && e.reason_code === "tool_completed" && now - timestamp(e.ts) <= WINDOW_MS) n++;
+    return n;
+  }, [snapshot.audit_event, now]);
 
   const liveCalls = useMemo(() => snapshot.call.filter((c) => c.status === "ringing" || c.status === "in_progress").length, [snapshot.call]);
 
@@ -253,7 +258,7 @@ export default function AgentUniverse() {
 
   /* ---------- node views ---------- */
 
-  const chipsFor = (ids: string[], max = 4) => {
+  const chipsFor = (ids: string[], max = 3) => {
     const visible = ids.filter((id) => {
       const c = cases.get(id);
       return !c || matchesTab(c, tab);
@@ -274,7 +279,7 @@ export default function AgentUniverse() {
       id: "intake",
       mood: transient.intake ?? (awaiting.length ? "working" : "idle"),
       tone: awaiting.length || ops.casesActive ? "working" : "idle",
-      counts: `${awaiting.length}|new|${ops.casesActive}|open`,
+      counts: `${awaiting.length}|new`,
       ...chipsFor(awaiting.map((c) => c.caseId)),
     });
   }
@@ -289,7 +294,7 @@ export default function AgentUniverse() {
       mood,
       bubble: mood === "talking" ? (liveCalls === 1 ? "On a call" : `${liveCalls} calls live`) : undefined,
       tone: toneFor(w.status, t),
-      counts: `${w.active}|act|${w.queued}|q|${w.done.toLocaleString()}|done`,
+      counts: `${w.active}|active|${w.done.toLocaleString()}|done${w.queued > 0 ? `|${w.queued}|queued` : ""}`,
       ...chipsFor([...new Set(caseIds)]),
     });
   }
@@ -300,7 +305,7 @@ export default function AgentUniverse() {
       id: "human",
       mood: transient.human ?? (pendingApprovals.length ? "alert" : "idle"),
       tone: pendingApprovals.length ? "alert" : "idle",
-      counts: `${pendingApprovals.length}|wait|${decided}|done`,
+      counts: `${pendingApprovals.length}|waiting|${decided}|done`,
       ...chipsFor([...new Set(pendingApprovals.map((a) => String(a.case_id ?? "")))], 2),
     });
   }
@@ -308,15 +313,12 @@ export default function AgentUniverse() {
   const metrics = useMemo<RailMetrics>(
     () => ({
       active: ops.casesActive,
-      completed: ops.casesResolved,
       exceptions: attention.length,
-      handoffs: ops.handoffs,
-      toolCalls: ops.toolCalls,
-      throughput: ops.throughputPerHour,
+      handoffs: handoffs5m,
+      toolCalls: toolCalls5m,
     }),
-    [ops, attention.length],
+    [ops, attention.length, handoffs5m, toolCalls5m],
   );
-  const busy = AGENT_IDS.filter((id) => workloads[id].status === "working").length;
 
   const stageStyle = {
     height: STAGE_H * fit.stretch,
@@ -329,31 +331,8 @@ export default function AgentUniverse() {
       <section className="au-map" ref={map} aria-label="Agent universe map">
         <Backdrop variant="field" intensity={0.5} />
         <div className="au-map-head">
-          <div className="au-map-title">
+          <div className="au-map-title" title="Cards are handoffs (×N when batched); lines show the last 5 minutes of traffic">
             <span className="fl-section">Agent universe</span>
-            <span className="fl-micro">
-              <b>{ops.casesActive}</b> active cases · <b>{ops.tasksActive}</b> tasks · <b>{handoffs5m}</b> handoffs / 5 min · <b>{busy}</b>/9 busy
-              {tab !== "all" && <span className="au-scope"> · scope {tab}</span>}
-            </span>
-          </div>
-          <div className="au-legend" aria-hidden>
-            <span>
-              <span className="au-pk-card">
-                <i />
-                <i />
-                <i />
-              </span>
-              handoff
-            </span>
-            <span>
-              <b className="fl-mono" style={{ color: "var(--text)" }}>×N</b> batched
-            </span>
-            <span>
-              <span className="au-swatch-line" /> 5-min traffic
-            </span>
-            <span>
-              <span style={{ color: "var(--text)" }}>↘</span> received
-            </span>
           </div>
         </div>
 
@@ -402,9 +381,17 @@ export default function AgentUniverse() {
 
         {simulated && (
           <div className="au-simbar" aria-label="Simulation controls">
-            <span>Sim rate</span>
-            <input type="range" min={0} max={120} step={1} value={sim.ratePerMinute} onChange={(e) => sim.setRate(Number(e.target.value))} aria-label="Cases per minute" />
-            <span className="rate">{sim.ratePerMinute}/min</span>
+            <span>Rate</span>
+            <input
+              type="range"
+              min={0}
+              max={120}
+              step={1}
+              value={sim.ratePerMinute}
+              onChange={(e) => sim.setRate(Number(e.target.value))}
+              aria-label="Cases per minute"
+              title={`${sim.ratePerMinute} cases / min`}
+            />
             <button className="fl-btn small" onClick={() => sim.inject("detention_unsupported")}>
               <Zap size={11} /> Detention
             </button>
@@ -429,7 +416,6 @@ export default function AgentUniverse() {
             snapshot={snapshot}
             workload={isAgentId(panelId) ? workloads[panelId] : undefined}
             cases={cases}
-            received={received[panelId] ?? 0}
             now={now}
             onClose={() => {
               setPinned(null);

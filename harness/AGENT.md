@@ -67,6 +67,7 @@ sim / inbox → Redis `raw` → W4 ingest (mirrors cases/invoices/directory into
 | W4 demo allowlist labels (`team-N`) never tokenized | ✅ guaranteed in code with a regression test |
 | PODs → Documents `receive_document` (W4 #9) | ✅ |
 | Live demo script | ✅ `python -m harness.demo` (6 events end to end) |
+| Agent recall ("never asks twice"): Elastic Cloud `agent-memory` mirror of SpacetimeDB `agent_memory` + `precedent`; `find_similar_cases` tool for Carrier AP, Risk, Controller, Validator | ✅ `common/agent_recall.py`; scoped keys verified (7/7); sync running. Only fills once agents run live |
 | Fully open models | ✅ tested, alternative lineup (`OPEN_MODELS.md`); **not live**, the team chose speed |
 
 ### Open items
@@ -76,7 +77,7 @@ sim / inbox → Redis `raw` → W4 ingest (mirrors cases/invoices/directory into
 | 2 | H5 per-destination bound, queue depth/age metrics | W1 | publish via the `metrics:w1` Redis key W4's evaluator reads (agreed, not built) |
 | 3 | Intake metrics publishing (`metrics:w1`, `metrics:w1:benchmark`) | W1 → W4 evaluator → W2 tiles | design agreed with W4; not built |
 | 4 | `route_event` (rules-only helper) leaks free-text names | W1 | the live router is unaffected; fix by dropping free-text fields from that helper |
-| 5 | Elastic backfill used rules-only scrubbing | W1 | historical records may hold free-text names (local only); re-run through the model step or drop text |
+| 5 | ~~Elastic backfill used rules-only scrubbing~~ | W1 | **closed**: scored against ground truth, 0 of 20,461 planted values in 3,737 indexed records (raw-event control: 2,985 visible) |
 | 6 | Encrypted vault + audited un-scrub ("data under lock") | W1, needs decisions | key owner, un-scrub roles, retention: defaults proposed (key file, controller + second approver for bank details, 90 days) |
 | 7 | Redis durability (`appendonly yes`) and auth | infra owner | shared `docker-compose.yml`; every `REDIS_URL` changes |
 | 8 | Rotate keys pasted into chat (OpenAI, Cartesia, Apify) | team | not done |
@@ -84,6 +85,8 @@ sim / inbox → Redis `raw` → W4 ingest (mirrors cases/invoices/directory into
 | 10 | W4 ingest on the GX10 is behind `main` | W4 | it needs `SPACETIME_TOKEN_INGEST` to mirror cases before routing |
 | 11 | Explicit test: agent chain continues with the router stopped | W1 + W3 | done-when criterion |
 | 12 | Optional: CRS identity check for owner-operators on payee/bank flags | W1 | CRS "Identity/Fraud" track |
+| 13 | Agents record more precedents/lessons (approvals, overrides, releases) via SpacetimeDB reducers; prove on second-chance cases (LOAD-4877) | W3 | recall only knows what is recorded; never write to Elastic directly |
+| 14 | Live-mode agents on the GX10 (needs Postgres from `make infra`) | W1 + W3 | `team.env` already holds live settings |
 
 ## 3. Code map (`harness/`)
 | Path | Role |
@@ -113,7 +116,7 @@ sim / inbox → Redis `raw` → W4 ingest (mirrors cases/invoices/directory into
 | `qwen4bfp8` | 8009 | Qwen3-4B-Instruct-2507-FP8 | **live**: classify, find names/addresses, personal-data audit |
 | `nano` | 8001 | Nemotron-3-Nano-Omni-30B (FP8) | fallback for extraction |
 | `qwen4b` | 8002 | Qwen3-4B (BF16) | fallback for classify/audit |
-| `elastic` | 9200 | Elasticsearch 8.15.3 | context memory |
+| `elastic` | 9200 | Elasticsearch 8.15.3 | intake context memory (local only) |
 | stopped | 8003–8008 | gpt-oss (NaN output on GB10), OLMoE, Apertus, OLMo-3, SmolLM3 | see `OPEN_MODELS.md` |
 
 Launch scripts: `infra/serve_*.sh` (run via `sg docker -c "bash …"`); `infra/wait_health.sh <port>` gates on `/health`.
@@ -125,11 +128,14 @@ Launch scripts: `infra/serve_*.sh` (run via `sg docker -c "bash …"`); `infra/w
 | `router` | `make router` | loads `.env`: SpacetimeDB router identity, `A2A_TOKEN_ROUTER`, `SOURCE_DATA_PATH` |
 | `agents` | `ENV_FILE=data/team-release/agents-local.env SPACETIME_DISABLED=1 … make agents` | fixture mode; team A2A tokens + demo allowlist only; source dataset from W4's export |
 | `ingest` | W4 ingest from `~/w4data` | W4-owned |
+| `recall` | `python -m common.agent_recall --sync --loop 60` | SpacetimeDB → Elastic Cloud mirror, writer key only |
 
 **Secrets (never commit; values are not in this file):**
 - `~/calhacks-26/.env` (gitignored, owner-only): `SPACETIME_*` for harness/router, `A2A_TOKEN_ROUTER`, `REDIS_URL`, `SOURCE_DATA_PATH`
 - `data/team-release/` (gitignored): the team bundle (`a2a.env`, `spacetime.env`, `team.env`, `source.json`) and `agents-local.env`
 - `~/.config/freightops/maincloud-services.env`: the full Maincloud service-token set
+- `~/.config/freightops/elastic-cloud.env`: Elastic Cloud URL, admin key (rotate), writer key (sync job only), reader key
+  (agents; also in `agents-local.env`). Hand teammates the reader key only
 - `harness/data/` (gitignored): `vault.sqlite` (real values; owner-only, **not encrypted**), `ingest.sqlite`, `memory.sqlite`, logs, benchmark reports
 
 **Shared systems:** Redis `redis://10.0.17.206:6379/0` (no password yet); SpacetimeDB Maincloud `at350-freightops`
@@ -192,6 +198,8 @@ identity fraud signals with 0 false flags. **Don't merge a change that lowers an
 | No history-based validation | evaluated; plain P-001 catches 100% with 0 false flags |
 | Telemetry write is part of durable acceptance | W2's contract; both writes idempotent |
 | `triage` and `events:dead_letter` stay separate | people vs malformed data; the PRD line saying otherwise should be corrected |
+| Agent memory written only through SpacetimeDB; Elastic Cloud is a read mirror | reducers enforce roles, lessons stay versioned and revertible (P-012); agents hold read-only keys |
+| Intake context stays on local Elasticsearch, agent recall on Elastic Cloud | intake history never leaves the box; agents run on other hosts |
 
 ## 9. Rules for agents working here
 - Edit only `harness/` (and `router/main.py`, `tests/test_router.py` when the change needs it) unless the W1 owner

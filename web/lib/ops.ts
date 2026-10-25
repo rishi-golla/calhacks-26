@@ -706,6 +706,14 @@ export type AttentionItem = {
   row: Row;
 };
 
+const APPROVAL_TITLE: Record<string, string> = {
+  propose_payment: "Release carrier payment",
+  release_hold: "Release hold",
+  post_journal_entry: "Post journal entry",
+  request_journal_entry: "Post journal entry",
+  set_credit_limit: "Set credit limit",
+};
+
 export function buildAttention(snapshot: Snapshot, cases: Map<string, CaseView>, now: number): AttentionItem[] {
   const items: AttentionItem[] = [];
   for (const a of snapshot.approval)
@@ -718,7 +726,7 @@ export function buildAttention(snapshot: Snapshot, cases: Map<string, CaseView>,
         caseId: str(a.case_id, ""),
         taskId: str(a.task_id, ""),
         agent: str(a.requested_by, "controller"),
-        title: `Approve ${str(a.action, "action").replaceAll("_", " ")}`,
+        title: APPROVAL_TITLE[str(a.action, "")] ?? str(a.action, "Approval").replaceAll("_", " "),
         detail: cases.get(str(a.case_id))?.title ?? str(a.target_id, ""),
         amount: num(a.amount),
         row: a,

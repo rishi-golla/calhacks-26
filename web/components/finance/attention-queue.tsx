@@ -1,10 +1,10 @@
 "use client";
 /**
  * Needs-attention queue: everything that is waiting on a person, grouped by
- * kind with counts, severity-colored, each row linking to its case. Approvals
- * can be decided inline on the live database (one-time code required, as in
- * the ops console); on simulation or read-only snapshots the buttons stay
- * visible but disabled with the reason in the tooltip.
+ * kind, severity-colored, each row linking to its case. Approvals can be
+ * decided inline on the live database (one-time code required, as in the ops
+ * console); elsewhere the buttons stay visible but disabled, with one note on
+ * the group heading.
  */
 import Link from "next/link";
 import { useMemo, useState, type CSSProperties, type FormEvent } from "react";
@@ -19,16 +19,16 @@ import { useFresh, useSettled } from "./fresh";
 
 type Kind = AttentionItem["kind"];
 
-const KINDS: { kind: Kind; tag: string; group: string }[] = [
-  { kind: "approval_pending", tag: "Approve", group: "Approvals" },
-  { kind: "task_failed", tag: "Failed", group: "Failed tasks" },
-  { kind: "policy_deny", tag: "Policy", group: "Policy blocks" },
-  { kind: "input_required", tag: "Input", group: "Needs input" },
-  { kind: "review_issue", tag: "Review", group: "Review issues" },
-  { kind: "flag_open", tag: "Flag", group: "Open flags" },
-  { kind: "hold_active", tag: "Hold", group: "Active holds" },
-  { kind: "call_no_answer", tag: "No answer", group: "Unanswered calls" },
-  { kind: "stale_agent", tag: "Stale", group: "Stale agents" },
+const KINDS: { kind: Kind; tag: string }[] = [
+  { kind: "approval_pending", tag: "Approve" },
+  { kind: "task_failed", tag: "Failed" },
+  { kind: "policy_deny", tag: "Policy" },
+  { kind: "input_required", tag: "Input" },
+  { kind: "review_issue", tag: "Review" },
+  { kind: "flag_open", tag: "Flag" },
+  { kind: "hold_active", tag: "Hold" },
+  { kind: "call_no_answer", tag: "No answer" },
+  { kind: "stale_agent", tag: "Stale" },
 ];
 const KIND_META = Object.fromEntries(KINDS.map((k) => [k.kind, k])) as Record<Kind, (typeof KINDS)[number]>;
 /** Approval actions read better as plain requests than as reducer names. */
@@ -41,6 +41,7 @@ const APPROVAL_TITLE: Record<string, string> = {
 const titleFor = (item: AttentionItem) =>
   item.kind === "approval_pending" ? (APPROVAL_TITLE[str(item.row.action, "")] ?? item.title) : item.title;
 const PER_GROUP = 4;
+const LIVE_ONLY = "Approvals need a live connection";
 
 export function AttentionQueue({ id }: { id?: string }) {
   const { attention, source } = useOps();
@@ -76,7 +77,7 @@ export function AttentionQueue({ id }: { id?: string }) {
       {groups.length > 1 && (
         <div className="fh-att-filter" role="toolbar" aria-label="Filter by kind">
           <button className={active === "all" ? "on" : ""} onClick={() => setFilter("all")} aria-pressed={active === "all"}>
-            All <b>{attention.length}</b>
+            All
           </button>
           {groups.map((g) => (
             <button key={g.kind} className={active === g.kind ? "on" : ""} onClick={() => setFilter(g.kind)} aria-pressed={active === g.kind}>
@@ -89,14 +90,7 @@ export function AttentionQueue({ id }: { id?: string }) {
         {attention.length === 0 ? (
           <div className="fh-empty">
             <Mascot id="validator" mood={source === "live" || source === "simulation" ? "success" : "sleeping"} size={56} />
-            <div>
-              <div className="fl-label strong">{emptyNote(source, "All clear")}</div>
-              <div className="fh-empty-sub">
-                {source === "live" || source === "simulation" || source === "fallback"
-                  ? "Nothing is waiting on a person right now."
-                  : "The queue fills in once rows arrive."}
-              </div>
-            </div>
+            <div className="fl-label strong">{emptyNote(source, "All clear")}</div>
           </div>
         ) : (
           shown.map((g) => {
@@ -105,8 +99,8 @@ export function AttentionQueue({ id }: { id?: string }) {
             return (
               <div className="fh-att-group" key={g.kind}>
                 <div className="fh-att-group-head">
-                  <span>{g.group}</span>
-                  <span className="fl-num">{g.items.length}</span>
+                  <span>{g.tag}</span>
+                  {g.kind === "approval_pending" && source !== "live" && <span className="fh-att-why">{LIVE_ONLY}</span>}
                 </div>
                 <ul>
                   {items.map((item) => (
@@ -151,10 +145,7 @@ function AttentionRow({ item, settled }: { item: AttentionItem; settled: boolean
     <>
       <Mascot id={item.agent || "human"} size={28} mood={mood} title={nick(item.agent)} />
       <span className="fh-att-main">
-        <span className="fh-att-top">
-          <b className="fh-att-tag">{meta?.tag ?? item.kind}</b>
-          <span className="fh-att-title">{titleFor(item)}</span>
-        </span>
+        <span className="fh-att-title">{titleFor(item)}</span>
         <span className="fh-att-sub">
           {item.caseId && <span className="fl-mono">{item.caseId}</span>}
           {item.detail && <span>{item.detail}</span>}
@@ -183,7 +174,7 @@ function AttentionRow({ item, settled }: { item: AttentionItem; settled: boolean
 }
 
 function ApprovalActions({ item }: { item: AttentionItem }) {
-  const { source, identity, mutate, simulated } = useOps();
+  const { source, identity, mutate } = useOps();
   const [decision, setDecision] = useState<"approved" | "rejected" | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -191,13 +182,7 @@ function ApprovalActions({ item }: { item: AttentionItem }) {
   const approver = str(item.row.approver, "");
   const lastError = str(item.row.last_error, "");
   const canDecide = source === "live" && Boolean(identity) && (!approver || approver === identity);
-  const why = simulated
-    ? "Simulation: the simulated controller decides these. Connect to the live database to approve."
-    : source !== "live"
-      ? "Read-only: reconnect to live SpacetimeDB to decide."
-      : !identity
-        ? "No human identity on this connection yet."
-        : "Only the designated approver can decide this request.";
+  const why = source !== "live" ? LIVE_ONLY : !identity ? "No approver identity yet" : "Only the designated approver can decide this";
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -244,7 +229,6 @@ function ApprovalActions({ item }: { item: AttentionItem }) {
       <button className="fl-btn small" disabled={!canDecide} onClick={() => setDecision("rejected")}>
         <X size={12} /> Reject
       </button>
-      {!canDecide && <span className="fh-att-why">{simulated ? "Sim decides" : "Read-only"}</span>}
       {lastError && <span className="fh-att-err">{lastError}</span>}
     </div>
   );

@@ -25,6 +25,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { usePathname } from "next/navigation";
 import { emptySnapshot, type HumanReducer, type Row, type Snapshot } from "@/lib/data";
 import { DemoSim, type SimOptions } from "@/lib/demo-sim";
 import {
@@ -42,7 +43,8 @@ import {
   type AgentWorkload,
 } from "@/lib/ops";
 import type { AgentId } from "@/lib/agents";
-import { LiveProvider, useLive } from "./live-provider";
+import { caseIdFromPath } from "@/lib/live-queries";
+import { LiveProvider, useCaseFocus, useLive } from "./live-provider";
 
 export type DataSource = "live" | "fallback" | "simulation" | "connecting" | "offline";
 export type DataMode = "auto" | "live" | "sim";
@@ -97,6 +99,9 @@ function readModeFromUrl(): DataMode | null {
 
 function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?: SimOptions }) {
   const live = useLive();
+  // A case page keeps that case's whole history live; elsewhere append-only
+  // tables hold a recent window only (see lib/live-queries).
+  useCaseFocus(caseIdFromPath(usePathname()));
   const [mode, setModeState] = useState<DataMode>(envMode);
   const [now, setNow] = useState(() => Date.now());
   const [simSnapshot, setSimSnapshot] = useState<Snapshot>(emptySnapshot);
@@ -104,6 +109,7 @@ function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?:
   const sim = useRef<DemoSim | null>(null);
   const listeners = useRef(new Set<EventListener>());
   const previous = useRef<Snapshot | null>(null);
+  const seenEpoch = useRef(live.epoch);
   const mountedAt = useRef(Date.now());
 
   useEffect(() => {
@@ -174,12 +180,17 @@ function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?:
   // Emit deltas to subscribers.
   useEffect(() => {
     // The first snapshot after mount or a source switch is history, not news:
-    // emitting it would replay thousands of events into the animations.
+    // emitting it would replay thousands of events into the animations. So is
+    // a bulk load on the live connection (a case's history, the window sliding).
     const baseline = previous.current;
     previous.current = snapshot;
-    if (!baseline) return;
+    const bulk = !simulated && seenEpoch.current !== live.epoch;
+    seenEpoch.current = live.epoch;
+    if (!baseline || bulk) return;
     const events = diffSnapshots(baseline, snapshot);
     if (events.length) for (const l of listeners.current) l(events);
+    // live.epoch changes in the same render as the bulk-loaded snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot]);
   // Reset diff baseline when the source flips so a switch does not replay history as "new".
   useEffect(() => {
@@ -238,7 +249,7 @@ function OpsBridge({ children, simOptions }: { children: ReactNode; simOptions?:
 
 export function DataProvider({ children, simOptions }: { children: ReactNode; simOptions?: SimOptions }) {
   return (
-    <LiveProvider>
+    <LiveProvider profile="app">
       <OpsBridge simOptions={simOptions}>{children}</OpsBridge>
     </LiveProvider>
   );

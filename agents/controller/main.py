@@ -18,7 +18,7 @@ from common.agent_support import (
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
-from common.source_repository import (  # noqa: F401 -- fixture_mode: PR #16's HUMAN_APPROVER_ID branch
+from common.source_repository import (
     SourceRepository,
     SourceUnavailable,
     fixture_mode,

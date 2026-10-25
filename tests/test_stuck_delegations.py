@@ -312,3 +312,99 @@ def test_a_refusal_keeps_only_its_first_line_and_no_contact_details():
     error = InvalidParamsError(message="1 validation error for TaskEnvelope\nsubject\n  input_value={'phone': 'x'}")
     assert refusal_text(error) == "1 validation error for TaskEnvelope"
     assert refusal_text(ValueError("call +1 415 555 0123 or a@b.com")) == "call [redacted] or [redacted]"
+
+
+@pytest.mark.parametrize("error", [InternalError(message="task admitted; retry to retrieve its pending snapshot"),
+                                   InvalidParamsError(message="task admitted; retry to retrieve its pending snapshot"),
+                                   InvalidParamsError(message="caller identity does not match authenticated service")])
+async def test_a_transient_or_identity_refusal_parks_instead_of_closing(tmp_path, monkeypatch, error):
+    """An older child answers "task admitted; retry" as InvalidParamsError; a credential mix-up can be repaired."""
+    async def send_task(agent, envelope, meta):
+        raise error
+    monkeypatch.setattr("common.a2a_transport.send_task", send_task)
+    async with serving(tmp_path, Caller) as (_handler, agent):
+        task = await _handler.on_message_send(root_request(), ServerCallContext())
+        assert task.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
+        [dependency] = await agent.store.get_dependencies(task.id)
+        assert dependency["state"] == "pending"
+        assert (await agent.store.get(task.id))["wait_details"]["reason"] == "peer_unavailable"
+
+
+async def test_a_protocol_error_while_polling_the_child_parks(tmp_path, monkeypatch):
+    from a2a.types import Task, TaskStatus
+
+    async def send_task(agent, envelope, meta):
+        return Task(id=task_id_for("voice_desk", "verification", CASE, f"{meta.parent_task_id}:verified_callback"),
+                    context_id=CASE, status=TaskStatus(state=TaskState.TASK_STATE_WORKING))
+
+    async def get_task(agent, task_id, *, sender):
+        raise InternalError(message="snapshot store unavailable")
+    monkeypatch.setattr("common.a2a_transport.send_task", send_task)
+    monkeypatch.setattr("common.a2a_transport.get_task", get_task)
+    async with serving(tmp_path, Caller) as (handler, agent):
+        task = await handler.on_message_send(root_request(), ServerCallContext())
+        assert task.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
+        [dependency] = await agent.store.get_dependencies(task.id)
+        assert dependency["state"] == "accepted"
+
+
+async def test_a_parent_replays_cleanly_against_an_integer_era_reservation(tmp_path, monkeypatch):
+    """Reserved before this change (integers), replayed after it (doubles): the same work, not a conflict."""
+    async def send_task(agent, envelope, meta):
+        raise InvalidParamsError(message="delegation does not match a durable reservation")
+    monkeypatch.setattr("common.a2a_transport.send_task", send_task)
+    async with serving(tmp_path, Caller) as (handler, agent):
+        parent_id = task_id_for("verification", "router", CASE, "root")
+        await reserve_like_before(agent.store, parent_id)
+        task = await handler.on_message_send(root_request(), ServerCallContext())
+        assert task.id == parent_id and task.status.state == TaskState.TASK_STATE_COMPLETED
+        assert (await agent.store.get_step(task.id, "__result"))["findings"]["state"] == "rejected"
+        [dependency] = await agent.store.get_dependencies(parent_id)
+        assert dependency["state"] == "rejected"
+
+
+async def test_a_refusal_after_admission_elsewhere_does_not_close_the_reservation(tmp_path):
+    async with serving(tmp_path, Caller) as (_handler, agent):
+        parent = await admit_parent(agent.store)
+        _, _, _, dependency = await reserve_like_before(agent.store, parent["id"])
+        assert await agent.store.accept_dependency(dependency["id"])
+        assert await agent.refuse_dependency(dependency, InvalidParamsError(message="duplicate")) is None
+        assert (await agent.store.get_dependencies(parent["id"]))[0]["state"] == "accepted"
+        await agent.store.finish_dependency(dependency["id"], "canceled", [{"error": "delegation_expired"}])
+        failure = await agent.refuse_dependency(dependency, InvalidParamsError(message="closed"))
+        assert failure.state == "canceled", "an expired reservation is reported as expired, not rejected"
+
+
+async def test_an_admission_is_not_recorded_over_a_closed_reservation(tmp_path):
+    async with serving(tmp_path, Caller) as (_handler, agent):
+        parent = await admit_parent(agent.store)
+        _, _, _, dependency = await reserve_like_before(agent.store, parent["id"])
+        await agent.store.close_dependency(dependency["id"], "canceled",
+                                           [{"error": "delegation_expired", "detail": "too late"}])
+        with pytest.raises(ChildFailed) as failure:
+            await agent.accept_dependency(dependency)
+        assert failure.value.state == "canceled" and failure.value.reason == "too late"
+        assert (await agent.store.get_dependencies(parent["id"]))[0]["state"] == "canceled"
+
+
+async def test_the_sweep_waits_for_an_admission_in_progress(tmp_path, dashboard):
+    async with serving(tmp_path, Callee) as (handler, agent):
+        parent = await admit_parent(agent.store)
+        env, meta, child_id, _ = await reserve_like_before(agent.store, parent["id"])
+        dashboard["rows"] = [submitted_row(child_id, parent["id"], age_s=10_000)]
+        async with handler._admission_lock:  # an admission of this very child is under way
+            sweep = asyncio.create_task(agent.sweep_orphaned_tasks())
+            await asyncio.sleep(0.1)
+            assert not sweep.done()
+            await agent.store.admit("voice_desk", "verification", meta.idempotency_key, wire_form(env.model_dump()),
+                                    meta.model_dump(exclude_none=True), {})
+        assert await sweep == 0
+        assert (await agent.store.get_dependencies(parent["id"]))[0]["state"] == "pending"
+        assert not dashboard["written"]
+
+
+async def test_the_sweep_never_ends_a_row_without_its_reservation(tmp_path, dashboard):
+    async with serving(tmp_path, Callee) as (_handler, agent):
+        dashboard["rows"] = [submitted_row("11111111-1111-5111-8111-111111111111", "parent", age_s=100_000)]
+        assert await agent.sweep_orphaned_tasks() == 0
+        assert not dashboard["written"]

@@ -6,18 +6,12 @@ router.main.route_event). It still redacts with the rules layer, so it never han
 """
 from common.config import SKILL_OWNER
 from common.envelope import DelegationMeta, TaskEnvelope
+from common.first_hop import first_hop_meta
 from harness.ingest.redact import known_spans, redact_obj, replace_spans
 from harness.ingest.routing import table_route
 from harness.ingest.vault import Vault
 
 _vault: Vault | None = None
-
-
-def first_hop_meta(event_id: str, env: TaskEnvelope) -> DelegationMeta:
-    """Identity conventions shared with the dispatcher: the agent dedupes on event:<id>; the case correlates."""
-    return DelegationMeta(case_id=env.case_id, from_agent="router", delegation_depth=0, visited=[],
-                          idempotency_key=f"event:{event_id}", correlation_id=env.case_id, causation_id=event_id,
-                          priority=env.priority)
 
 
 def route_event(event: dict, vault: Vault | None = None) -> tuple[str, TaskEnvelope, DelegationMeta]:

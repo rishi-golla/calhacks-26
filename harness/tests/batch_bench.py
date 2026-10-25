@@ -131,7 +131,7 @@ async def run(args) -> dict:
     await pool.check_health()
     health = asyncio.create_task(pool.health_loop())
     tmp = Path(tempfile.mkdtemp(prefix="bench-"))
-    vault, dispatcher = Vault(tmp / "vault.sqlite"), Dispatcher(tmp / "ingest.sqlite")
+    vault, dispatcher = Vault(tmp / "vault.sqlite"), Dispatcher(tmp / "ingest.sqlite", transport="a2a")
     memory = Memory(tmp / "memory.sqlite")   # fresh per run, so re-runs don't flag their own earlier copies
     context = ContextStore(index=f"w1-bench-{args.tag}")   # its own index: never the live memory
     slots = asyncio.Semaphore(args.concurrency)

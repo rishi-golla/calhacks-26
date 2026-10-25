@@ -146,13 +146,14 @@ export function HarnessView({
         <select aria-label="Filter intake by status" value={dispatchStatus}
           onChange={(event) => setDispatchStatus(event.target.value)}>
           <option value="">All intake</option>
+          <option value="queued">Queued for delivery</option>
           <option value="accepted">Accepted</option>
           <option value="triage">Needs triage</option>
           <option value="not_routed">Not routed</option>
           <option value="duplicate">Duplicate</option>
         </select>
       }>
-        <p className="muted">Incoming events and their first agent handoff. Queue time measures waiting before routing; duplicate rows retain the original queue time.</p>
+        <p className="muted">Incoming events and their first agent handoff. Queued events are routed and waiting for the dispatch worker to deliver them to their agent. Queue time measures waiting before routing; later observations retain the original queue time.</p>
         <DataTable rows={dispatches} table="dispatch" columns={[
           timeColumn(),
           { key: "event_id", title: "Event" },
@@ -160,7 +161,8 @@ export function HarnessView({
           { key: "case_id", title: "Case" },
           agentColumn,
           { key: "skill" },
-          { key: "task_id", title: "Accepted task" },
+          { key: "task_id", title: "Accepted task", format: (value, row) =>
+            row.status === "queued" && !value ? <span className="muted">Awaiting delivery</span> : str(value) },
           { key: "reason" },
           { key: "queue_ms", title: "Queue wait", format: (value) => `${num(value).toLocaleString()} ms` },
           { key: "policy_version", title: "Routing policy" },

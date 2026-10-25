@@ -16,17 +16,31 @@ Approval secrets, idempotency receipts, and chain bookkeeping remain private tab
 
 ## Update the deployed module
 
-Use the publisher's existing CLI session. Confirm that `spacetime login show`
-matches the publisher above before running:
+Use the publisher's existing CLI session, on `main`, and run the whole sequence;
+`provision` is what fills the rows a publish cannot:
 
 ```bash
+make w2-check                          # Python, module tests and build, dashboard
+spacetime login show                   # must match the publisher identity above
 spacetime publish at350-freightops --server maincloud \
   --module-path spacetime/module/spacetimedb --no-config \
   --delete-data=never --yes=remote --yes=skip-login
+make spacetime-generate
+.venv/bin/python -m scripts.spacetime_cloud provision
+make cloud-verify VERIFY_ARGS="--heartbeat-wait 0"
 ```
 
 There is no automatic deletion or local-to-cloud data copy. Local development
 continues to use the separate `freightops` database on port 3000.
+
+The next publish (the cloud-backbone cutover) adds the public `source_record` table, the
+reducers `enqueue_first_hop` (router), `upsert_source_record` (ingest) and
+`ensure_agent_defaults` (admin), and the `queued` dispatch status; existing rows are kept. It
+must also carry the `release_hold` hold-split fix (`fix/release-hold-p003`: the P-003 approval
+threshold applies to every hold placed on the invoice), so both are merged to `main` before
+publishing. Start ingest only after `provision`: a missing reducer or wrong database makes ingest
+dead-letter routed entries after three refusals (see
+[TEAM-CLOUD-HANDOFF.md](../docs/TEAM-CLOUD-HANDOFF.md)).
 
 ## Provision cloud identities and fixtures
 
@@ -40,18 +54,30 @@ or stores the publisher's token and does not reuse the local server's tokens.
 .venv/bin/python -m scripts.spacetime_cloud demo
 ```
 
+After the grants, `provision` writes the private env files, then calls
+`ensure_agent_defaults` (a database initialised before an agent joined, such as `documents`,
+lacks its `agent_config` row) and opens the current accounting period plus the next 18 with
+`set_period`. A period that already exists is never called again, so a locked period stays
+locked. Re-running `provision` is safe. `handoff` regenerates the env files from the stored
+credentials without contacting Maincloud.
+
 The `demo` command writes explicitly labeled W2 fixtures through real reducers.
 It refuses to seed over non-fixture cases, a locked October period, or active
 non-fixture Carrier AP instructions. Stable operation IDs make a repeated seed
 idempotent. It does not run agents or place calls.
 
 Service credentials are stored with owner-only permissions in ignored
-`data/w2/maincloud/at350-freightops/services.env`. To run a service against the
-shared backend:
+`data/w2/maincloud/at350-freightops/services.env` (every token, plus all switches, for the
+Mac's single-checkout live launchers) and `handoff/<actor>.env` (one service each, plus that
+service's switches: `SOURCE_DATA_BACKEND=spacetime` for the agents and the router identity,
+`FIRST_HOP_TRANSPORT=spacetime` and `DISPATCH_POLL_SECONDS=1` for the router).
+`SPACETIME_TIMEOUT_SECONDS=15` is in every file. Load the app `.env` first and the file second;
+[TEAM-CLOUD-HANDOFF.md](../docs/TEAM-CLOUD-HANDOFF.md) gives the per-machine launch:
 
 ```bash
 set -a
-source data/w2/maincloud/at350-freightops/services.env
+. ./.env
+. data/w2/maincloud/at350-freightops/handoff/<actor>.env
 set +a
 ```
 

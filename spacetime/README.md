@@ -5,8 +5,11 @@ Python HTTP integration boundary. Operational records, identity permissions, fin
 delivery work and audit history live in the database. Agent execution stays with W3.
 
 The deployed team database is **`at350-freightops` on Maincloud**. See
-[CLOUD.md](CLOUD.md) for the account dashboard, connection settings, and update commands.
-The local workflow below remains available for development.
+[CLOUD.md](CLOUD.md) for the account dashboard, connection settings, and the republish sequence
+(`w2-check`, publish, `spacetime-generate`, `spacetime_cloud provision`, `cloud-verify`), and
+[the Maincloud handoff](../docs/TEAM-CLOUD-HANDOFF.md) for which machine runs which process.
+The local workflow below remains available for development; it is not a demo fallback, because
+the ASUS cannot reach a server on the Mac.
 
 ## Run locally
 
@@ -52,6 +55,14 @@ performance scores. W4's actual directory and simulation can coexist under diffe
   Audit hashes cover the actual changed cells, author and parent hash.
 - Task ownership/state transitions, allowlisted delegation, cycle/depth/fanout guards, and
   durable Validator delivery work with claim/ack leases.
+- The first hop as outbox work: `enqueue_first_hop` (router) commits a `first_hop` row in
+  `routing_outbox` and a `queued` `dispatch` row together; the dispatch worker on the agents'
+  machine claims it, delivers it over A2A and records `accepted`.
+- Per-case source truth in the public `source_record` table (`case:`, `company:`, `contacts:`,
+  `dataset:meta`), written by ingest through `upsert_source_record` with a SHA-256 digest and
+  read by agents with `SOURCE_DATA_BACKEND=spacetime`.
+- `ensure_agent_defaults` (admin) inserts any missing `agent_config` row; Maincloud provisioning
+  calls it after every publish.
 - Human flags/takeover, versioned memory/instructions and compensating instruction revert;
   caller-selected learning text cannot modify policy or permissions.
 - Generated WebSocket subscriptions powering the dashboard, with a read-only HTTP fallback.

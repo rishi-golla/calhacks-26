@@ -205,7 +205,7 @@ async def test_a_closed_reservation_refuses_a_late_resend(tmp_path, monkeypatch)
 
 async def test_an_admitted_task_whose_snapshot_is_pending_is_a_retryable_error(tmp_path, monkeypatch):
     """A parent treats InvalidParamsError as a final refusal, so this transient case must not use it."""
-    async with serving(tmp_path, Callee) as (handler, agent):
+    async with serving(tmp_path, Callee) as (handler, _agent):
         async def absent(*_args, **_kwargs):
             return None
         monkeypatch.setattr(handler.snapshots, "get", absent)
@@ -240,7 +240,7 @@ def dashboard(monkeypatch):
 
 
 async def test_sweep_closes_a_reservation_never_admitted_within_its_deadline(tmp_path, dashboard):
-    async with serving(tmp_path, Callee) as (handler, agent):
+    async with serving(tmp_path, Callee) as (_handler, agent):
         parent = await admit_parent(agent.store)
         _, _, child_id, _ = await reserve_like_before(agent.store, parent["id"], deadline_s=120)
         dashboard["rows"] = [submitted_row(child_id, parent["id"], age_s=150)]
@@ -258,7 +258,7 @@ async def test_sweep_closes_a_reservation_never_admitted_within_its_deadline(tmp
 
 
 async def test_sweep_records_a_refused_reservation_as_failed_without_waiting(tmp_path, dashboard):
-    async with serving(tmp_path, Callee) as (handler, agent):
+    async with serving(tmp_path, Callee) as (_handler, agent):
         parent = await admit_parent(agent.store)
         _, _, child_id, dependency = await reserve_like_before(agent.store, parent["id"], deadline_s=600)
         await agent.store.close_dependency(dependency["id"], "rejected", [
@@ -273,7 +273,7 @@ async def test_sweep_records_a_refused_reservation_as_failed_without_waiting(tmp
 
 
 async def test_sweep_leaves_admitted_and_accepted_children_alone(tmp_path, dashboard):
-    async with serving(tmp_path, Callee) as (handler, agent):
+    async with serving(tmp_path, Callee) as (_handler, agent):
         parent = await admit_parent(agent.store)
         env, meta, child_id, dependency = await reserve_like_before(agent.store, parent["id"])
         await agent.store.finish_dependency(dependency["id"], "accepted", [])
@@ -292,7 +292,7 @@ async def test_failed_task_rows_say_why(tmp_path, dashboard):
     class Slow(Callee):
         async def handle(self, env, meta, task_id, updater):
             raise TimeoutError
-    async with serving(tmp_path, Slow) as (handler, agent):
+    async with serving(tmp_path, Slow) as (handler, _agent):
         message = new_data_message({"task_type": "place_call", "case_id": CASE, "deadline_s": 300},
                                    context_id=CASE, role=Role.ROLE_USER)
         message.metadata.update({"case_id": CASE, "from_agent": "router", "idempotency_key": "slow"})

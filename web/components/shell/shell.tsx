@@ -25,39 +25,44 @@ export default function Shell({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const title = NAV.find((n) => (n.exact ? pathname === n.href : pathname.startsWith(n.href)))?.label ?? "FreightLine";
   return (
-    <div className="fl theme-mono theme-glass">
-      <Intro onDone={() => setReady(true)} />
-      <div className="fl-shell" style={{ opacity: ready ? 1 : 0, transition: "opacity 400ms var(--ease-out)" }}>
-        <aside className="fl-rail">
-          <Link href="/" className="fl-brand" aria-label="FreightLine home">
-            <span className="fl-brand-name">FreightLine</span>
-          </Link>
-          <nav className="fl-nav" aria-label="Main">
-            {NAV.map((item) => {
-              const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
-              return (
-                <Link key={item.href} href={item.href} className={`fl-nav-item ${active ? "active" : ""}`} aria-current={active ? "page" : undefined}>
-                  <item.icon size={15} />
-                  {item.label}
-                  {item.href === "/" && ops.approvalsPending > 0 && <span className="fl-count">{ops.approvalsPending}</span>}
-                </Link>
-              );
-            })}
-          </nav>
-        </aside>
-        <header className="fl-topbar">
-          <span className="fl-crumb">
-            <strong>{title}</strong>
-          </span>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Notifications />
-            <BurstControl />
-            <SourcePill />
-          </div>
-        </header>
-        <main className="fl-main">{children}</main>
+    <>
+      {/* The intro keeps the original Senra look, so it sits outside the themed wrapper. */}
+      <div className="fl fl-intro-host">
+        <Intro onDone={() => setReady(true)} />
       </div>
-    </div>
+      <div className="fl theme-mono theme-glass">
+        <div className="fl-shell" style={{ opacity: ready ? 1 : 0, transition: "opacity 400ms var(--ease-out)" }}>
+          <aside className="fl-rail">
+            <Link href="/" className="fl-brand" aria-label="FreightLine home">
+              <span className="fl-brand-name">FreightLine</span>
+            </Link>
+            <nav className="fl-nav" aria-label="Main">
+              {NAV.map((item) => {
+                const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
+                return (
+                  <Link key={item.href} href={item.href} className={`fl-nav-item ${active ? "active" : ""}`} aria-current={active ? "page" : undefined}>
+                    <item.icon size={15} />
+                    {item.label}
+                    {item.href === "/" && ops.approvalsPending > 0 && <span className="fl-count">{ops.approvalsPending}</span>}
+                  </Link>
+                );
+              })}
+            </nav>
+          </aside>
+          <header className="fl-topbar">
+            <span className="fl-crumb">
+              <strong>{title}</strong>
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <Notifications />
+              <BurstControl />
+              <SourcePill />
+            </div>
+          </header>
+          <main className="fl-main">{children}</main>
+        </div>
+      </div>
+    </>
   );
 }
 

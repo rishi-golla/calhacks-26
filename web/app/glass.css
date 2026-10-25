@@ -552,24 +552,6 @@
   font-size: 12px;
 }
 
-/* ------------------------------ intro splash: same type ------------------------------ */
-.fl.theme-glass .fl-intro {
-  background: #04121b;
-}
-.fl.theme-glass .fl-intro-word {
-  font-family: var(--font-display);
-  font-variation-settings: normal;
-  font-weight: 500;
-  text-transform: none;
-  letter-spacing: -0.03em;
-}
-.fl.theme-glass .fl-intro-word small {
-  font-family: var(--font-body);
-  font-weight: 400;
-  letter-spacing: 0.01em;
-  text-transform: none;
-  color: var(--text-dim);
-}
 
 /* ------------------------------ brand ------------------------------ */
 .fl.theme-glass .fl-brand {

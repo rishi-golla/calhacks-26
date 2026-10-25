@@ -99,7 +99,7 @@ export default function Intro({ onDone }: { onDone?: () => void }) {
           </div>
           <div className="fl-intro-word">
             FreightLine
-            <small>Autonomous back office</small>
+            <small>AUTONOMOUS BACK OFFICE</small>
           </div>
         </div>
       </Grid>

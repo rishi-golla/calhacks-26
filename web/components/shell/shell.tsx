@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, Bell, Database, FlaskConical, Home, ListTree, Network, Radio, RefreshCw, Table2, Zap } from "lucide-react";
+import { Activity, Bell, Database, FlaskConical, Home, ListTree, Network, RefreshCw, Table2, Zap } from "lucide-react";
 import { useOps, type DataMode } from "../data-provider";
 import { fmtAgo } from "@/lib/ops";
 import { Mascot } from "../mascot";
@@ -17,7 +17,7 @@ const LEGACY = [{ href: "/ops", label: "Ops console", icon: Table2 }];
 
 export default function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { ops, source } = useOps();
+  const { ops } = useOps();
   const [ready, setReady] = useState(false);
   const title = NAV.find((n) => (n.exact ? pathname === n.href : pathname.startsWith(n.href)))?.label ?? "FreightLine";
   return (
@@ -70,7 +70,6 @@ export default function Shell({ children }: { children: ReactNode }) {
             </Link>
             <SourcePill />
           </div>
-          {source === "simulation" && <SimulationBanner />}
         </header>
         <main className="fl-main">{children}</main>
       </div>
@@ -180,34 +179,6 @@ function SourcePill() {
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-function SimulationBanner() {
-  return (
-    <div
-      role="status"
-      style={{
-        position: "absolute",
-        left: 0,
-        right: 0,
-        top: "100%",
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "4px 20px",
-        background: "color-mix(in srgb, var(--lilac) 14%, var(--bg-0))",
-        borderBottom: "1px solid color-mix(in srgb, var(--lilac) 40%, transparent)",
-        fontFamily: "var(--font-mono)",
-        fontSize: 11,
-        letterSpacing: "0.06em",
-        textTransform: "uppercase",
-        color: "var(--lilac)",
-        zIndex: 14,
-      }}
-    >
-      <Radio size={12} /> Simulation · activity is generated in this browser and is not recorded
     </div>
   );
 }

@@ -331,3 +331,38 @@ async def test_configuration_rejects_unreviewed_actor_and_nonversion_build(setup
     assert status["invalid_configuration"] == ["APIFY_FMCSA_ACTOR_ID", "APIFY_FMCSA_BUILD"]
     monkeypatch.delenv("APIFY_TOKEN")
     assert apify.apify_configuration_status("company")["missing_configuration"] == ["APIFY_TOKEN"]
+
+
+@pytest.mark.parametrize("names,expected", [
+    (("SOURCE CARRIER INC",), True), (("Source Carrier, Inc.",), True), (("Source Carrier",), True),
+    (("SC LOGISTICS",), True),  # the DBA counts
+    (("Sierra Haul LLC",), False), (("Carrier Inc",), False),  # one shared word is not an identity
+    ((), None), ((None, ""), None),
+])
+def test_registered_name_must_match_the_case_carrier(names, expected):
+    record = apify.normalize_carriers([carrier(dbaName="SC LOGISTICS")], usdot="80806", mc=None, names=names)[0]
+    assert record["name_match"] is expected
+    assert record["identity_match"] is (expected is not False)
+
+
+@pytest.mark.parametrize("ours,registered", [("J.B. Hunt Transport, Inc.", "J B HUNT TRANSPORT INC"),
+                                             ("O'Brien & Sons Trucking", "OBRIEN AND SONS TRUCKING LLC"),
+                                             ("Cherokee Freight Lines", "CHEROKEE FREIGHT LINES STOCKTON LLC")])
+def test_name_match_ignores_punctuation_suffixes_and_locations(ours, registered):
+    assert apify.carrier_name_matches({"legal_name": registered}, [ours]) is True
+
+
+async def test_cached_lookup_is_judged_against_each_cases_carrier_name(setup):
+    agent, env = setup
+    requests = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(responses(requests))) as client:
+        ours = await apify.lookup_carrier(agent, env, "task", usdot="80806", names=["Source Carrier Inc"],
+                                          client=client)
+        other = await apify.lookup_carrier(agent, env, "next", usdot="80806", names=["Sierra Haul LLC"],
+                                           client=client)
+    assert sum(r.method == "POST" for r in requests) == 1, "the name verdict never costs another paid run"
+    assert ours["identity_match"] is True and "identity_mismatch" not in ours
+    assert other["cached"] and other["available"] is True and other["identity_match"] is False
+    assert other["records"][0]["name_match"] is False
+    assert other["identity_mismatch"] == {"reason": "registered_name_differs", "expected_names": ["Sierra Haul LLC"],
+                                          "registered_names": ["SOURCE CARRIER INC"]}

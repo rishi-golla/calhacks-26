@@ -791,6 +791,18 @@
   padding: 14px 14px 12px;
   border-bottom: 1px solid var(--line);
 }
+.au-panel-head.no-mascot {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+/* Particle mascot band above the header: a flat wash of the agent's colour over the panel. */
+.au-portrait {
+  position: relative;
+  flex: none;
+  height: 168px;
+  background: color-mix(in srgb, var(--c) 12%, transparent);
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
 .au-panel-head h2 {
   font-family: var(--font-display);
   font-variation-settings: "wdth" 80;

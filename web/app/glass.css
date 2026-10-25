@@ -63,13 +63,13 @@
   pointer-events: none;
 }
 .fl.theme-glass::before {
-  background:
-    radial-gradient(60% 55% at 78% 8%, rgba(34, 170, 150, 0.7), transparent 70%),
-    radial-gradient(55% 60% at 12% 30%, rgba(40, 95, 175, 0.62), transparent 70%),
-    radial-gradient(50% 45% at 55% 95%, rgba(24, 130, 140, 0.55), transparent 70%),
-    radial-gradient(40% 40% at 90% 70%, rgba(60, 60, 120, 0.35), transparent 70%),
-    linear-gradient(180deg, #0a2e3c 0%, #061a26 45%, #030d14 100%);
-  animation: glass-drift 36s ease-in-out infinite alternate;
+  content: "";
+  position: fixed;
+  inset: -6%;
+  z-index: -2;
+  background: url("/bg/grainient.jpg") center / cover no-repeat, #04121b;
+  animation: glass-drift 40s ease-in-out infinite alternate;
+  will-change: transform;
 }
 .fl.theme-glass::after {
   background:
@@ -80,11 +80,9 @@
 @keyframes glass-drift {
   from {
     transform: scale(1) translate3d(0, 0, 0);
-    filter: hue-rotate(0deg);
   }
   to {
-    transform: scale(1.08) translate3d(-2%, 1.5%, 0);
-    filter: hue-rotate(-14deg);
+    transform: scale(1.06) translate3d(-1.5%, 1%, 0);
   }
 }
 .fl.theme-glass .fm-wave {
@@ -585,4 +583,66 @@
   letter-spacing: -0.02em;
   text-transform: none;
   color: #fff;
+}
+
+/* ------------------------------ agents: declutter ------------------------------ */
+.fl.theme-glass :is(.au-chips, .au-recv, .au-order, .au-spin, .au-ring, .au-ticker, .au-flash, .au-legend, .au-nick, .au-glow) {
+  display: none !important;
+}
+.fl.theme-glass .au-map-title .fl-section {
+  font-size: 15px;
+  font-weight: 500;
+  color: #fff;
+}
+.fl.theme-glass .au-map-title .fl-micro {
+  font-size: 12.5px;
+  color: var(--text-mute);
+}
+.fl.theme-glass .au-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+}
+.fl.theme-glass .au-meta {
+  font-size: 11.5px;
+  color: var(--text-mute);
+}
+.fl.theme-glass .au-meta b {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.fl.theme-glass .au-map {
+  border-right: 0;
+}
+.fl.theme-glass .au-rail {
+  margin: 0 16px 16px 0;
+  border: 1px solid var(--glass-line);
+  border-radius: 24px;
+  box-shadow: var(--card-edge);
+  position: relative;
+  z-index: 30;
+}
+.fl.theme-glass .au-map .mascot-bubble {
+  display: none !important;
+}
+.fl.theme-glass .au-casebar {
+  left: 24px;
+  right: auto;
+  max-width: 60%;
+}
+
+/* hover/pin panel floats over the map instead of covering the rail */
+.fl.theme-glass .au-panel {
+  inset: 16px auto 16px auto;
+  right: calc(100% + 16px);
+  width: min(380px, 40vw);
+  border: 1px solid var(--glass-line);
+  border-radius: 24px;
+  background: rgba(9, 30, 42, 0.9);
+  -webkit-backdrop-filter: blur(26px) saturate(118%);
+  backdrop-filter: blur(26px) saturate(118%);
+  box-shadow:
+    var(--card-edge),
+    0 24px 60px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
 }

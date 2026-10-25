@@ -357,3 +357,23 @@ test("fmtMoney / fmtDuration / fmtAgo edge cases", () => {
   assert.equal(fmtAgo(NOW - 3 * 3_600_000, NOW), "3h ago");
   assert.equal(fmtAgo(NOW - 2 * 86_400_000, NOW), "2d ago");
 });
+
+test("diffSnapshots: live doc reads count only alongside their audit row", () => {
+  const old = (n: number) => ({ id: `DR-old-${n}`, task_id: "T1", agent: "documents", doc_ref: `doc:old-${n}` });
+  const base = snap({ task: [task({ task_id: "T1" })] });
+  // A task update pulls its old reads into the window: history, not news.
+  const replay = snap({ task: [task({ task_id: "T1", updated_at: at(30) })], doc_read: [old(1), old(2)] });
+  assert.deepEqual(diffSnapshots(base, replay).filter((e) => e.type === "doc_read"), []);
+  // A fresh read arrives with its record_doc_read audit row, possibly beside old ones.
+  const fresh = snap({
+    task: replay.task,
+    doc_read: [old(1), old(2), { id: "DR-new", task_id: "T1", agent: "documents", doc_ref: "doc:new" }],
+    audit_event: [{ id: "a9", kind: "record_doc_read", case_id: "C1", task_id: "T1", ts: at(31) }],
+  });
+  const reads = diffSnapshots(base, fresh).filter((e) => e.type === "doc_read") as { docRef: string; at: number }[];
+  assert.deepEqual(reads.map((e) => e.docRef), ["doc:new"]);
+  assert.equal(reads[0].at, Date.parse(at(31)));
+  // Simulated reads carry their own timestamp and need no audit row.
+  const sim = snap({ doc_read: [{ id: "DR-s", task_id: "T1", doc_ref: "doc:s", ts: at(4) }] });
+  assert.equal(diffSnapshots(base, sim).filter((e) => e.type === "doc_read").length, 1);
+});

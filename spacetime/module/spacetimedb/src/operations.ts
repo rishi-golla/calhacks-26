@@ -360,9 +360,12 @@ export const releaseHold: Handler = m => {
   const remaining = cents(previous.amount) - cents(previous.released_amount);
   const value = amount(p, 'amount', remaining / 100);
   if (cents(value) <= 0 || cents(value) > remaining) throw new Error('release exceeds remaining hold');
-  // Threshold is on original hold size, so splitting a $9,400 hold into two
-  // $4,700 releases cannot bypass the required independent human decision.
-  if (cents(previous.amount) > 500000) consumeApproval(m, text(p, 'approval_id', text(p, 'human_approval_id', '')), 'release_hold', previous.id, previous.case_id, value, previous.invoice_id);
+  // P-003 is thresholded on everything ever held on the invoice: original hold
+  // amounts, released holds included. Holds are never deleted or shrunk, so the
+  // total only grows and at most $5,000 of an invoice can be released without a
+  // human, however the hold is split, partially released or placed in turn.
+  const exposure = sumCents([...ctx.db.hold.invoice_id.filter(previous.invoice_id)].map(x => x.amount));
+  if (exposure > 500000) consumeApproval(m, text(p, 'approval_id', text(p, 'human_approval_id', '')), 'release_hold', previous.id, previous.case_id, value, previous.invoice_id);
   const released_amount = (cents(previous.released_amount) + cents(value)) / 100;
   const row = { ...previous, released_amount, status: cents(released_amount) === cents(previous.amount) ? 'released' : 'active', released_by: actor.actor, released_at: now(ctx) };
   ctx.db.hold.id.update(row);

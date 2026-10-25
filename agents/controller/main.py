@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from agents.controller.card import DESCRIPTIONS
 from agents.risk.tools import audit_charges, charge_workings
+from common import policy
 from common.agent_support import (
     child_envelope,
     evidence,
@@ -17,7 +18,7 @@ from common.agent_support import (
 from common.envelope import DelegationMeta, TaskEnvelope
 from common.runtime import FreightAgent
 from common.server import serve
-from common.source_repository import (  # noqa: F401 -- fixture_mode: PR #16's HUMAN_APPROVER_ID branch
+from common.source_repository import (
     SourceRepository,
     SourceUnavailable,
     fixture_mode,
@@ -158,7 +159,15 @@ class ControllerAgent(FreightAgent):
                 return await finish(self, env, task_id, outcome="unverified", findings={
                     "reason": "source evidence does not authorize releasing the hold"}, evidence_refs=refs)
             payload = {"id": hold_id, "amount": number(release)}
-            if money(hold["amount"]) > 5000:
+            # P-003 counts every hold ever placed on this invoice, so split holds still need a human.
+            if fixture_mode():
+                invoice_holds = [item for item in source.get("holds", [])
+                                 if item.get("invoice_id", hold.get("invoice_id")) == hold.get("invoice_id")]
+            else:
+                invoice_holds = await rows(self.name, "hold", "invoice_id", hold["invoice_id"])
+            if policy.release_hold_needs_approval({
+                    "amount": release, "hold_amount": hold["amount"],
+                    "invoice_hold_total": policy.invoice_hold_exposure(invoice_holds)}):
                 decision = await self.approval(env, task_id, source, "release_hold", hold_id, release)
                 if not decision["approved"]:
                     return await finish(self, env, task_id, outcome="reject", findings=decision,

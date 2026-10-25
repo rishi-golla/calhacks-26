@@ -155,6 +155,60 @@ test('large releases require a designated human, exact approval, and consume onc
   assert.throws(() => h.decide());
 });
 
+const release = (h: Harness, id: string, amount: number, approval_id?: string) =>
+  h.run('controller', 'release_hold', ['controller'], op.releaseHold, approval_id ? { id, amount, approval_id } : { id, amount });
+
+test('P-003 split attack: sub-$5,000 holds on one invoice cannot release over $5,000 without a human', () => {
+  const h = new Harness(); h.open(); h.hold('HOLD-A', 4700); h.hold('HOLD-B', 4700);
+  assert.throws(() => release(h, 'HOLD-A', 4700), /P-003/);
+  assert.throws(() => release(h, 'HOLD-B', 100), /P-003/);
+  // The approval binds hold, invoice, case, action and exact amount.
+  h.approval('APP-A', 'release_hold', 'HOLD-A', 'INV-CASE-1', 4700); h.decide('APP-A');
+  assert.throws(() => release(h, 'HOLD-B', 4700, 'APP-A'), /different action, target/);
+  assert.throws(() => release(h, 'HOLD-A', 4600, 'APP-A'), /different action, target/);
+  assert.equal(h.row('approval', 'APP-A').consumed_at, '');
+  release(h, 'HOLD-A', 4700, 'APP-A');
+  assert.equal(h.row('hold', 'HOLD-A').status, 'released');
+  assert.ok(h.row('approval', 'APP-A').consumed_at);
+  assert.throws(() => release(h, 'HOLD-B', 4700, 'APP-A'), /P-003/);
+  assert.equal(h.row('hold', 'HOLD-B').released_amount, 0);
+});
+
+test('P-003 sequential split: released holds still count toward the invoice total', () => {
+  const h = new Harness(); h.open();
+  h.hold('HOLD-A', 4000); release(h, 'HOLD-A', 4000);
+  h.hold('HOLD-B', 4000);
+  assert.throws(() => release(h, 'HOLD-B', 4000), /P-003/);
+  assert.throws(() => release(h, 'HOLD-B', 1000), /P-003/);
+  assert.equal(h.row('hold', 'HOLD-B').released_amount, 0);
+  // Another invoice keeps its own total.
+  h.open('CASE-2'); h.hold('HOLD-C', 4000, 'CASE-2'); release(h, 'HOLD-C', 4000);
+  assert.equal(h.row('hold', 'HOLD-C').status, 'released');
+});
+
+test('P-003 shrink attack: a large hold cannot be reduced below the threshold and then released', () => {
+  const h = new Harness(); h.open('CASE-1', 12000); h.hold('HOLD-1', 9400);
+  assert.throws(() => release(h, 'HOLD-1', 4400), /P-003/);
+  assert.throws(() => h.hold('HOLD-1', 100), /duplicate/);
+  h.approval('APP-1', 'release_hold', 'HOLD-1', 'INV-CASE-1', 4500); h.decide('APP-1');
+  release(h, 'HOLD-1', 4500, 'APP-1');
+  assert.equal(h.row('hold', 'HOLD-1').released_amount, 4500);
+  // $4,900 remains, under the threshold, but the invoice has held $9,400.
+  assert.throws(() => release(h, 'HOLD-1', 4900), /P-003/);
+  assert.throws(() => release(h, 'HOLD-1', 4900, 'APP-1'), /P-003/);
+  h.hold('HOLD-2', 100);
+  assert.throws(() => release(h, 'HOLD-2', 100), /P-003/);
+  assert.equal(h.row('hold', 'HOLD-1').released_amount, 4500);
+});
+
+test('P-003 legitimate small releases need no approval while the invoice holds $5,000 or less', () => {
+  const h = new Harness(); h.open(); h.hold('HOLD-A', 300); h.hold('HOLD-B', 4700);
+  release(h, 'HOLD-A', 100); release(h, 'HOLD-A', 200); release(h, 'HOLD-B', 4700);
+  assert.equal(h.row('hold', 'HOLD-A').status, 'released');
+  assert.equal(h.row('hold', 'HOLD-B').status, 'released');
+  assert.equal(h.rows('approval').length, 0);
+});
+
 test('approval expiry is enforced using reducer time', () => {
   const h = new Harness(); h.open(); h.hold(); h.approval();
   h.micros += 301000000n;

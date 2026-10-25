@@ -264,6 +264,7 @@ class Exporter:
     def __init__(self, target: Path | None = None):
         self.target = target
         self.dirty = True  # the first flush writes the file even before any new arrival
+        self.written: dict | None = None  # the dataset last written, until the SpacetimeDB mirror takes it
 
     def changed(self) -> None:
         self.dirty = True
@@ -271,8 +272,15 @@ class Exporter:
     def flush(self, db: sqlite3.Connection, dataset: dict | None = None) -> None:
         """Write `dataset` (built from the current state of `db`) or, when stale, a fresh build."""
         if dataset is not None or self.dirty:
-            write(dataset or build(db), self.target)
+            dataset = dataset or build(db)
+            write(dataset, self.target)
             self.dirty = False
+            self.written = dataset
+
+    def take(self) -> dict | None:
+        """The newest dataset written since the last call, for the source-record mirror to diff."""
+        dataset, self.written = self.written, None
+        return dataset
 
 
 async def _replay(events_path: Path, db: sqlite3.Connection) -> int:

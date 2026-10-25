@@ -21,6 +21,7 @@ from tests.test_w4_data import CARRIER_ROW, SEC_SUB
 
 world = test_ingest.world
 MODULE = Path(__file__).parents[1] / "spacetime/module/spacetimedb/src/operations.ts"
+SOURCE = spacetime_mirror.SOURCE_REDUCER
 
 
 @pytest.fixture(autouse=True)
@@ -168,7 +169,11 @@ async def test_replaying_the_raw_stream_creates_no_duplicates_or_rejections(worl
         assert all(await _process(events, db, spacetime, FakeRedis([])))
     finally:
         db.close()
-    assert not spacetime.rejected and spacetime.rows == first
+    # Source records track the export (dataset:meta carries generated_at), so only their set of ids is stable.
+    assert not spacetime.rejected
+    assert {key: row for key, row in spacetime.rows.items() if key[0] != SOURCE} == \
+        {key: row for key, row in first.items() if key[0] != SOURCE}
+    assert {key for key in spacetime.rows if key[0] == SOURCE} == {key for key in first if key[0] == SOURCE}
     case = spacetime.row("open_case", load["case_id"])
     assert case["priority"] == "P1" and case["exposure_usd"] > 0 and case["title"].endswith(load["load_id"])
     assert spacetime.row("upsert_contact", f"CT-{load['carrier']['id']}")["source"] == "fmcsa"
@@ -231,9 +236,12 @@ async def test_failed_write_leaves_the_entry_unacked_and_the_retry_resends_ident
     finally:
         db.close()
     assert redis.acked[-1] == "retry-0" and not spacetime.rejected
-    # Writes that landed before the failure replay as no-ops with the same write_id and payload.
-    assert [payload for _kind, _name, payload in failed] == \
-        [payload for kind, _name, payload in retried if kind != "xadd"][:len(failed)]
+    # Writes that landed before the failure replay as no-ops with the same write_id and payload, except source
+    # records: their digests are cached, so only dataset:meta (a new generated_at) is written again.
+    assert {payload["write_id"]: payload for _kind, name, payload in failed if name != SOURCE} == \
+        {payload["write_id"]: payload for kind, _name, payload in retried if kind == "noop"}
+    assert {name for kind, name, _payload in retried if kind == "write"} == {"upsert_invoice", SOURCE}
+    assert [payload["id"] for _kind, name, payload in retried if name == SOURCE] == ["dataset:meta"]
     assert spacetime.row("upsert_invoice", next(iter(spacetime.writes("upsert_invoice")))["id"])["case_id"] == \
         load["case_id"]
 

@@ -4,11 +4,11 @@
  * Rows link to the per-case execution trace.
  */
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import { useLiveEvents, useOps } from "@/components/data-provider";
 import { Mascot } from "@/components/mascot";
-import { AGENT_IDS, AGENT_META, skillLabel, type AgentId } from "@/lib/agents";
+import { AGENT_META, skillLabel, type AgentId } from "@/lib/agents";
 import { str } from "@/lib/data";
 import { fmtDuration, fmtMoney, type AttentionKind, type CaseView } from "@/lib/ops";
 import { caseDuration, caseKind, KIND_LABEL, shortDur, type CaseKind } from "./model";
@@ -292,24 +292,6 @@ export default function CaseExplorer() {
                 {ATTENTION_META[k].label}
               </button>
             ))}
-          </div>
-          <div className="cx-agent-toggles" role="group" aria-label="Agents">
-            {AGENT_IDS.map((id) => {
-              const on = filters.agents.includes(id);
-              return (
-                <button
-                  key={id}
-                  className={`cx-agent-toggle ${on ? "on" : ""}`}
-                  aria-pressed={on}
-                  aria-label={AGENT_META[id].name}
-                  title={AGENT_META[id].name}
-                  style={{ "--accent": AGENT_META[id].color } as CSSProperties}
-                  onClick={() => patch({ agents: toggle(filters.agents, id) })}
-                >
-                  <Mascot id={id} size={22} mood={on ? "working" : "idle"} />
-                </button>
-              );
-            })}
           </div>
           <span className="cx-count fl-micro">
             {rows.length} of {caseList.length}

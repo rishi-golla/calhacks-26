@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import time
 
 from agents.validator.card import DESCRIPTIONS
 from agents.validator.tools import (
@@ -9,25 +11,43 @@ from agents.validator.tools import (
     grounded_issues,
     instruction_proposal,
     learned_line,
-    load_review,
+    review_bundle,
     review_view,
 )
 from common.agent_support import identifier, mutate
 from common.envelope import DelegationMeta, Lesson, ResultArtifact, TaskEnvelope
 from common.learning import reconstruct_instructions
 from common.providers import ProviderConfigurationError, ProviderError, infer
-from common.runtime import FreightAgent
+from common.runtime import FreightAgent, task_deadline
 from common.server import serve
 from common.spacetime_client import SpacetimeClient, SpacetimeHTTPError
 
 log = logging.getLogger(__name__)
+# A model review turn that was never answered (transport, 429, 5xx) is asked once more before the outcome is
+# checkpointed: a saved failure would leave this review without model commentary for good.
+ASSESS_RETRY_BACKOFF_S = 1.0
+# Optional model calls stop this long before the executor's deadline, so the deterministic verdict is always saved
+# (add_review, lessons, instruction publication and flag resolution are a few SpacetimeDB round trips).
+REVIEW_PERSIST_RESERVE_S = 20.0
 
 
-async def review_bundle(agent, env: TaskEnvelope, task_id: str) -> dict:
-    """The review evidence, loaded once per task: the inspection tools and the guarded workflow judge the same
-    bundle, and a replay reads the checkpoint instead of reading SpacetimeDB again."""
-    db = SpacetimeClient(actor=agent.name)
-    return await agent.step(task_id, "review_evidence", lambda: load_review(env, db))
+def model_time_left() -> float | None:
+    """Seconds an optional model call may still take before the review must persist; None outside an executor."""
+    deadline = task_deadline()
+    return None if deadline is None else deadline - REVIEW_PERSIST_RESERVE_S - time.monotonic()
+
+
+async def optional_infer(agent: str, env: TaskEnvelope, evidence: dict, *, purpose: str) -> dict:
+    """infer() within the time the review can spare; running out of it is a ProviderError like any outage, so the
+    caller keeps its deterministic result."""
+    left = model_time_left()
+    if left is not None and left <= 0:
+        raise ProviderError("no time left before the task deadline for model commentary")
+    try:
+        async with asyncio.timeout(left):
+            return await infer(agent, env, evidence, purpose=purpose)
+    except TimeoutError:
+        raise ProviderError("model commentary ran out of time before the task deadline") from None
 
 
 class ValidatorAgent(FreightAgent):
@@ -74,8 +94,21 @@ class ValidatorAgent(FreightAgent):
         refs = bundle["artifact"].get("evidence_refs", []) if isinstance(bundle["artifact"], dict) else []
         review_env = env.model_copy(update={"evidence_refs": refs})
         async def assess():
+            from common.tool_loop import retryable_turn_error
+            evidence = review_view(bundle, review.checks)
             try:
-                return await infer(self.name, review_env, review_view(bundle, review.checks), purpose="review")
+                started = time.monotonic()
+                try:
+                    return await optional_infer(self.name, review_env, evidence, purpose="review")
+                except ProviderError as error:
+                    left = model_time_left()
+                    # Retried only if an attempt as long as this one still leaves time to save the verdict.
+                    if not retryable_turn_error(error) or (
+                            left is not None and time.monotonic() - started + ASSESS_RETRY_BACKOFF_S >= left):
+                        raise
+                    log.warning("validator task %s review assessment %s; retrying once", task_id, error)
+                    await asyncio.sleep(ASSESS_RETRY_BACKOFF_S)
+                    return await optional_infer(self.name, review_env, evidence, purpose="review")
             except ProviderError as error:
                 # The model pass only explains failures the checks found (grounded) or adds advisories, so the
                 # deterministic verdict stands without it; the outage is recorded, never a silent pass.
@@ -157,9 +190,9 @@ class ValidatorAgent(FreightAgent):
                   for x in review.checks if not x["ok"] and x.get("severity") == ISSUE
                   and x["name"] != "qualitative_review"][:12]
         try:
-            result = await infer(self.name, env, {"reviewed_agent": target.get("agent"),
-                                                  "reviewed_skill": target.get("skill"),
-                                                  "failed_checks": failed}, purpose="lesson")
+            result = await optional_infer(self.name, env, {"reviewed_agent": target.get("agent"),
+                                                           "reviewed_skill": target.get("skill"),
+                                                           "failed_checks": failed}, purpose="lesson")
         except (ProviderError, ProviderConfigurationError):
             return {}
         return result.get("assessment", {})

@@ -143,6 +143,14 @@ async def load_review(env, db) -> dict:
             "flag": flag, "simulated": False}
 
 
+async def review_bundle(agent, env, task_id: str) -> dict:
+    """The review evidence, loaded once per task: the inspection tools and the guarded workflow judge the same
+    bundle, and a replay reads the checkpoint instead of reading SpacetimeDB again."""
+    from common.spacetime_client import SpacetimeClient
+    db = SpacetimeClient(actor=agent.name)
+    return await agent.step(task_id, "review_evidence", lambda: load_review(env, db))
+
+
 class Checks:
     """Ordered review checks; each names the control it applies and how serious a failure is."""
 
@@ -664,10 +672,19 @@ def clip(value, *, text: int, items: int, depth: int = 0, citations: bool = Fals
     return str(value)[:text]
 
 
+def _sequence(event) -> int:
+    try:
+        return int(event.get("sequence", 0)) if isinstance(event, dict) else 0
+    except (TypeError, ValueError):
+        return 0
+
+
 def history_view(history: list) -> list[dict]:
-    """Audit events without their hash chain; a tool event keeps only what ran and how it ended."""
+    """Audit events without their hash chain; a tool event keeps only what ran and how it ended. SQL returns rows
+    in no particular order, so the latest MAX_HISTORY_EVENTS are chosen by ``sequence``."""
+    ordered = sorted(history, key=_sequence) if isinstance(history, list) else []
     events = []
-    for event in history[-MAX_HISTORY_EVENTS:] if isinstance(history, list) else []:
+    for event in ordered[-MAX_HISTORY_EVENTS:]:
         if not isinstance(event, dict):
             continue
         item = {key: event[key] for key in HISTORY_FIELDS if key in event}
@@ -686,43 +703,87 @@ def history_view(history: list) -> list[dict]:
         elif summary:
             item["summary"] = str(summary)[:500]
         events.append(item)
-    if isinstance(history, list) and len(history) > MAX_HISTORY_EVENTS:
-        events.insert(0, {"omitted_earlier_events": len(history) - MAX_HISTORY_EVENTS})
+    if len(ordered) > MAX_HISTORY_EVENTS:
+        events.insert(0, {"omitted_earlier_events": len(ordered) - MAX_HISTORY_EVENTS})
     return events
+
+
+def capped_refs(refs, chars: int) -> list[str]:
+    """Citations in order, as many whole ones as fit in ``chars`` encoded characters (never a cut string)."""
+    kept, used = [], 2
+    for ref in refs if isinstance(refs, list) else []:
+        if not isinstance(ref, str) or len(ref) > 500:
+            continue
+        used += len(json.dumps(ref)) + 1
+        if used > chars:
+            break
+        kept.append(ref)
+    return kept
+
+
+def bounded_checks(checks: list[dict], limit: int) -> list[dict]:
+    """The authoritative checks within ``limit`` encoded characters.
+
+    First every check is kept with only its ``expected``/``actual`` (and shown ``work``) values bounded. If the list
+    is still too long (a payment with hundreds of matched deposits has a check per deposit), checks keep only name,
+    result, severity and basis; failed checks come first, then passes as the budget allows, with a marker counting
+    the passes left out. A failed check is never dropped while a passed one is kept."""
+    for text, items in ((600, 20), (200, 10), (80, 5)):
+        bounded = [{**item, **{key: clip(item[key], text=text, items=items)
+                               for key in ("expected", "actual", "work") if key in item}} for item in checks]
+        if encoded_size(bounded) <= limit:
+            return bounded
+    bare = [{key: item.get(key) for key in ("name", "ok", "severity", "basis")} for item in checks]
+    failed = [item for item in bare if not item["ok"]]
+    passed = [item for item in bare if item["ok"]]
+    kept, used = [], 2
+    for group, label in ((failed, "failed"), (passed, "passed")):
+        for index, item in enumerate(group):
+            # Room is left for the marker that counts what this and any later group lose.
+            if used + encoded_size(item) + 1 + 60 > limit:
+                omitted = len(group) - index + (len(passed) if group is failed else 0)
+                left_out = f"{len(group) - index} more {label} checks omitted"
+                if group is failed and passed:
+                    left_out += f"; {len(passed)} passed checks omitted"
+                return [*kept, {"omitted_checks": omitted, "note": left_out}]
+            kept.append(item)
+            used += encoded_size(item) + 1
+    return kept
 
 
 def review_view(bundle: dict, checks: list[dict] | None = None, *, limit: int = REVIEW_EVIDENCE_CHARS) -> dict:
     """The review bundle as the model reads it, within ``limit`` encoded characters.
 
     The target row loses artifact_json (the parsed artifact is beside it), the artifact loses per-call telemetry and
-    audit events lose their hash chain. If that is still too large, values are clipped progressively; the checks,
-    the target's identity and the cited evidence are what remain last."""
+    audit events lose their hash chain. The checks are kept whole, except that their expected/actual values are
+    bounded; everything else is clipped progressively into the budget the checks leave. Last of all only the
+    checks, the target's identity and as many of the artifact's citations as fit remain."""
     target = {key: value for key, value in (bundle.get("target") or {}).items() if key != "artifact_json"}
     artifact = bundle.get("artifact") if isinstance(bundle.get("artifact"), dict) else {}
     findings = artifact.get("findings")
     if isinstance(findings, dict):
         artifact = {**artifact, "findings": {key: value for key, value in findings.items()
                                              if key not in INTERNAL_FINDINGS}}
-    view = {"target": target, "artifact": artifact, "source": bundle.get("source") or {},
+    rest = {"target": target, "artifact": artifact, "source": bundle.get("source") or {},
             "history": history_view(bundle.get("history") or []), "flag": bundle.get("flag"),
             "simulated": bundle.get("simulated")}
     if bundle.get("resolution"):
-        view["resolution"] = bundle["resolution"]
-    if checks is not None:
-        view = {"checks": checks, **view}
+        rest["resolution"] = bundle["resolution"]
+    head = {} if checks is None else {"checks": bounded_checks(checks, limit // 2)}
     for text, items in ((100_000, 1000), (2000, 60), (600, 30), (200, 15), (80, 8)):
-        clipped = clip(view, text=text, items=items)
-        if encoded_size(clipped) <= limit:
-            return clipped
+        clipped = clip(rest, text=text, items=items)
+        if encoded_size({**head, **clipped}) <= limit:
+            return {**head, **clipped}
     keep = ("task_id", "case_id", "agent", "skill", "a2a_state", "business_status", "outcome", "confidence")
-    minimal = {"target": {key: target.get(key) for key in keep},
-               "artifact": {key: artifact.get(key) for key in ("outcome", "confidence", "evidence_refs",
-                                                               "policy_ids")},
-               "details_omitted": True}
-    if checks is not None:
-        minimal = {"checks": [{key: item.get(key) for key in ("name", "ok", "severity")} for item in checks],
-                   **minimal}
-    return clip(minimal, text=80, items=60) if encoded_size(minimal) > limit else minimal
+    identity = {key: clip(target.get(key), text=100, items=1) for key in keep}
+    policies = [item for item in artifact.get("policy_ids") or [] if isinstance(item, str)][:20]
+    minimal = {**head, "target": identity, "artifact": {
+        "outcome": clip(artifact.get("outcome"), text=100, items=1),
+        "confidence": artifact.get("confidence") if isinstance(artifact.get("confidence"), (int, float)) else None,
+        "policy_ids": [item[:40] for item in policies], "evidence_refs": []}, "details_omitted": True}
+    # Whatever the checks and identity leave goes to citations, whole ones only, so the view never passes `limit`.
+    minimal["artifact"]["evidence_refs"] = capped_refs(artifact.get("evidence_refs"), limit - encoded_size(minimal))
+    return minimal
 
 
 def brief(value, limit: int = 80) -> str:

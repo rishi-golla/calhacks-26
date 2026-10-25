@@ -45,6 +45,9 @@ PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 DEFAULT_RANK = PRIORITY_RANK[TaskEnvelope.model_fields["priority"].default]
 BACKOFF_CAP_SECONDS = 300
 FIRST_HOP_BACKOFF_CAP_SECONDS = 15
+# A review's model loop can spend most of the envelope's default 120 s and still need the deterministic fallback
+# (agents/validator/main.py) to finish; reviews get the 300 s first hops get (ROUTER_TASK_DEADLINE_S).
+REVIEW_DEADLINE_S = max(1, min(600, int(os.getenv("REVIEW_TASK_DEADLINE_S", "300"))))
 # Nack reasons that repeat identically on every attempt, so an exhausted review row is left alone.
 DETERMINISTIC_ERRORS = {"SourceUnavailable", "ValueError", "TypeError", "KeyError"}
 metadata = MetaData()
@@ -278,7 +281,7 @@ class ReviewWorker:
                     if original:
                         subject["source"] = await SourceRepository().load(
                             TaskEnvelope.model_validate(original["envelope"]))
-            env = TaskEnvelope(task_type=kind, case_id=case_id, subject=subject)
+            env = TaskEnvelope(task_type=kind, case_id=case_id, subject=subject, deadline_s=REVIEW_DEADLINE_S)
             meta = DelegationMeta(case_id=case_id, from_agent="router", idempotency_key=f"outbox:{row['id']}",
                                   correlation_id=case_id, causation_id=row["id"])
             destination = "validator"

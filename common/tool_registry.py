@@ -260,7 +260,7 @@ async def read_inbound_transcript(ctx: ToolContext, arguments: dict) -> dict:
 
 
 async def _review_bundle(ctx: ToolContext) -> dict:
-    from agents.validator.main import review_bundle
+    from agents.validator.tools import review_bundle
     return await review_bundle(ctx.agent, ctx.env, ctx.task_id)
 
 

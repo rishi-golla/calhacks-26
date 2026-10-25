@@ -200,7 +200,7 @@ async def test_review_uses_the_model_drafted_lesson_or_falls_back(tmp_path, monk
         return {"assessment": {"lesson": "Recompute net cash from collections minus payables before reporting it.",
                                "instruction": "Recompute net cash from collections minus payables in exact cents."}}
 
-    monkeypatch.setattr("agents.validator.main.load_review", load)
+    monkeypatch.setattr("agents.validator.tools.load_review", load)
     monkeypatch.setattr("agents.validator.main.infer", fake_infer)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.get_instruction_history", get_history)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.mutate", write)
@@ -265,7 +265,7 @@ async def test_review_publishes_effective_instructions_and_replays_without_dupli
                             "diff": payload["diff"], "reverts_version": 0})
         return SimpleNamespace(write_id=payload["write_id"], status_code=200)
 
-    monkeypatch.setattr("agents.validator.main.load_review", load)
+    monkeypatch.setattr("agents.validator.tools.load_review", load)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.get_instruction_history", get_history)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.get_agent_memory", no_memory)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.mutate", write)
@@ -320,7 +320,7 @@ async def test_version_race_is_superseded_and_real_rejections_propagate(tmp_path
                             "reverts_version": 0})
         return SimpleNamespace(write_id=payload["write_id"], status_code=200)
 
-    monkeypatch.setattr("agents.validator.main.load_review", load)
+    monkeypatch.setattr("agents.validator.tools.load_review", load)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.get_instruction_history", get_history)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.get_agent_memory", no_memory)
     monkeypatch.setattr("common.spacetime_client.SpacetimeClient.mutate", write)

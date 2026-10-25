@@ -14,7 +14,7 @@ from common.config import AGENTS
 from common.envelope import ResultArtifact
 from common.learning import reconstruct_instructions, task_memory_scope
 from common.providers import ProviderConfigurationError, ProviderError, configuration, mode
-from common.runtime import TaskParked
+from common.runtime import TaskParked, task_deadline
 from common.runtime_store import LeaseLost
 from common.spacetime_client import SpacetimeClient
 from common.tool_model import model_turn
@@ -183,6 +183,9 @@ def _finish(artifact: ResultArtifact, assessment: dict | None, calls: list[dict]
 async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
     from common.tool_registry import ToolContext, registry_for
 
+    # The executor ends the task at its deadline; a retry that could not finish before then only hides the reason.
+    # Outside an executor run (direct calls, tests) the loop's own start stands in for the executor's.
+    deadline_at = task_deadline() or time.monotonic() + env.deadline_s
     settings = await agent.step(task_id, "tool_loop:settings", lambda: _settings(agent, env))
     config = configuration(agent.name, f"{settings['provider']}/{settings['model']}")
     model = f"{config.provider}/{config.model}"
@@ -239,11 +242,20 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
             # An incomplete turn executed nothing, so asking again is safe; the provider cuts a turn short
             # for its own reasons (output budget, an undocumented message cap) a few percent of the time.
             for attempt in range(INCOMPLETE_TURN_RETRIES + 1):
+                started = time.monotonic()
                 try:
                     return await model_turn(config, system, history, turn_tools,
                                             evidence_refs=sorted(refs), require_tool=artifact is None)
                 except ProviderError as error:
                     if attempt >= INCOMPLETE_TURN_RETRIES or not retryable_turn_error(error):
+                        raise
+                    # Another attempt may take as long as this one did (a timeout takes MODEL_TIMEOUT_S): retry only
+                    # if that fits before the task deadline. Three 120 s timeouts would otherwise outlive a 300 s
+                    # task, which then fails as a deadline instead of with the provider's error.
+                    backoff = 0.0 if str(error).startswith("tool response incomplete") else \
+                        TURN_RETRY_BACKOFF_S * (attempt + 1)
+                    now = time.monotonic()
+                    if now + (now - started) + backoff >= deadline_at:
                         raise
                     if "max_messages" in str(error):
                         # The same conversation is cut short again at the same turn, so the retry must shrink it:
@@ -253,8 +265,7 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
                                     turn_index, error, dropped)
                     else:
                         log.warning("%s turn %d %s; retrying", agent.name, turn_index, error)
-                    if not str(error).startswith("tool response incomplete"):
-                        await asyncio.sleep(TURN_RETRY_BACKOFF_S * (attempt + 1))
+                    await asyncio.sleep(backoff)
 
         # Replaying after a wait/crash reads this exact decision instead of asking the model again.
         try:

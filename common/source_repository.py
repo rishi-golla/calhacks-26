@@ -26,6 +26,16 @@ def fixture_mode() -> bool:
     return mode == "fixture"
 
 
+def source_fixtures_only() -> bool:
+    """Read holds, approvals, proposals and journal requests from the source fixture instead of SpacetimeDB.
+
+    Fixture execution still writes through ``agent_support.mutate`` whenever SpacetimeDB is enabled, so the
+    stored rows are the truth as soon as there is a database; the fixture file stands in only when there is
+    none. Reading fixtures while writing rows made every receivable journal unfindable by its approver.
+    """
+    return fixture_mode() and os.getenv("SPACETIME_DISABLED", "1") == "1"
+
+
 def source_provenance(dataset: dict, record: dict) -> dict[str, Any]:
     """Keep synthetic evidence labeled when the executor uses real providers.
 

@@ -7,6 +7,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+import redis.asyncio as redis
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -83,6 +84,8 @@ async def lifespan(app):
     app.state.calls = store
     app.state.demo_calls = DemoCallStore(RuntimeStore(engine=store.engine))
     await app.state.demo_calls.initialize()
+    # Burst announcements go to the simulator's `raw` stream; the loads keep streaming inside this process.
+    app.state.raw = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     worker = asyncio.create_task(reconcile_calls(store)) if mode() == "live" else None
     try:
         yield
@@ -91,6 +94,7 @@ async def lifespan(app):
             worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker
+        await app.state.raw.aclose()
         await store.close()
 
 
@@ -222,6 +226,26 @@ async def request_team_call(req: Request, authorization: str = Header(default=""
     return JSONResponse(result, status_code=status)
 
 
+@app.post("/demo/burst", status_code=202)
+async def demo_burst(req: Request, authorization: str = Header(default="")):
+    """Local operator load test: `count` synthetic loads announced at once, each opening a real case through
+    ingest, the router and the agents. Same private control token as the team call; the browser never holds it."""
+    from dataclasses import asdict
+
+    from sim.demo import BURST_MAX, start_burst
+    require_demo_auth(authorization)
+    body = await object_body(req)
+    count = body.get("count", 100)
+    if set(body) - {"count"} or isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= BURST_MAX:
+        raise HTTPException(400, f"count must be an integer from 1 to {BURST_MAX}")
+    try:
+        started = await start_burst(count, req.app.state.raw)
+    except Exception as exc:  # noqa: BLE001 -- a missing world or an unreachable Redis is reported, never raw
+        log.warning("burst not announced: %s", type(exc).__name__)
+        raise HTTPException(503, "burst could not be announced; check the simulator world and Redis") from None
+    return asdict(started)
+
+
 @app.post("/demo/{kind}")
 async def demo_trigger(kind: str):
     if kind not in {"phone", "email", "bank_change", "short_pay", "scenario"}:
@@ -230,4 +254,4 @@ async def demo_trigger(kind: str):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host=os.getenv("GATEWAY_BIND_HOST", "127.0.0.1"), port=9000)
+    uvicorn.run(app, host=os.getenv("GATEWAY_BIND_HOST", "127.0.0.1"), port=int(os.getenv("GATEWAY_PORT", "9000")))

@@ -226,6 +226,19 @@ def test_lessons_name_the_failed_control_and_never_carry_long_text():
     assert len(text) <= 1000 and "[see review]" in text and "and 14 more" in text
 
 
+@pytest.mark.parametrize("broken", ["failed_run", "missing_source"])
+def test_failed_runs_and_missing_source_are_rerun_without_a_lesson(broken):
+    src = source()
+    reviewed = bundle(src, approve(src))
+    if broken == "failed_run":
+        reviewed["target"]["a2a_state"] = "failed"
+    else:
+        reviewed["source"] = {"source_error": "case not found"}
+    review = deterministic_review(reviewed)
+    assert review.verdict == "issue" and review.actions == ["rerun_task"]
+    assert review.lessons == []
+
+
 @pytest.mark.parametrize(("issues", "grounded", "ungrounded"), [
     (["approve_clear_of_above_tolerance was ignored"], 1, 0),
     (["doc:INV-1 shows a different payee"], 0, 1),

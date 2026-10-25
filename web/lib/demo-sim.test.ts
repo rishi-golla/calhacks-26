@@ -3,6 +3,7 @@ import test from "node:test";
 import { AGENT_META, isAgentId, type AgentId } from "./agents";
 import { TABLES, type Row, type Snapshot } from "./data";
 import { DemoSim } from "./demo-sim";
+import { parseChecks, parseWorkings, recheckWorking } from "./workings";
 
 const NOW = Date.parse("2026-10-24T12:00:00.000Z");
 const make = (seed = 1337, extra: Partial<ConstructorParameters<typeof DemoSim>[0]> = {}) =>
@@ -170,4 +171,37 @@ test("performance: construction < 3 s, 200 ticks < 500 ms", () => {
   for (let i = 1; i <= 200; i++) sim.tick(NOW + i * 1_000);
   const ticks = performance.now() - t0;
   assert.ok(ticks < 500, `200 ticks took ${ticks.toFixed(0)} ms`);
+});
+
+test("carrier_ap and risk artifacts show their work, and the work recomputes", () => {
+  for (const seed of SEEDS) {
+    const s = settled(seed);
+    let shown = 0;
+    for (const t of s.task) {
+      if (!["carrier_ap", "risk"].includes(String(t.agent)) || !t.artifact_json) continue;
+      const artifact = JSON.parse(String(t.artifact_json));
+      if (!artifact.findings) continue;
+      const workings = parseWorkings(artifact.findings.workings);
+      assert.ok(workings.length > 0, `${String(t.task_id)} has no workings`);
+      for (const w of workings) {
+        assert.notEqual(recheckWorking(w).status, "mismatch", `${String(t.task_id)} ${w.label}`);
+        assert.ok(w.evidence_refs.length > 0);
+      }
+      shown++;
+    }
+    assert.ok(shown > 0, `seed ${seed} produced no carrier_ap/risk results`);
+  }
+});
+
+test("simulated review checks carry severity, basis and work", () => {
+  for (const seed of SEEDS) {
+    const reviews = settled(seed).review;
+    assert.ok(reviews.length > 0);
+    for (const r of reviews) {
+      const checks = parseChecks(r.checks_json);
+      assert.ok(checks.some((c) => c.severity === "advisory"));
+      assert.ok(checks.every((c) => c.basis));
+      for (const c of checks) if (c.work) assert.equal(recheckWorking(c.work).status, "match", c.name);
+    }
+  }
 });

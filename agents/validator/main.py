@@ -1,5 +1,10 @@
 from agents.validator.card import DESCRIPTIONS
-from agents.validator.tools import deterministic_review, instruction_proposal, load_review
+from agents.validator.tools import (
+    deterministic_review,
+    grounded_issues,
+    instruction_proposal,
+    load_review,
+)
 from common.agent_support import identifier, mutate
 from common.envelope import DelegationMeta, Lesson, ResultArtifact, TaskEnvelope
 from common.learning import reconstruct_instructions
@@ -43,10 +48,17 @@ class ValidatorAgent(FreightAgent):
             self.name, review_env, {"target": target, "checks": review.checks,
                 "source": bundle["source"], "history": bundle["history"], "flag": flag}, purpose="review"))
         issues = assessment.get("assessment", {}).get("issues", [])
-        if issues:
-            review.checks.append({"name": "qualitative_review", "ok": False,
-                                  "expected": "no unresolved evidence issues", "actual": issues})
-            review.verdict = "issue"
+        grounded, ungrounded = grounded_issues(issues, review.checks)
+        if grounded:
+            # Model commentary explains a failure the deterministic checks already established;
+            # the verdict is already an issue, so this adds no authority of its own.
+            review.checks.append({"name": "qualitative_review", "ok": False, "severity": "issue",
+                                  "expected": "no unresolved evidence issues", "actual": grounded,
+                                  "basis": "model concern anchored to a failed check"})
+        if ungrounded:
+            review.checks.append({"name": "qualitative_review", "ok": False, "severity": "advisory",
+                                  "expected": "concerns anchored to checks or evidence", "actual": ungrounded,
+                                  "basis": "unanchored model commentary never changes a verdict"})
         review_id = identifier(task_id, "review")
         receipts = []
         superseded = False

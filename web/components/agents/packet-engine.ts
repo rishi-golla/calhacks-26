@@ -8,9 +8,8 @@
  * `opacity`. Events that arrive together are batched per edge into one packet
  * with a ×N badge, and concurrent packets are capped.
  *
- * The engine also owns two bits of per-node DOM that change on every event
- * and would otherwise re-render the page: the "received" counter (which ticks
- * up when a packet lands, not when the row appears) and the activity ticker.
+ * The engine also owns the per-node activity ticker, which changes on every
+ * event and would otherwise re-render the page.
  */
 import { agentColor, skillLabel, type NodeId } from "@/lib/agents";
 import { curveAngle, curveAt, edgeCurve, edgeKey, type Curve } from "./layout";
@@ -25,8 +24,6 @@ export type PacketSpec = {
   /** Tag text override (defaults to the skill label). */
   label?: string;
   kind?: PacketKind;
-  /** False when the arrival does not correspond to a "received" count (e.g. an approval decision going back). */
-  counted?: boolean;
 };
 
 export type Visibility = "show" | "dim" | "hide";
@@ -34,7 +31,6 @@ export type Visibility = "show" | "dim" | "hide";
 type NodeHandle = {
   flash?: HTMLElement | null;
   bump?: HTMLElement | null;
-  count?: HTMLElement | null;
   ticker?: HTMLElement | null;
 };
 
@@ -50,7 +46,6 @@ type Packet = {
   start: number;
   dur: number;
   count: number;
-  counted: number;
   arrived: boolean;
   arrivedAt: number;
   dim: boolean;
@@ -89,10 +84,6 @@ export class PacketEngine {
   private pool: Packet[] = [];
   private live: Packet[] = [];
   private nodes = new Map<NodeId, NodeHandle>();
-  private base = new Map<NodeId, number>();
-  private inflight = new Map<NodeId, number>();
-  private written = new Map<NodeId, string>();
-  private countsDirty = false;
   private lastFlash = new Map<NodeId, number>();
   private lastTicker = new Map<NodeId, number>();
   private raf = 0;
@@ -102,7 +93,6 @@ export class PacketEngine {
   attach(layer: HTMLDivElement) {
     this.layer = layer;
     this.reduced = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    this.countsDirty = true;
     this.schedule();
   }
 
@@ -114,30 +104,14 @@ export class PacketEngine {
     for (const p of this.pool) p.el.remove();
     this.pool = [];
     this.layer = null;
-    this.inflight.clear();
   }
 
   registerNode(id: NodeId, handle: NodeHandle) {
     this.nodes.set(id, handle);
-    this.written.delete(id);
-    this.countsDirty = true;
-    this.schedule();
   }
 
   unregisterNode(id: NodeId) {
     this.nodes.delete(id);
-    this.written.delete(id);
-  }
-
-  /** Received-handoff totals from the snapshot; the display lags by what is still in flight. */
-  setBase(counts: Partial<Record<NodeId, number>>) {
-    for (const [id, n] of Object.entries(counts) as [NodeId, number][]) {
-      if (this.base.get(id) !== n) {
-        this.base.set(id, n);
-        this.countsDirty = true;
-      }
-    }
-    if (this.countsDirty) this.schedule();
   }
 
   setVisibility(fn: (caseId: string) => Visibility) {
@@ -176,7 +150,7 @@ export class PacketEngine {
     if (!specs.length) return;
     const animate = Boolean(this.layer) && !this.reduced && !(typeof document !== "undefined" && document.hidden);
     // Group the batch by edge so a burst becomes one packet with a ×N badge.
-    const groups = new Map<string, { spec: PacketSpec; n: number; counted: number; cases: Set<string>; vis: Visibility; skills: Map<string, number> }>();
+    const groups = new Map<string, { spec: PacketSpec; n: number; cases: Set<string>; vis: Visibility; skills: Map<string, number> }>();
     for (const s of specs) {
       const vis = this.visibility(s.caseId);
       if (vis === "hide" || !animate) {
@@ -187,7 +161,6 @@ export class PacketEngine {
       const g = groups.get(key);
       if (g) {
         g.n += 1;
-        if (s.counted !== false) g.counted += 1;
         g.cases.add(s.caseId);
         g.skills.set(s.skill, (g.skills.get(s.skill) ?? 0) + 1);
         if (vis === "show") g.vis = "show";
@@ -195,7 +168,6 @@ export class PacketEngine {
         groups.set(key, {
           spec: s,
           n: 1,
-          counted: s.counted === false ? 0 : 1,
           cases: new Set([s.caseId]),
           vis,
           skills: new Map([[s.skill, 1]]),
@@ -211,10 +183,8 @@ export class PacketEngine {
         const host = this.live.find((p) => p.edge === edge && !p.arrived && now - p.start < p.dur * 0.35);
         if (host) {
           host.count += g.n;
-          host.counted += g.counted;
           for (const c of g.cases) host.caseIds.add(c);
           if (g.vis === "show") host.dim = false;
-          this.addInflight(s.to, g.counted);
           host.badge.textContent = `×${host.count}`;
           host.badge.style.display = "";
         }
@@ -230,7 +200,6 @@ export class PacketEngine {
       p.start = now + i * 55;
       p.dur = this.duration + (i % 4) * 60;
       p.count = g.n;
-      p.counted = g.counted;
       p.arrived = false;
       p.arrivedAt = 0;
       p.dim = g.vis !== "show";
@@ -249,19 +218,12 @@ export class PacketEngine {
       p.badge.style.display = g.n > 1 ? "" : "none";
       p.el.style.opacity = "0";
       this.live.push(p);
-      this.addInflight(s.to, g.counted);
       i += 1;
     }
     this.schedule();
   }
 
   /* ------------------------------ internals ------------------------------ */
-
-  private addInflight(id: NodeId, n: number) {
-    if (!n) return;
-    this.inflight.set(id, (this.inflight.get(id) ?? 0) + n);
-    this.countsDirty = true;
-  }
 
   private acquire(): Packet | null {
     if (!this.layer) return null;
@@ -280,7 +242,7 @@ export class PacketEngine {
     badge.className = "au-pk-n";
     el.append(card, tag, badge);
     this.layer.append(el);
-    return { el, card, tag, badge, kind: "", curve: edgeCurve("intake", "carrier_ap"), edge: "", to: "intake", start: 0, dur: 1, count: 1, counted: 0, arrived: false, arrivedAt: 0, dim: false, caseIds: new Set() };
+    return { el, card, tag, badge, kind: "", curve: edgeCurve("intake", "carrier_ap"), edge: "", to: "intake", start: 0, dur: 1, count: 1, arrived: false, arrivedAt: 0, dim: false, caseIds: new Set() };
   }
 
   private release(p: Packet) {
@@ -293,10 +255,6 @@ export class PacketEngine {
   private arrive(p: Packet, now: number) {
     p.arrived = true;
     p.arrivedAt = now;
-    if (p.counted) {
-      this.inflight.set(p.to, Math.max(0, (this.inflight.get(p.to) ?? 0) - p.counted));
-      this.countsDirty = true;
-    }
     if (!p.dim) this.flash(p.to, p.count > 1);
   }
 
@@ -316,20 +274,6 @@ export class PacketEngine {
       { duration: 760, easing: ease },
     );
     h.bump?.animate([{ transform: "scale(1)" }, { transform: "scale(1.07)", offset: 0.35 }, { transform: "scale(1)" }], { duration: 420, easing: ease });
-    h.count?.animate([{ transform: "translateY(-3px)", opacity: 0.4 }, { transform: "none", opacity: 1 }], { duration: 360, easing: ease });
-  }
-
-  private writeCounts() {
-    this.countsDirty = false;
-    for (const [id, h] of this.nodes) {
-      if (!h.count) continue;
-      const v = Math.max(0, (this.base.get(id) ?? 0) - (this.inflight.get(id) ?? 0));
-      const text = v.toLocaleString("en-US");
-      if (this.written.get(id) !== text) {
-        h.count.textContent = text;
-        this.written.set(id, text);
-      }
-    }
   }
 
   private schedule() {
@@ -372,7 +316,6 @@ export class PacketEngine {
       this.live[keep++] = p;
     }
     this.live.length = keep;
-    if (this.countsDirty) this.writeCounts();
     if (this.live.length) this.schedule();
   };
 }

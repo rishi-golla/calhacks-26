@@ -7,16 +7,11 @@
 
 .au {
   --rail-w: 348px;
-  --banner: 0px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--rail-w);
   height: calc(100dvh - var(--topbar));
-  padding-top: var(--banner);
   position: relative;
   overflow: hidden;
-}
-.au.simulated {
-  --banner: 23px;
 }
 
 /* ------------------------------- map ------------------------------- */
@@ -46,40 +41,6 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-.au-map-title .fl-micro b {
-  color: var(--text);
-  font-weight: 500;
-}
-.au-legend {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-mute);
-}
-.au-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.au-legend .au-pk-card {
-  position: static;
-  transform: none;
-  width: 9px;
-  height: 11px;
-  padding: 2px 1.5px;
-  gap: 1px;
-}
-.au-legend .au-swatch-line {
-  width: 18px;
-  border-top: 1px dashed var(--text-mute);
-}
-.au-scope {
-  color: var(--orange);
 }
 
 .au-stage .mascot-bubble {
@@ -263,32 +224,6 @@
 .au-node.focus .au-glow {
   opacity: 0.75;
 }
-.au-recv {
-  position: absolute;
-  right: -26%;
-  top: -2%;
-  z-index: 4;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 5px;
-  font-family: var(--font-mono);
-  font-size: calc(10px * var(--ts));
-  font-variant-numeric: tabular-nums;
-  line-height: 1.35;
-  color: var(--text);
-  background: var(--bg-0);
-  border: 1px solid color-mix(in srgb, var(--c) 55%, transparent);
-  white-space: nowrap;
-}
-.au-recv i {
-  font-style: normal;
-  color: var(--c);
-}
-.au-recv b {
-  font-weight: 500;
-  display: inline-block;
-}
 .au-nick {
   position: absolute;
   left: -22%;
@@ -369,6 +304,10 @@
   color: var(--text);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+.au-meta span + span::before {
+  content: "·";
+  margin-right: 8px;
 }
 .au-chips {
   margin-top: 6px;
@@ -582,11 +521,6 @@
   background: transparent;
   accent-color: var(--lilac);
 }
-.au-simbar .rate {
-  min-width: 52px;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
 .au-simbar .fl-btn.small {
   padding: 3px 7px;
   font-size: 11px;
@@ -605,7 +539,7 @@
 }
 .au-metrics {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   border-bottom: 1px solid var(--line);
 }
 .au-metric {
@@ -614,10 +548,10 @@
   border-bottom: 1px solid var(--line-soft);
   min-width: 0;
 }
-.au-metric:nth-child(3n) {
+.au-metric:nth-child(2n) {
   border-right: 0;
 }
-.au-metric:nth-child(n + 4) {
+.au-metric:nth-child(n + 3) {
   border-bottom: 0;
 }
 .au-metric .v {
@@ -639,6 +573,13 @@
   text-transform: uppercase;
   color: var(--text-mute);
   white-space: nowrap;
+}
+.au-metric .k small {
+  margin-left: 6px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  opacity: 0.75;
 }
 .au-explorer-head {
   padding: 12px 12px 10px;
@@ -714,6 +655,9 @@
 .au-row:hover {
   background: rgba(255, 255, 255, 0.035);
 }
+.au-row.needs {
+  box-shadow: inset 2px 0 0 var(--orange);
+}
 .au-row.sel {
   background: rgba(255, 255, 255, 0.07);
   box-shadow: inset 2px 0 0 #fff;
@@ -770,16 +714,6 @@
   font-size: 11px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
-}
-.au-row .att {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #000;
-  background: var(--orange);
-  padding: 0 5px;
-  line-height: 1.5;
 }
 .au-row .open {
   display: grid;
@@ -878,18 +812,6 @@
   color: var(--text-mute);
   margin-top: 2px;
 }
-.au-skills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.au-skills span {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  padding: 2px 6px;
-  border: 1px solid var(--line);
-  color: var(--text-dim);
-}
 .au-links {
   display: flex;
   flex-wrap: wrap;
@@ -975,9 +897,6 @@
 @media (max-width: 1100px) {
   .au {
     --rail-w: 300px;
-  }
-  .au-legend {
-    display: none;
   }
 }
 @media (max-width: 900px) {

@@ -1,7 +1,7 @@
 /**
- * Selectors local to the agent universe: which edges carry traffic, how many
- * handoffs each node has received, what a case's path looks like, and how a
- * batch of `LiveEvent`s becomes packets. Pure functions over the snapshot.
+ * Selectors local to the agent universe: which edges carry traffic, what a
+ * case's path looks like, and how a batch of `LiveEvent`s becomes packets.
+ * Pure functions over the snapshot.
  */
 import { isAgentId, type AgentId, type NodeId } from "@/lib/agents";
 import { str, timestamp, type Snapshot } from "@/lib/data";
@@ -30,23 +30,9 @@ export function matchesTab(c: CaseView, tab: KindTab): boolean {
 
 export const scenarioLabel = (key: string) => (key && key !== "—" ? key.replaceAll("_", " ") : "unclassified");
 
-/* --------------------------- received handoffs --------------------------- */
+/* ------------------------------ edge traffic ------------------------------ */
 
 const isReview = (row: Record<string, unknown>) => row.agent === "validator" && !row.parent_task_id;
-
-/** Handoffs each node has received, as recorded in the snapshot. */
-export function receivedCounts(snapshot: Snapshot): Partial<Record<NodeId, number>> {
-  const out: Partial<Record<NodeId, number>> = { intake: snapshot.case.length, human: snapshot.approval.length };
-  const add = (id: unknown) => {
-    if (isAgentId(id)) out[id] = (out[id] ?? 0) + 1;
-  };
-  for (const d of snapshot.dispatch) add(d.agent);
-  for (const e of snapshot.delegation_edge) add(e.to_agent);
-  for (const t of snapshot.task) if (isReview(t)) add("validator");
-  return out;
-}
-
-/* ------------------------------ edge traffic ------------------------------ */
 
 export type EdgeStat = { key: string; from: NodeId; to: NodeId; total: number; recent: number; lastAt: number };
 
@@ -143,7 +129,7 @@ export function packetsFor(events: LiveEvent[], cases: Map<string, CaseView>, wa
       case "approval": {
         const by: AgentId = isAgentId(e.agent) ? e.agent : "controller";
         if (e.decision === "pending") out.push({ from: by, to: "human", skill: "approval", label: "Approval", caseId: e.caseId, kind: "stamp" });
-        else out.push({ from: "human", to: "controller", skill: e.decision, label: e.decision, caseId: e.caseId, kind: "stamp", counted: false });
+        else out.push({ from: "human", to: "controller", skill: e.decision, label: e.decision, caseId: e.caseId, kind: "stamp" });
         break;
       }
     }

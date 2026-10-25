@@ -26,26 +26,9 @@
   padding: 20px 24px 0;
   min-width: 0;
 }
-.fl .cx-page.is-sim,
-.fl .ct-page.is-sim,
-.fl .ct-missing.is-sim {
-  padding-top: 24px;
-}
-.fl .cx-page.is-sim {
-  padding-top: 44px;
-}
-
 .fl .cx-head {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto 220px;
-  align-items: end;
-  gap: 24px;
+  display: flex;
   padding-bottom: 16px;
-}
-.fl .cx-h1 {
-  font-size: 28px;
-  margin-top: 8px;
-  text-wrap: balance;
 }
 .fl .cx-stats {
   display: flex;
@@ -68,49 +51,6 @@
   font-size: 22px;
   line-height: 1;
 }
-.fl .cx-hist {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.fl .cx-hist-bars {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-  height: 46px;
-  border-bottom: 1px solid var(--line);
-}
-.fl .cx-hist-bar {
-  position: relative;
-  flex: 1;
-}
-.fl .cx-hist-bar i {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 100%;
-  transform-origin: 50% 100%;
-  transition: transform var(--t-reveal) var(--ease-out);
-}
-.fl .cx-hist-bar .res {
-  background: color-mix(in srgb, var(--teal) 55%, transparent);
-}
-.fl .cx-hist-bar .open {
-  background: var(--orange);
-}
-.fl .cx-hist-bar.now .res {
-  background: var(--teal);
-}
-.fl .cx-hist-bar:hover .res {
-  background: var(--text);
-}
-.fl .cx-hist-axis {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-}
-
 .fl .cx-filters {
   display: flex;
   flex-direction: column;
@@ -285,9 +225,6 @@
 }
 .fl .cx-rows .cx-row:hover {
   background: rgba(255, 255, 255, 0.03);
-}
-.fl .cx-rows .cx-row.needs {
-  box-shadow: inset 2px 0 0 var(--orange);
 }
 .fl .cx-fresh::before {
   content: "";
@@ -1074,14 +1011,7 @@
 .fl .ct-json[open] summary::before {
   transform: rotate(90deg);
 }
-.fl .ct-json summary code {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  font-size: 11px;
-}
-.fl .ct-json summary:hover code {
+.fl .ct-json summary:hover {
   color: var(--text-dim);
 }
 .fl .ct-json pre {
@@ -1164,7 +1094,7 @@
 }
 .fl .ct-audit li {
   display: grid;
-  grid-template-columns: 58px 110px minmax(0, 1fr) auto;
+  grid-template-columns: 58px 110px minmax(0, 1fr);
   gap: 8px;
   align-items: baseline;
   font-size: 11.5px;
@@ -1178,9 +1108,6 @@
 }
 .fl .ct-audit-text {
   color: var(--text-dim);
-}
-.fl .ct-hash {
-  font-size: 10px;
 }
 .fl .ct-log {
   list-style: none;
@@ -1333,9 +1260,6 @@
 }
 
 @media (max-width: 1100px) {
-  .fl .cx-head {
-    grid-template-columns: 1fr;
-  }
   .fl .cx-row {
     grid-template-columns: 120px minmax(160px, 1fr) 46px 110px 90px 120px 70px;
   }
@@ -1351,4 +1275,92 @@
   .fl .ct-scroll.with-panel {
     right: 0;
   }
+}
+
+/* ------------------------------------------------------------------
+ * Evidence viewer + shown work on the FreightLine dark surface.
+ * Structure lives in app/globals.css (ev-, wk-); these are the .fl tokens
+ * and the few places the trace drawer wants its own rhythm.
+ * ---------------------------------------------------------------- */
+.fl {
+  --ev-bg: var(--bg-1);
+  --ev-sunk: var(--bg-0);
+  --ev-chip-bg: var(--bg-2);
+  --ev-fg: var(--text-dim);
+  --ev-strong: var(--text);
+  --ev-dim: var(--text-dim);
+  --ev-mute: var(--text-mute);
+  --ev-line: var(--line);
+  --ev-line-strong: var(--line-strong);
+  --ev-ok: var(--ok);
+  --ev-warn: var(--warn);
+  --ev-bad: var(--bad);
+  --ev-info: var(--info);
+  --ev-accent: var(--teal);
+  --ev-mono: var(--font-mono);
+  --ev-radius: 0;
+  --ev-pdf-bg: #2a2f37;
+}
+.fl .ev-viewer {
+  border-left-color: var(--line);
+  box-shadow: -30px 0 80px rgba(0, 0, 0, 0.55);
+}
+.fl .ev-viewer::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(1px);
+}
+.fl .ev-head {
+  background: var(--bg-1);
+}
+.fl .ev-kicker::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: var(--agent, var(--teal));
+}
+.fl .ev-kicker svg {
+  display: none;
+}
+.fl .ev-ref {
+  font-family: var(--font-display);
+  font-variation-settings: "wdth" 88;
+  font-size: 19px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+.fl .ev-link {
+  text-decoration: underline;
+}
+.fl .ev-link:hover {
+  color: var(--text);
+}
+.fl button.ev-chip svg {
+  color: var(--agent, var(--teal));
+}
+.fl button.ev-chip:hover {
+  border-color: var(--agent, var(--teal));
+}
+.fl .ct-evidence {
+  gap: 4px;
+}
+.fl .ct-doc-ref.ev-chip {
+  font-size: 11px;
+}
+.fl .ct-sec .wk-block {
+  margin: 10px 0 2px;
+}
+.fl .wk-title {
+  font-family: var(--font-label);
+  font-weight: 700;
+  color: var(--text);
+}
+.fl .wk-row {
+  background: rgba(255, 255, 255, 0.02);
+}
+.fl .wk-result {
+  background: color-mix(in srgb, var(--agent, var(--teal)) 20%, transparent);
+}
+.fl .ct-record .wk-checks {
+  margin-top: 2px;
 }

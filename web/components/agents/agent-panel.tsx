@@ -1,7 +1,7 @@
 "use client";
 /**
- * Activity panel for one node: role, skills, model, latency, errors, the
- * cases it is working, its current tool calls and its last ten events.
+ * Activity panel for one node: status, model, workload, its current tool
+ * calls, the cases it is working and its last ten events.
  * Slides over the case explorer; hover previews, click pins.
  */
 import Link from "next/link";
@@ -20,7 +20,6 @@ type Props = {
   snapshot: Snapshot;
   workload: AgentWorkload | undefined;
   cases: Map<string, CaseView>;
-  received: number;
   now: number;
   onClose: () => void;
   onPin: () => void;
@@ -54,7 +53,7 @@ const EVENT_ACCENT: Partial<Record<TimelineEvent["kind"], string>> = {
 
 const STATUS_CHIP: Record<string, string> = { working: "ok", idle: "info", offline: "", stale: "warn", error: "bad" };
 
-export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, received, now, onClose, onPin, onCase, onEnter, onLeave }: Props) {
+export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, now, onClose, onPin, onCase, onEnter, onLeave }: Props) {
   const meta = isAgentId(id) ? AGENT_META[id] : NODE_META[id as "intake" | "human"];
 
   const { events, tools } = useMemo(() => {
@@ -91,7 +90,6 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, receiv
   );
 
   const activeCases = id === "human" ? approvals.map((a) => str(a.case_id, "")) : id === "intake" ? [] : (workload?.activeCases ?? []);
-  const p50 = workload?.p50Ms ?? 0;
 
   return (
     <aside className="au-panel" aria-label={`${meta.name} activity`} onPointerEnter={onEnter} onPointerLeave={onLeave}>
@@ -99,7 +97,7 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, receiv
         <Mascot id={id} mood={mood} size={58} />
         <div style={{ minWidth: 0 }}>
           <div className="fl-micro" style={{ color: meta.color }}>
-            {meta.nick} · {isAgentId(id) ? `${AGENT_META[id].tier} · :${AGENT_META[id].port}` : id === "intake" ? "router" : "approver"}
+            {meta.nick}
           </div>
           <h2>{meta.name}</h2>
           <div className="fl-dim" style={{ fontSize: 12, marginTop: 3 }}>
@@ -129,9 +127,7 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, receiv
               <KV v={workload.active} k="Active" />
               <KV v={workload.queued} k="Queued" />
               <KV v={workload.done.toLocaleString()} k="Done" />
-              <KV v={workload.errors} k="Errors" hot={workload.errors > 0} />
-              <KV v={p50 ? `${(p50 / 1000).toFixed(1)}s` : "—"} k="p50 latency" />
-              <KV v={received.toLocaleString()} k="Received" />
+              {workload.errors > 0 && <KV v={workload.errors} k="Errors" hot />}
             </div>
           </section>
         )}
@@ -144,25 +140,10 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, receiv
             </div>
           </section>
         )}
-        {isAgentId(id) && (
-          <section className="au-panel-sec">
-            <div className="fl-section">Skills</div>
-            <div className="au-skills">
-              {AGENT_META[id].skills.map((s) => (
-                <span key={s}>{skillLabel(s)}</span>
-              ))}
-            </div>
-            {AGENT_META[id].delegatesTo.length > 0 && (
-              <div className="fl-micro" style={{ marginTop: 8 }}>
-                Delegates to {AGENT_META[id].delegatesTo.map((d) => AGENT_META[d].nick).join(" · ")}
-              </div>
-            )}
-          </section>
-        )}
         {id === "human" && (
           <section className="au-panel-sec">
             <div className="fl-section" style={{ "--accent": "var(--orange)" } as CSSProperties}>
-              Waiting on you · {approvals.length}
+              Waiting on you
             </div>
             {approvals.slice(0, 12).map((a) => (
               <div key={str(a.id)} className="au-tool">
@@ -177,7 +158,7 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, receiv
         )}
         {tools.length > 0 && (
           <section className="au-panel-sec">
-            <div className="fl-section">{tools.some((t) => !t.endedAt) ? "Tool calls in flight" : "Last tool call"}</div>
+            <div className="fl-section">{tools.some((t) => !t.endedAt) ? "Tool calls" : "Last tool call"}</div>
             {tools.map((t) => (
               <div key={t.id} className="au-tool">
                 <span className={`fl-chip outline ${t.endedAt ? "" : "info"}`}>{t.endedAt ? t.status : "running"}</span>
@@ -189,7 +170,7 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, receiv
         )}
         {activeCases.length > 0 && (
           <section className="au-panel-sec">
-            <div className="fl-section">{id === "human" ? "Cases" : "Working"} · {activeCases.length}</div>
+            <div className="fl-section">Cases</div>
             <div className="au-links">
               {activeCases.slice(0, 16).map((caseId) => (
                 <Link
@@ -208,7 +189,7 @@ export function AgentPanel({ id, pinned, mood, snapshot, workload, cases, receiv
         )}
         {events.length > 0 && (
           <section className="au-panel-sec">
-            <div className="fl-section">Last {events.length} events</div>
+            <div className="fl-section">Events</div>
             <ul className="au-events">
               {events.map((e) => (
                 <li key={e.id} style={{ "--accent": EVENT_ACCENT[e.kind] } as CSSProperties}>

@@ -62,6 +62,8 @@ import {
 } from "@/lib/agent-inbox";
 import { markMessagesRead, type ReadMarkers } from "@/lib/inbox-read-state";
 import { useLive } from "./live-provider";
+import { EvidenceChip } from "./evidence";
+import { CheckList, Workings } from "./workings";
 import "./agent-inbox.css";
 
 type AgentId = (typeof AGENTS)[number]["id"];
@@ -340,6 +342,12 @@ export default function AgentInbox({
     ? allMessages.find((message) => message.id === inspectedMessage.id) || inspectedMessage
     : null;
   const inspectedId = details?.id;
+  const inspectedRecord =
+    details?.details && typeof details.details === "object" && !Array.isArray(details.details)
+      ? (details.details as Record<string, unknown>)
+      : {};
+  const inspectedWorkings = Array.isArray(inspectedRecord.workings) && inspectedRecord.workings.length ? inspectedRecord.workings : undefined;
+  const inspectedChecks = Array.isArray(inspectedRecord.checks) && inspectedRecord.checks.length ? inspectedRecord.checks : undefined;
   const visible = useMemo(
     () => messagesForAgent(allMessages, selected, caseId, query),
     [allMessages, selected, caseId, query],
@@ -1016,9 +1024,21 @@ export default function AgentInbox({
               </li>)}
             </ol>
           </section> : null}
+          {inspectedWorkings !== undefined ? (
+            <>
+              <h3>Shown work</h3>
+              <Workings items={inspectedWorkings} title={null} />
+            </>
+          ) : null}
+          {details.kind === "review" && inspectedChecks !== undefined ? (
+            <>
+              <h3>Checks</h3>
+              <CheckList checks={inspectedChecks} />
+            </>
+          ) : null}
           <h3>Evidence</h3>
           {details.evidenceRefs.length ? (
-            <ul>
+            <ul className="ev-evidence">
               {details.evidenceRefs.map((ref) => (
                 <li key={ref}>
                   {safeUrl(ref) ? (
@@ -1027,7 +1047,7 @@ export default function AgentInbox({
                       <ExternalLink size={12} />
                     </a>
                   ) : (
-                    <span>{ref}</span>
+                    <EvidenceChip evidenceRef={ref} />
                   )}
                 </li>
               ))}

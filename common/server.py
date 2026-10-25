@@ -65,6 +65,9 @@ class DurableRequestHandler(DefaultRequestHandler):
         self._admission_lock = asyncio.Lock()
         self._recovery_wakeup = asyncio.Event()
         executor.wake_recovery = self._recovery_wakeup.set
+        # The first orphan sweep waits one interval: a fresh process first drains its own outbox.
+        self._last_sweep = time.monotonic()
+        self._sweep_interval = float(os.getenv("A2A_ORPHAN_SWEEP_S", "60"))
         executor.confirm_state = self._confirm_state
 
     async def _confirm_state(self, task_id, state):
@@ -242,6 +245,12 @@ class DurableRequestHandler(DefaultRequestHandler):
         from common.a2a_transport import get_task, send_task
         if os.getenv("SPACETIME_DISABLED", "1") != "1":
             await self.executor.flush_projections()
+            if self._sweep_interval > 0 and time.monotonic() - self._last_sweep >= self._sweep_interval:
+                self._last_sweep = time.monotonic()
+                try:
+                    await self.executor.sweep_orphaned_tasks()
+                except Exception as error:  # noqa: BLE001 -- a dashboard read outage never blocks recovery
+                    log.warning("Orphaned task sweep deferred: %s", type(error).__name__)
         for row in await self.store.recoverable(self.name):
             context = ServerCallContext(state={"internal": True, "admitted_id": row["id"]})
             stored = await self.snapshots.get(row["id"], context)

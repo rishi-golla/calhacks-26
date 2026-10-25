@@ -19,10 +19,16 @@ from common.spacetime_client import SpacetimeClient
 from common.tool_model import model_turn
 
 log = logging.getLogger(__name__)
-MAX_TURNS = 12
-MAX_TOOL_CALLS = 10
+# A successful live Carrier Settlement run makes 6 to 9 tool calls (pre-wipe Maincloud, Oct 24), one per turn plus a
+# final assessment turn, so 10 calls / 12 turns failed normal invoices at the edge. The last call is always
+# reserved for execute_current_skill (see run_tool_loop), so inspection can never starve the guarded workflow.
+MAX_TURNS = 16
+MAX_TOOL_CALLS = 14
 INCOMPLETE_TURN_RETRIES = 2
 MAX_TOOL_RESULT_BYTES = 90_000
+# append_audit refuses a summary over 4,096 characters (text() in the module's policy.ts). A longer tool event
+# was rejected with HTTP 530 and dropped, so every audit summary is bounded here, under the module's limit.
+MAX_AUDIT_SUMMARY_CHARS = 4096
 _SECRET_KEY = re.compile(
     r"(?:secret|password|token|api.?key|authorization|phone|email|bank|account.?number|routing.?number|"
     r"transcript|encrypted|reasoning)", re.IGNORECASE)
@@ -45,6 +51,25 @@ def public_value(value: Any, *, depth: int = 0) -> Any:
     if value is None or isinstance(value, (bool, int, float)):
         return value
     return "[details omitted]"
+
+
+def audit_summary(event: dict) -> str:
+    """The tool event as compact JSON within MAX_AUDIT_SUMMARY_CHARS, dropping detail before identity."""
+    encoded = json.dumps(event, allow_nan=False, separators=(",", ":"))
+    if len(encoded) <= MAX_AUDIT_SUMMARY_CHARS:
+        return encoded
+    trimmed = {**event, "result": {"summary": "Tool returned a large result; see the task's evidence and outcome."}}
+    encoded = json.dumps(trimmed, allow_nan=False, separators=(",", ":"))
+    if len(encoded) <= MAX_AUDIT_SUMMARY_CHARS:
+        return encoded
+    trimmed["arguments"] = {"summary": "Large arguments omitted."}
+    encoded = json.dumps(trimmed, allow_nan=False, separators=(",", ":"))
+    if len(encoded) <= MAX_AUDIT_SUMMARY_CHARS:
+        return encoded
+    # Only the identifying fields remain; each is already bounded by public_value or the provider envelope.
+    keep = {key: trimmed.get(key) for key in ("version", "tool_call_id", "tool_name", "status", "duration_ms")}
+    return json.dumps({**keep, "details_omitted": True}, allow_nan=False, separators=(",", ":"))[
+        :MAX_AUDIT_SUMMARY_CHARS]
 
 
 def _evidence(value: Any) -> set[str]:
@@ -87,11 +112,7 @@ async def _audit(agent, env, task_id: str, call: dict, *, status: str, model: st
     event = {"version": 1, "tool_call_id": call["id"], "tool_name": call["name"], "status": status,
              "arguments": public_value(call["arguments"]), "result": public_value(result),
              "duration_ms": duration_ms, "model": model}
-    encoded = json.dumps(event, allow_nan=False, separators=(",", ":"))
-    if len(encoded) > 12_000:
-        event["arguments"] = {"summary": "Large arguments omitted."}
-        event["result"] = {"summary": "Tool returned a large result; see the task's evidence and outcome."}
-        encoded = json.dumps(event, allow_nan=False, separators=(",", ":"))
+    encoded = audit_summary(event)
     payload = {
         "kind": "tool_call", "reason_code": f"tool_{status}", "summary": encoded,
         "evidence_refs": sorted(_evidence(result))[:30], "policy_ids": [], "model_used": model,
@@ -149,13 +170,24 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
     usage: list[dict] = []
     seen_ids: set[str] = set()
     artifact = None
+    final_only = [tool for tool in tools if tool["name"] == "execute_current_skill"]
+
+    def offered(artifact, turn_index: int) -> list[dict]:
+        if artifact is not None:
+            return []
+        # One call and one assessment turn must remain for the guarded workflow: near either budget the
+        # model may only execute the assigned skill instead of exhausting the loop on inspections.
+        if len(records) >= MAX_TOOL_CALLS - 1 or turn_index >= MAX_TURNS - 2:
+            return final_only
+        return tools
+
     for turn_index in range(MAX_TURNS):
         async def infer_turn(artifact=artifact, turn_index=turn_index):
             # An incomplete turn executed nothing, so asking again is safe; the provider cuts a turn short
             # for its own reasons (output budget, an undocumented message cap) a few percent of the time.
             for attempt in range(INCOMPLETE_TURN_RETRIES + 1):
                 try:
-                    return await model_turn(config, system, history, tools if artifact is None else [],
+                    return await model_turn(config, system, history, offered(artifact, turn_index),
                                             evidence_refs=sorted(refs), require_tool=artifact is None)
                 except ProviderError as error:
                     if attempt >= INCOMPLETE_TURN_RETRIES or not str(error).startswith("tool response incomplete"):
@@ -229,6 +261,9 @@ async def run_tool_loop(agent, env, meta, task_id: str) -> ResultArtifact:
                             # Exception messages may contain source data or credentials.
                             result = {"error": "tool_execution_failed", "error_type": type(exc).__name__,
                                       "execution_status": "unknown"}
+                            if getattr(exc, "reason", ""):
+                                # A refused reducer's bounded, module-authored reason (spacetime_client).
+                                result["refusal"] = exc.reason
                             status = "failed"
                 return {"result": result, "artifact": canonical_artifact, "status": status,
                         "duration_ms": int((time.monotonic() - started) * 1000)}

@@ -11,10 +11,11 @@ from decimal import Decimal, InvalidOperation
 from fastapi import Header, HTTPException, Request
 
 from common.policy import check
+from common.runtime import projection_target
 from common.runtime_store import RuntimeStore
 from common.source_repository import SourceRepository, SourceUnavailable
 from common.spacetime_client import SpacetimeClient
-from common.tool_loop import public_value
+from common.tool_loop import audit_summary, public_value
 from common.voice import valid_call_token
 
 READ_ONLY_TOOLS = {"get_load_facts", "get_payment_status", "get_invoice_status", "get_case_summary", "get_document_status"}
@@ -63,13 +64,14 @@ async def audit_lookup(req: Request, row: dict, name: str, result: dict, started
              "arguments": {"case_id": row["case_id"]}, "result": public_value(result),
              "duration_ms": round((time.monotonic() - started) * 1000), "model": model}
     payload = {"write_id": call_id, "task_id": row["task_id"], "case_id": row["case_id"],
-               "kind": "tool_call", "reason_code": "tool_completed", "summary": json.dumps(event),
+               "kind": "tool_call", "reason_code": "tool_completed", "summary": audit_summary(event),
                "model_used": model, "evidence_refs": [f"call://{row['id']}"], "policy_ids": []}
     if check("append_audit", "voice_desk", payload).result != "allow":
         return
     runtime = RuntimeStore(engine=req.app.state.calls.engine)
     # The Voice service's normal projection worker retries this durable event.
-    await runtime.queue_projection("voice_desk", {**payload, "_operation": "append_audit"})
+    await runtime.queue_projection("voice_desk", {**payload, "_operation": "append_audit",
+                                                  "_target": projection_target()})
     try:
         await SpacetimeClient(actor="voice_desk").mutate("append_audit", payload)
         await runtime.acknowledge_projection(call_id)

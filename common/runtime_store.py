@@ -102,6 +102,10 @@ def stable_id(*parts: str) -> str:
     return str(uuid.uuid5(NAMESPACE, canonical(list(parts))))
 
 
+def _without_target(payload: dict) -> str:
+    return canonical({key: value for key, value in payload.items() if key != "_target"})
+
+
 def task_id_for(agent: str, sender: str, case_id: str, key: str) -> str:
     return stable_id("task", agent, sender, case_id, key)
 
@@ -399,8 +403,16 @@ class RuntimeStore:
             async with self.engine.connect() as conn:
                 previous = (await conn.execute(select(projections.c.payload).where(
                     projections.c.id == payload["write_id"]))).scalar_one()
-            if previous != canonical(payload):
+            # The delivery target is routing, not content: the same event queued again after a service was
+            # pointed at another database is still the same event.
+            if _without_target(json.loads(previous)) != _without_target(payload):
                 raise IdempotencyConflict("projection key cannot be reused for a different event") from None
+
+    async def projection_exists(self, projection_id: str) -> bool:
+        await self.initialize()
+        async with self.engine.connect() as conn:
+            return (await conn.execute(select(projections.c.id).where(
+                projections.c.id == projection_id))).scalar_one_or_none() is not None
 
     async def pending_projections(self, agent: str, task_id: str | None = None) -> list[dict]:
         await self.initialize()

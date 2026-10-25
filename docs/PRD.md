@@ -1,5 +1,22 @@
 # PRD: Autonomous Back Office for Freight Brokerages
-**Cal Hacks 13.0 · Ground truth v1.12 · Sat Oct 24, 2026 PDT**
+**Cal Hacks 13.0 · Ground truth v1.13 (stale, see notice) · Sat Oct 24, 2026 PDT**
+
+> [!WARNING]
+> **Out of date (noted Sat Oct 24, evening).** This document was last substantively updated at v1.12
+> (`c5abda9`) and no longer reflects current progress. Work merged to `main` since then is not
+> described here, including:
+> - the rebuilt FreightLine frontend (finance home, agent universe, case explorer, execution trace,
+>   simplified finance-team UI, Demo Console in the new shell, admin console hidden);
+> - W1 harness changes: input validation and intake memory, Elasticsearch context memory on the ASUS
+>   box, the Nano + Qwen3-4B FP8 model lineup for personal-data finding and audit, and the live demo script;
+> - agent recall of similar resolved cases from Elastic agent memory;
+> - the shared Maincloud deployment that teammates now run against.
+>
+> Until this PRD is revised, treat the code on `main` as the truth, and use these for current status:
+> [harness/AGENT.md](../harness/AGENT.md) (W1 requirement status), [A2A runbook](A2A-RUNBOOK.md),
+> [Team cloud handoff](TEAM-CLOUD-HANDOFF.md) and `git log`. The section 1 status and audit lists
+> below describe the state at v1.12, not today. The rule in the next paragraph that "the doc wins"
+> is suspended for anything this doc does not cover or that has changed since v1.12.
 
 > This is the one source of truth. If code, a chat message or a slide disagrees with this doc, the doc wins until someone changes it. To change it, edit this file, bump the version in the change log at the bottom, and post one line in the team chat. Section 7 (interface contracts) is frozen at **Sat 3:00 AM**. After that, contract changes need agreement from both owners on that interface.
 
@@ -583,6 +600,7 @@ Resolved in v1.2: the home company is fictional "Golden Gate Freight" with real 
 7. Other sponsor credits worth using for data (check the live site and Slack). — W4
 
 ## Change log
+- v1.13 (Sat Oct 24): added an out-of-date notice at the top. Progress since v1.12 (frontend rebuild, W1 harness validation/memory/model lineup, Elastic agent recall, Maincloud deployment) is not yet folded into the body. No section content changed.
 - v1.12 (Sat Oct 24): conformance audit. Recorded the audit's open gaps in section 1 so the status text no longer overstates completion. Corrected sections where the code deliberately diverged: the demo is driven by the live stream and the hero case is a regression fixture only (§4, G1, W1 done-when, §10); pod → Documents `receive_document` and lifecycle/ping events are not routed (§7.3, §8); `Outcome` includes `pass|issue|not_implemented` (§7.2); `approval.approver` is an identity with `approver_name` added (§7.4); five hosted read tools on :9001 and unattached writes on :9000 (§7.5); source systems live in SQLite plus `source.json`, the directory comes from FMCSA census and SEC EDGAR, `score_anomaly` is a heuristic, fixture counterparties are fictional (§5, R1, R4). Marked version-checked instruction publication as implemented. Added required work to R4: bounded raw retries with dead-letter and history markers; recorded the ingest SpacetimeDB mirror (`0e200ee`) and the W1 harness classifier merged the same day. Nothing in section 9 changed.
 - v1.11 (Sat Oct 24): replaced the thin voice demo with a coherent synthetic detention case, full source-grounded Cartesia context, five scoped live lookup tools, hosted-persona updates and a dispatcher role-play guide. Tool callbacks use a dedicated read-only HTTPS surface; completion still polls locally. No envelope contract changed. Revised live speech acceptance remains for the operator's next call.
 - v1.10 (Sat Oct 24): added the local Demo Console phone control, durable authenticated admission, exact-task demo authorization, idempotent retries and visible call status. Coordinated Voice/W2 changes let explicit team demos bypass hours and hourly limits while enforcing one active call; ordinary calls retain both guards. Live phone acceptance remains pending the operator's click.

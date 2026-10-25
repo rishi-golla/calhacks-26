@@ -872,3 +872,20 @@
   font-size: 10.5px;
   font-weight: 600;
 }
+
+/* cases table: give the Attention column room and never clip pill borders */
+.fl.theme-glass .cx-row {
+  grid-template-columns: 120px minmax(200px, 1fr) 40px 112px 84px 128px 64px 236px;
+}
+.fl.theme-glass .cx-attn {
+  overflow: clip visible;
+  padding: 2px 0;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+}
+.fl.theme-glass .cx-attn .cx-chip {
+  flex: none;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  line-height: 16px;
+}

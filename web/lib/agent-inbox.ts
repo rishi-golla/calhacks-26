@@ -6,6 +6,7 @@ import {
   type Row,
   type Snapshot,
 } from "./data";
+import { parseWorkings, type Working } from "./workings";
 
 export type ToolCallStatus = "started" | "completed" | "failed" | "waiting" | "blocked";
 export type ToolCall = {
@@ -415,6 +416,35 @@ function findingDetails(findings: Row): Row {
   return result;
 }
 
+/**
+ * Working inputs are numbers and booleans named after formula identifiers (`bank_change`,
+ * `account_1`); redacting them by key would blank the arithmetic the inspector exists to show.
+ * Only string values can carry contact or secret material, so only strings are sanitized.
+ */
+function safeWorkingValue(value: unknown, key = ""): unknown {
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") return sensitiveToolKey.test(key) ? "[redacted]" : safeToolText(value);
+  if (Array.isArray(value)) return value.slice(0, 30).map((item) => safeWorkingValue(item));
+  if (value && typeof value === "object")
+    return Object.fromEntries(Object.entries(value).slice(0, 40).map(([k, item]) =>
+      [safeToolText(k).slice(0, 100), safeWorkingValue(item, k)]));
+  return null;
+}
+
+/** Shown work, bounded and sanitized: contact values never reach the inspector, numbers always do. */
+function safeWorkings(value: unknown): Working[] {
+  return parseWorkings(value).map((w) => ({
+    ...w,
+    label: safeToolText(w.label),
+    formula: safeToolText(w.formula),
+    inputs: safeWorkingValue(w.inputs) as Row,
+    result: safeWorkingValue(w.result),
+    evidence_refs: w.evidence_refs.map(safeToolText),
+    basis: safeToolText(w.basis),
+  }));
+}
+
 /** A chronological projection of published records, never a generated conversation. */
 export function buildAgentMessages(snapshot: Snapshot): AgentMessage[] {
   const messages = new Map<string, AgentMessage>();
@@ -503,6 +533,7 @@ export function buildAgentMessages(snapshot: Snapshot): AgentMessage[] {
       reviewSummary(review) ||
       text(callFindings.summary) ||
       text(object(callFindings.assessment).summary);
+    const workings = safeWorkings(findings.workings);
     const fallbackSummary = outcome
       ? `Recorded outcome: ${readable(outcome)}.`
       : "An artifact was published for this task.";
@@ -535,6 +566,7 @@ export function buildAgentMessages(snapshot: Snapshot): AgentMessage[] {
         ...(assessmentError ? { assessmentError } : {}),
         facts: findingDetails(findings),
         review: Object.keys(review).length ? review : undefined,
+        ...(workings.length ? { workings } : {}),
       },
     });
   }

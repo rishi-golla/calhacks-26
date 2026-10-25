@@ -29,6 +29,21 @@ def number(value: Decimal) -> float:
     return float(value)
 
 
+def journal_lines(lines: Any) -> list[dict]:
+    """Journal lines as dicts. The SQL API returns stored JournalLine rows positionally
+    (``[account, debit, credit]``); reducers and fixtures use objects. Anything else is not a line."""
+    if not isinstance(lines, list):
+        raise SourceUnavailable("journal lines must be a list")
+    out = []
+    for line in lines:
+        if isinstance(line, list) and len(line) == 3:
+            line = dict(zip(("account", "debit", "credit"), line, strict=True))
+        if not isinstance(line, dict):
+            raise SourceUnavailable("journal line must be an object")
+        out.append(line)
+    return out
+
+
 def matched_deposit_total(source: dict) -> Decimal:
     """Cash collected on this shipper invoice from its own uniquely identified deposits."""
     invoice_id = source.get("shipper_invoice_id")

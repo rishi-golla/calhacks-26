@@ -1,8 +1,9 @@
 "use client";
 /**
  * /cases/[id] — per-case execution trace. Header, ledger strip,
- * the git-style graph (built only from rows that exist), a replay scrubber
- * and a details drawer.
+ * the git-style graph (built only from rows that exist), a replay scrubber,
+ * a details drawer and the case file (the case's source documents, emails
+ * and bank lines) beside them.
  */
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -13,6 +14,7 @@ import { Mascot } from "@/components/mascot";
 import { agentColor } from "@/lib/agents";
 import { fmtMoney } from "@/lib/ops";
 import { PriorityChip, StatusChip } from "./case-explorer";
+import { CaseFile } from "./case-file";
 import { CaseLog, NodeDetails } from "./node-panel";
 import { TraceGraph } from "./trace-graph";
 import { buildCaseTrace, caseKind, clock, KIND_LABEL, layoutTrace, nodeStatus, shortDur, sideEffectAt, timer, type CaseTrace as Trace, type NodeStatus } from "./model";
@@ -302,6 +304,7 @@ export default function CaseTrace({ caseId }: { caseId: string }) {
             setReplayAt(t);
           }}
         />
+        <CaseFile caseId={caseId} simulated={simulated} />
       </div>
     </div>
   );

@@ -21,7 +21,7 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.routes.common import DefaultServerCallContextBuilder
 from a2a.types import Message, SendMessageConfiguration, SendMessageRequest, TaskState
-from a2a.utils.errors import InvalidParamsError, TaskNotFoundError
+from a2a.utils.errors import InternalError, InvalidParamsError, TaskNotFoundError
 from google.protobuf.json_format import MessageToDict, ParseDict
 from pydantic import ValidationError
 from sqlalchemy import select, text
@@ -33,8 +33,24 @@ from starlette.routing import Route
 from common.a2a_util import build_card
 from common.config import AGENTS, MAX_DELEGATION_DEPTH
 from common.envelope import DelegationMeta, TaskEnvelope
-from common.runtime import TERMINAL_STATES, FreightAgent, _meta_dict, extract_artifact_data
-from common.runtime_store import IdempotencyConflict, LeaseLost, digest, stable_id, task_id_for, tasks
+from common.runtime import (
+    CLOSED_DEPENDENCY_STATES,
+    PEER_REFUSALS,
+    TERMINAL_STATES,
+    FreightAgent,
+    _meta_dict,
+    extract_artifact_data,
+    final_refusal,
+)
+from common.runtime_store import (
+    IdempotencyConflict,
+    LeaseLost,
+    digest,
+    stable_id,
+    task_id_for,
+    tasks,
+    wire_form,
+)
 
 log = logging.getLogger(__name__)
 SERVICE_ACTORS = {*AGENTS, "router", "gateway"}
@@ -63,8 +79,12 @@ class DurableRequestHandler(DefaultRequestHandler):
         self.name = executor.name
         self.snapshots = snapshots
         self._admission_lock = asyncio.Lock()
+        executor.admission_lock = self._admission_lock
         self._recovery_wakeup = asyncio.Event()
         executor.wake_recovery = self._recovery_wakeup.set
+        # The first orphan sweep waits one interval: a fresh process first drains its own outbox.
+        self._last_sweep = time.monotonic()
+        self._sweep_interval = float(os.getenv("A2A_ORPHAN_SWEEP_S", "60"))
         executor.confirm_state = self._confirm_state
 
     async def _confirm_state(self, task_id, state):
@@ -139,9 +159,15 @@ class DurableRequestHandler(DefaultRequestHandler):
         child_id = task_id_for(self.name, meta.from_agent, env.case_id, meta.idempotency_key)
         reservation = next((row for row in await self.store.get_dependencies(meta.parent_task_id)
                             if row["child_id"] == child_id and row["target"] == self.name), None)
-        if (reservation is None or digest(env.model_dump()) != digest(json.loads(reservation["envelope"]))
-                or digest(meta.model_dump(exclude_none=True)) != digest(json.loads(reservation["delegation"]))):
+        # Compared as both sides travel: the data part made every reserved number a double (120 -> 120.0).
+        if (reservation is None
+                or digest(wire_form(env.model_dump())) != digest(wire_form(json.loads(reservation["envelope"])))
+                or digest(wire_form(meta.model_dump(exclude_none=True)))
+                != digest(wire_form(json.loads(reservation["delegation"])))):
             raise ValueError("delegation does not match a durable reservation")
+        if reservation["state"] in CLOSED_DEPENDENCY_STATES:
+            # Refused before, or expired: this service already recorded the reserved child as ended.
+            raise ValueError(f"delegation reservation is closed ({reservation['state']})")
 
     async def _prepare(self, params, context):
         if context.state.get("internal"):
@@ -199,7 +225,8 @@ class DurableRequestHandler(DefaultRequestHandler):
             if stored:
                 return stored.task
             await asyncio.sleep(0.02)
-        raise InvalidParamsError(message="task admitted; retry to retrieve its pending snapshot")
+        # Transient, unlike InvalidParamsError, which a delegating parent treats as a final refusal.
+        raise InternalError(message="task admitted; retry to retrieve its pending snapshot")
 
     async def on_message_send(self, params, context):
         params = SendMessageRequest.FromString(params.SerializeToString())
@@ -239,9 +266,14 @@ class DurableRequestHandler(DefaultRequestHandler):
             yield event
 
     async def reconcile_once(self):
-        from common.a2a_transport import get_task, send_task
         if os.getenv("SPACETIME_DISABLED", "1") != "1":
             await self.executor.flush_projections()
+            if self._sweep_interval > 0 and time.monotonic() - self._last_sweep >= self._sweep_interval:
+                self._last_sweep = time.monotonic()
+                try:
+                    await self.executor.sweep_orphaned_tasks()
+                except Exception as error:  # noqa: BLE001 -- a dashboard read outage never blocks recovery
+                    log.warning("Orphaned task sweep deferred: %s", type(error).__name__)
         for row in await self.store.recoverable(self.name):
             context = ServerCallContext(state={"internal": True, "admitted_id": row["id"]})
             stored = await self.snapshots.get(row["id"], context)
@@ -253,26 +285,8 @@ class DurableRequestHandler(DefaultRequestHandler):
                 if row["wait_kind"] == "child":
                     dependency = next((d for d in await self.store.get_dependencies(row["id"])
                                        if d["child_id"] == row["wait_key"]), None)
-                    if dependency:
-                        try:
-                            if dependency["state"] == "pending":
-                                child = await send_task(dependency["target"],
-                                    TaskEnvelope.model_validate_json(dependency["envelope"]),
-                                    DelegationMeta.model_validate_json(dependency["delegation"]))
-                            else:
-                                child = await get_task(dependency["target"], dependency["child_id"], sender=self.name)
-                            if child.id != dependency["child_id"] or child.context_id != row["envelope"]["case_id"]:
-                                raise ValueError("child identity mismatch")
-                            if dependency["state"] == "pending":
-                                await self.store.finish_dependency(dependency["id"], "accepted", [])
-                            if child.status.state in TERMINAL_STATES:
-                                state = TaskState.Name(child.status.state).removeprefix("TASK_STATE_").lower()
-                                await self.store.finish_dependency(dependency["id"], state, extract_artifact_data(child))
-                                await self.store.put_input(row["id"], row["wait_key"], f"child:{child.id}:{state}",
-                                                           {"state": state, "child_id": child.id})
-                        except Exception as error:  # noqa: BLE001 -- retain dependency on peer failure
-                            log.warning("Child reconciliation deferred: %s", type(error).__name__)
-                            continue
+                    if dependency and not await self._reconcile_child(row, dependency):
+                        continue
                 elif row["wait_kind"] == "approval" and os.getenv("SPACETIME_DISABLED", "1") != "1":
                     # A human decides in W2 (decide_approval); nothing calls back, so poll the row.
                     try:
@@ -298,6 +312,45 @@ class DurableRequestHandler(DefaultRequestHandler):
                 continue
             await self.on_message_send(SendMessageRequest(message=message,
                 configuration=SendMessageConfiguration(return_immediately=True)), context)
+
+    async def _reconcile_child(self, row: dict, dependency: dict) -> bool:
+        """Advance a parent waiting on a delegated child; False defers it to the next pass."""
+        from common.a2a_transport import get_task, send_task
+
+        async def wake(child_id: str, state: str) -> None:
+            await self.store.put_input(row["id"], row["wait_key"], f"child:{child_id}:{state}",
+                                       {"state": state, "child_id": child_id})
+        if dependency["state"] in CLOSED_DEPENDENCY_STATES:
+            # Ended, refused or expired: the child will not report again, so the parent decides without it.
+            await wake(dependency["child_id"], dependency["state"])
+            return True
+        try:
+            if dependency["state"] == "pending":
+                try:
+                    child = await send_task(dependency["target"],
+                        TaskEnvelope.model_validate_json(dependency["envelope"]),
+                        DelegationMeta.model_validate_json(dependency["delegation"]))
+                except PEER_REFUSALS as error:
+                    if not final_refusal(error):
+                        raise
+                    failure = await self.executor.refuse_dependency(dependency, error)
+                    if failure is not None:
+                        await wake(dependency["child_id"], failure.state)
+                    return True  # closed now; or admitted elsewhere, which the next pass follows
+            else:
+                child = await get_task(dependency["target"], dependency["child_id"], sender=self.name)
+            if child.id != dependency["child_id"] or child.context_id != row["envelope"]["case_id"]:
+                raise ValueError("child identity mismatch")
+            if dependency["state"] == "pending" and not await self.store.accept_dependency(dependency["id"]):
+                return True  # closed meanwhile: the next pass wakes the parent from the closed reservation
+            if child.status.state in TERMINAL_STATES:
+                state = TaskState.Name(child.status.state).removeprefix("TASK_STATE_").lower()
+                await self.store.finish_dependency(dependency["id"], state, extract_artifact_data(child))
+                await wake(child.id, state)
+        except Exception as error:  # noqa: BLE001 -- retain dependency on peer failure
+            log.warning("Child reconciliation deferred: %s", type(error).__name__)
+            return False
+        return True
 
     async def _approval_decision(self, row) -> str | None:
         """Return a final human decision for this task's own approval, else None while pending."""

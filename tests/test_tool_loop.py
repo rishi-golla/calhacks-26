@@ -231,7 +231,82 @@ async def test_repeated_tool_calls_hit_explicit_budget(setup, monkeypatch):
     monkeypatch.setattr(tool_loop, "model_turn", model)
     with pytest.raises(ProviderError, match="call budget"):
         await tool_loop.run_tool_loop(agent, env, meta, "task")
-    assert len([e for e in events if e["status"] == "completed"]) == tool_loop.MAX_TOOL_CALLS
+    # The last call of the budget is reserved for execute_current_skill, so a final inspection is refused.
+    finished = [e["status"] for e in events if e["status"] != "started"]
+    assert finished == ["completed"] * (tool_loop.MAX_TOOL_CALLS - 1) + ["blocked"]
+
+
+async def test_budget_reserves_the_last_call_for_the_guarded_workflow(setup, monkeypatch):
+    """Live Carrier Settlement runs make 6 to 9 calls. A model that keeps inspecting must still be steered into
+    execute_current_skill before the budget runs out, instead of failing the invoice."""
+    agent, env, meta, _events = setup
+    offered = []
+
+    async def read(ctx, args):
+        return {"evidence_refs": ["source:1"]}
+
+    async def execute(ctx, args):
+        return {"artifact": ResultArtifact(outcome="approve", evidence_refs=["source:1"]).model_dump()}
+
+    monkeypatch.setattr(tool_registry, "registry_for", lambda _: {
+        "read": ToolSpec("read", "Read", EMPTY_PARAMETERS, read),
+        "execute_current_skill": ToolSpec("execute_current_skill", "Execute", EMPTY_PARAMETERS, execute)})
+
+    async def model(config, system, history, tools, **kwargs):
+        offered.append(sorted(tool["name"] for tool in tools))
+        if not tools:
+            return final()
+        if [tool["name"] for tool in tools] == ["execute_current_skill"]:
+            return response("execute_current_skill", f"call_{len(offered)}")
+        return response("read", f"call_{len(offered)}")
+
+    monkeypatch.setattr(tool_loop, "model_turn", model)
+    result = await tool_loop.run_tool_loop(agent, env, meta, "task")
+    assert result.outcome == "approve"
+    assert offered[tool_loop.MAX_TOOL_CALLS - 1] == ["execute_current_skill"]
+    assert offered[:tool_loop.MAX_TOOL_CALLS - 1] == [["execute_current_skill", "read"]] * (tool_loop.MAX_TOOL_CALLS - 1)
+    assert offered[-1] == []
+
+
+async def test_tool_audit_summary_stays_within_the_module_limit(setup, monkeypatch):
+    """append_audit refuses summaries over 4,096 characters; such tool events used to be dropped with HTTP 530."""
+    agent, env, meta, events = setup
+
+    async def read(ctx, args):
+        return {f"field_{i}": "x" * 590 for i in range(10)}  # ~6 KB: over the module's limit, under the old 12 KB
+
+    async def execute(ctx, args):
+        return {"artifact": ResultArtifact(outcome="clear").model_dump()}
+
+    monkeypatch.setattr(tool_registry, "registry_for", lambda _: {
+        "read": ToolSpec("read", "Read", EMPTY_PARAMETERS, read),
+        "execute_current_skill": ToolSpec("execute_current_skill", "Execute", EMPTY_PARAMETERS, execute)})
+    summaries = []
+
+    async def mutate(agent, env, task_id, operation, payload):
+        summaries.append(payload["summary"])
+        events.append(json.loads(payload["summary"]))
+        return {"executed": True}
+
+    monkeypatch.setattr(tool_loop, "mutate", mutate)
+    turns = iter([response("read", "big"), response("execute_current_skill", "run"), final()])
+
+    async def model(*args, **kwargs):
+        return next(turns)
+
+    monkeypatch.setattr(tool_loop, "model_turn", model)
+    await tool_loop.run_tool_loop(agent, env, meta, "task")
+    assert summaries and max(map(len, summaries)) <= tool_loop.MAX_AUDIT_SUMMARY_CHARS
+    big = next(e for e in events if e["tool_call_id"] == "big" and e["status"] == "completed")
+    assert big["tool_name"] == "read" and "summary" in big["result"]
+
+
+def test_audit_summary_keeps_identity_when_everything_is_large():
+    event = {"version": 1, "tool_call_id": "c" * 160, "tool_name": "read", "status": "completed",
+             "arguments": {"a": "x" * 600}, "result": {"r": "y" * 600}, "duration_ms": 5, "model": "m" * 5000}
+    encoded = tool_loop.audit_summary(event)
+    assert len(encoded) <= tool_loop.MAX_AUDIT_SUMMARY_CHARS
+    assert json.loads(encoded)["tool_name"] == "read"
 
 
 async def test_settings_are_snapshotted_and_credentials_never_checkpointed(monkeypatch):
@@ -385,3 +460,14 @@ async def test_incomplete_model_turn_is_retried_before_failing(setup, monkeypatc
     agent.checkpoints.clear() if hasattr(agent.checkpoints, "clear") else None
     with pytest.raises(ProviderError):
         await tool_loop.run_tool_loop(agent, env, meta, "task-2")
+
+
+def test_compact_reasoning_keeps_only_the_latest_reasoning_item():
+    history = [{"role": "user", "content": "x"}, {"type": "reasoning", "id": "r1"}, {"type": "function_call", "id": "c1"},
+               {"type": "function_call_output", "call_id": "c1"}, {"type": "reasoning", "id": "r2"},
+               {"type": "function_call", "id": "c2"}]
+    assert tool_loop.compact_reasoning(history) == 1
+    assert [item.get("id", item.get("role")) for item in history] == ["user", "c1", None, "r2", "c2"]
+    assert tool_loop.compact_reasoning(history) == 0
+    assert tool_loop.compact_reasoning(history, keep_last=False) == 1
+    assert all(item.get("type") != "reasoning" for item in history)

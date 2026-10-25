@@ -945,6 +945,53 @@ class DirectoryWatch:
             self.task.cancel()
 
 
+async def _consume_once(r, db: sqlite3.Connection, exporter: source_export.Exporter,
+                        mirror: spacetime_mirror.Mirror, watch: "DirectoryWatch", retry: "Retry") -> None:
+    """One pass: drain this consumer's unacked entries, flush the export and mirror changed source records, then
+    block briefly for new arrivals."""
+    watch.check()
+    while True:
+        pending = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: "0"}, count=10)
+        entries = [entry for _stream, batch in pending or [] for entry in batch]
+        if not entries:
+            break
+        if not await _process_batch(r, db, entries, exporter, mirror, retry):
+            await retry.wait()
+    # Catch up on state that opened no case (documents, deposits, TMS) before blocking for more, and mirror
+    # the source records that changed since the last flush.
+    exporter.flush(db)
+    if not mirror.disabled:
+        await mirror.sync_sources(exporter.take())
+    response = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: ">"}, count=10, block=2000)
+    entries = [entry for _stream, batch in response or [] for entry in batch]
+    if entries and not await _process_batch(r, db, entries, exporter, mirror, retry):
+        await retry.wait()  # the entries left pending are retried by the drain above
+
+
+async def _ensure_group(r) -> None:
+    """Create the consumer group, and the stream with it, unless they already exist."""
+    try:
+        await r.xgroup_create(RAW_STREAM, GROUP, id="0", mkstream=True)
+    except redis.ResponseError as exc:
+        if "BUSYGROUP" not in str(exc):
+            raise
+
+
+async def _recover_group(r, exc: Exception) -> bool:
+    """A Redis restart without persistence loses the stream and the group; XREADGROUP then answers NOGROUP on
+    every attempt, so backing off alone would stall ingestion for good. Recreate the group and report whether
+    the loop can go straight on (a Redis that is still down leaves it to the normal backoff)."""
+    if not isinstance(exc, redis.ResponseError) or "NOGROUP" not in str(exc):
+        return False
+    log.warning("consumer group %s on %s is gone (Redis restarted?); recreating it", GROUP, RAW_STREAM)
+    try:
+        await _ensure_group(r)
+    except redis.RedisError as error:
+        log.warning("could not recreate the consumer group yet: %s", type(error).__name__)
+        return False
+    return True
+
+
 async def main() -> None:
     events_maxlen(), documents_maxlen()  # fail fast on a bad EVENTS_STREAM_MAXLEN or DOCUMENTS_STREAM_MAXLEN
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
@@ -956,29 +1003,21 @@ async def main() -> None:
     watch = DirectoryWatch(mirror)
     retry = Retry()
     try:
-        try:
-            await r.xgroup_create(RAW_STREAM, GROUP, id="0", mkstream=True)
-        except redis.ResponseError as exc:
-            if "BUSYGROUP" not in str(exc):
-                raise
+        await _ensure_group(r)
+        backoff = 1.0
         while True:
-            watch.check()
-            while True:
-                pending = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: "0"}, count=10)
-                entries = [entry for _stream, batch in pending or [] for entry in batch]
-                if not entries:
-                    break
-                if not await _process_batch(r, db, entries, exporter, mirror, retry):
-                    await retry.wait()
-            # Catch up on state that opened no case (documents, deposits, TMS) before blocking for more, and mirror
-            # the source records that changed since the last flush.
-            exporter.flush(db)
-            if not mirror.disabled:
-                await mirror.sync_sources(exporter.take())
-            response = await r.xreadgroup(GROUP, CONSUMER, {RAW_STREAM: ">"}, count=10, block=2000)
-            entries = [entry for _stream, batch in response or [] for entry in batch]
-            if entries and not await _process_batch(r, db, entries, exporter, mirror, retry):
-                await retry.wait()  # the entries left pending are retried by the drain above
+            # A Redis hiccup (read timeout, dropped connection) must not end the consumer: entries it was
+            # handling stay unacked in the group and are redelivered, so the iteration is safe to repeat.
+            try:
+                await _consume_once(r, db, exporter, mirror, watch, retry)
+                backoff = 1.0
+            except redis.RedisError as exc:
+                if await _recover_group(r, exc):
+                    backoff = 1.0
+                    continue
+                log.warning("ingest consumer %s; retrying in %.0fs", type(exc).__name__, backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
     finally:
         watch.stop()
         db.close()

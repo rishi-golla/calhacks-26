@@ -14,6 +14,7 @@ from starlette.requests import Request
 
 from common.envelope import TaskEnvelope
 from common.policy import Decision
+from common.runtime import projection_target
 from common.runtime_store import RuntimeStore
 from common.source_repository import SourceUnavailable
 from common.voice import CallStore
@@ -287,7 +288,9 @@ async def test_public_lookup_audit_uses_the_durable_outbox_and_only_acknowledges
     assert len(pending) == int(delivery_fails)
     if pending:
         stored = json.loads(pending[0]["payload"])
+        # Queued for the database it was written to, so a re-pointed service never delivers it elsewhere.
         assert stored == {**payload, "_operation": "append_audit"}
+        assert pending[0]["target"] == projection_target()
 
 
 async def test_audit_redacts_nested_contact_secrets_and_obeys_policy_before_writing(rig, monkeypatch):

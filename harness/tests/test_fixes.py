@@ -115,3 +115,45 @@ def test_structured_payload_detection():
     from harness.ingest.schemas import is_structured
     assert is_structured("carrier_invoice", {"invoice_amount": 2150.0, "load_id": "LOAD-4821", "text": "..."})
     assert not is_structured("email", {"from": "a@b.co", "subject": "hi", "text": "..."})
+
+
+async def test_consumer_recreates_the_group_after_redis_loses_it(tmp_path):
+    """XGROUP DESTROY plus DEL stands in for a Redis restart without persistence: the next poll answers NOGROUP,
+    the consumer recreates the group, and a new entry is processed instead of the loop backing off forever."""
+    r = aioredis.from_url("redis://localhost:6379/0")
+    try:
+        await r.ping()
+    except (aioredis.ConnectionError, OSError):
+        pytest.skip("local redis not available")
+    stream, triage = f"test-events-{uuid.uuid4().hex[:6]}", f"test-triage-{uuid.uuid4().hex[:6]}"
+    seen: list[str] = []
+
+    async def fake_process(pool, vault, dispatcher, ev):
+        seen.append(ev["event_id"])
+        return {"event_id": ev["event_id"], "case_id": "CASE-1", "status": "not_routed"}
+
+    task = asyncio.create_task(consumer.run_consumer(
+        None, stream=stream, group="router", triage=triage, consumer="test", handler=fake_process,
+        vault=Vault(tmp_path / "v.sqlite"), dispatcher=Dispatcher(tmp_path / "d.sqlite")))
+    try:
+        await r.xadd(stream, {"json": json.dumps({"event_id": "BEFORE", "type": "gps.ping"})})
+        for _ in range(100):
+            if "BEFORE" in seen:
+                break
+            await asyncio.sleep(0.05)
+        await r.xgroup_destroy(stream, "router")
+        await r.delete(stream)
+        await asyncio.sleep(1.2)  # past the blocking read, so the next poll sees NOGROUP
+        await r.xadd(stream, {"json": json.dumps({"event_id": "AFTER", "type": "gps.ping"})})
+        for _ in range(160):
+            if "AFTER" in seen:
+                break
+            await asyncio.sleep(0.05)
+        groups = await r.xinfo_groups(stream)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await r.delete(stream, triage)
+        await r.aclose()
+    assert seen == ["BEFORE", "AFTER"], "the entry added after the group was lost must still be processed"
+    assert [g["name"] for g in groups] == [b"router"] or [g["name"] for g in groups] == ["router"]

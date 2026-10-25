@@ -54,9 +54,11 @@ export async function GET(request: NextRequest) {
       ...plan.windowed,
       ...cases.flatMap((id) => caseQueries(profile, id, cutoff)),
     ];
+    const optional = new Set(plan.optional);
     // SpacetimeDB 2.10.2 accepts exactly one SQL statement per HTTP request.
     const results = await Promise.all(
-      queries.map(async ({ table: name, sql }) => {
+      [...queries, ...optional].map(async (query) => {
+        const { table: name, sql } = query;
         const response = await fetch(
           `${base.replace(/\/$/, "")}/v1/database/${encodeURIComponent(database)}/sql`,
           {
@@ -67,6 +69,9 @@ export async function GET(request: NextRequest) {
             signal: AbortSignal.timeout(4500),
           },
         );
+        // An older module has no optional table: read it as empty.
+        if (!response.ok && optional.has(query))
+          return [name, { schema: { elements: [] }, rows: [] } as SqlResult] as const;
         if (!response.ok)
           throw new Error(`Snapshot table ${name}: HTTP ${response.status}`);
         const statements = (await response.json()) as SqlResult[];

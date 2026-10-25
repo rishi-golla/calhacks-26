@@ -1,7 +1,7 @@
 from agents.verification.card import DESCRIPTIONS
 from common.agent_support import evidence, finish
 from common.envelope import DelegationMeta, TaskEnvelope
-from common.runtime import FreightAgent
+from common.runtime import ChildFailed, DelegationRefused, FreightAgent
 from common.server import serve
 from common.source_repository import SourceRepository, SourceUnavailable
 from common.voice_context import build_voice_context, verification_questions
@@ -64,7 +64,18 @@ class VerificationAgent(FreightAgent):
                             priority=env.priority, deadline_s=env.deadline_s,
                             subject={"purpose": "verification", "counterparty_id": company_id,
                                      "questions": questions, "facts": context})
-        results = await self.delegate("place_call", call, meta, task_id, invocation_key="verified_callback")
+        try:
+            results = await self.delegate("place_call", call, meta, task_id, invocation_key="verified_callback")
+        except (ChildFailed, DelegationRefused) as error:
+            # No callback can happen (Voice Desk refused, never admitted, or failed the call): the change stays
+            # unverified, and the caller holds it, instead of failing or waiting on a call that will not come.
+            reason = getattr(error, "reason", "") or str(error)
+            return await finish(self, env, task_id, outcome="unverified", confidence=0,
+                                findings={"call_result": {"reached": False, "findings": {}},
+                                          "callback_unavailable": True, "reason": reason[:200],
+                                          "risk_signals": flags, "bank_details_changed": False},
+                                evidence_refs=refs,
+                                policy_ids=["P-004", "P-008"] if env.task_type == "verify_bank_change" else ["P-008"])
         call_result = results[-1].get("findings", {}) if results else {}
         if "call_result" in call_result:
             call_result = call_result["call_result"]

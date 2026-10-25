@@ -99,6 +99,32 @@ def test_short_fetch_keeps_the_committed_snapshot(monkeypatch, tmp_path):
     assert snapshot.read_text() == "committed"
 
 
+def test_fetch_sizes_its_search_for_hero_lanes_too(monkeypatch, tmp_path):
+    asked = {}
+    monkeypatch.setattr(seed, "SNAPSHOT", tmp_path / "fmcsa_carriers.json")
+    monkeypatch.setattr(seed, "census_candidates", lambda state: [
+        candidate(id=f"C-{i}", usdot=str(i), website=f"https://c{i}.com/", address="1 Main St") for i in range(1, 9)])
+
+    async def live(candidates):
+        return candidates
+
+    def confirm(dots):
+        asked["dots"] = dots
+        return [item(dotNumber=d) for d in dots], RUN
+
+    monkeypatch.setattr(seed, "live_websites", live)
+    monkeypatch.setattr(seed, "apify_confirm", confirm)
+    monkeypatch.setattr(seed, "confirmed", lambda c, items, run: c)
+    monkeypatch.setattr(seed.geo, "geocode", lambda *_: {"lat": 39.5, "lon": -119.8, "geo_source": "test"})
+    world = {"carriers": [{"id": "C-OFF-1", "state": "NV", "source": "offline_fixture"},
+                          {"id": "C-311", "state": "NV", "source": "prd_hero_fixture"},
+                          {"id": "C-77", "state": "NV", "source": "prd_hero_fixture"}],
+             "lanes": [{"id": "L1", "carrier_id": "C-311"}, {"id": "L2", "carrier_id": "C-77"}]}
+    snapshot = seed.fetch(world)
+    assert len(asked["dots"]) == 3 * seed.CANDIDATES_PER_SLOT, "one fixture and two laned heroes need three carriers"
+    assert len(seed.apply(world, snapshot)[1]) == 3
+
+
 def test_seeding_needs_an_existing_world(monkeypatch, tmp_path):
     monkeypatch.setenv("WORLD_FILE", str(tmp_path / "missing.json"))
     monkeypatch.setattr("sys.argv", ["seed_real_carriers"])

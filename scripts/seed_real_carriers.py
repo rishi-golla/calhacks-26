@@ -151,10 +151,17 @@ def confirmed(candidate: dict, items: list[dict], run: dict) -> dict | None:
             "verified_by": {**run, "evidence_ref": f"apify://runs/{run['run_id']}"}}
 
 
+def to_replace(world: dict) -> list[dict]:
+    """Carriers `apply` swaps for real ones: offline fixtures, and hero carriers that still have lanes."""
+    laned = {lane["carrier_id"] for lane in world["lanes"]}
+    return [c for c in world["carriers"] if c.get("source") == FIXTURE_SOURCE
+            or c.get("source") in LANE_ONLY_SOURCES and c["id"] in laned]
+
+
 def fetch(world: dict) -> dict:
-    need = Counter(c.get("state") for c in world["carriers"] if c.get("source") == FIXTURE_SOURCE)
+    need = Counter(c.get("state") for c in to_replace(world))
     if not need:
-        raise SystemExit("world has no offline_fixture carriers to replace")
+        raise SystemExit("world has no fixture carriers or hero lanes to replace")
     picks = []
     for state, n in sorted(need.items()):
         sites = {c["website"] for c in picks}
@@ -181,13 +188,13 @@ def apply(world: dict, snapshot: dict) -> tuple[dict, dict]:
     for c in snapshot["carriers"]:
         pool[c["state"]].append(c)
     taken = {c.get("usdot") for c in world["carriers"] if c.get("source") != FIXTURE_SOURCE}
-    laned = {lane["carrier_id"] for lane in world["lanes"]}
+    replaced = {c["id"] for c in to_replace(world)}
     remap, carriers = {}, []
     for old in world["carriers"]:
         if old.get("source") != FIXTURE_SOURCE:
             carriers.append(old)  # real carriers and hero records stay
-            if not (old.get("source") in LANE_ONLY_SOURCES and old["id"] in laned):
-                continue
+        if old["id"] not in replaced:
+            continue
         choices = [c for c in pool[old.get("state")] if c["usdot"] not in taken] \
             or [c for cs in pool.values() for c in cs if c["usdot"] not in taken]
         if not choices:

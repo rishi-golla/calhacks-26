@@ -2,7 +2,10 @@
 /**
  * First-load intro: Senra-style hairline grid drawing itself in with GSAP
  * (scaleX / scaleY from 0, quint.inOut, staggered), wordmark fade, then the
- * overlay lifts. Plays once per session; skipped under reduced motion.
+ * overlay lifts. Plays on every full page load (a refresh or a typed URL), not
+ * on in-app navigation, since the shell stays mounted. Skipped under reduced
+ * motion, or when sessionStorage `freightline.intro.v1` is "1" (screenshot and
+ * test scripts set it to land on the page directly).
  * `onDone` fires when the overlay starts lifting (or at once when skipped).
  *
  * The whole screen sits inside Canvas UI's Grid, so on Chrome with
@@ -14,7 +17,8 @@ import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { Grid } from "@/components/canvasui/Grid";
 
-const KEY = "freightline.intro.v1";
+/** Opt-out for automation; the intro itself never sets it. */
+const SKIP_KEY = "freightline.intro.v1";
 const COLS = 8;
 const ROWS = 5;
 /** Teal accent as 0..1 RGB for the lifted-tile tint. */
@@ -27,14 +31,14 @@ export default function Intro({ onDone }: { onDone?: () => void }) {
   const done = useRef(onDone);
   done.current = onDone;
   useEffect(() => {
-    let seen = false;
+    let skip = false;
     try {
-      seen = sessionStorage.getItem(KEY) === "1";
+      skip = sessionStorage.getItem(SKIP_KEY) === "1";
     } catch {
       /* ignore */
     }
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (seen || reduced) {
+    if (skip || reduced) {
       done.current?.();
       return;
     }
@@ -48,14 +52,7 @@ export default function Intro({ onDone }: { onDone?: () => void }) {
     const word = el.querySelector<HTMLElement>(".fl-intro-word");
     const tl = gsap.timeline({
       defaults: { ease: "quint.inOut" },
-      onComplete: () => {
-        try {
-          sessionStorage.setItem(KEY, "1");
-        } catch {
-          /* ignore */
-        }
-        setShow(false);
-      },
+      onComplete: () => setShow(false),
     });
     tl.to(xs, { scaleX: 1, duration: 1.4, stagger: 0.08 }, 0)
       .to(ys, { scaleY: 1, duration: 1.4, stagger: 0.06 }, 0.15)

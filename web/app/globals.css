@@ -2709,28 +2709,38 @@ button.ev-chip:focus-visible {
   margin-left: auto;
 }
 
-/* inputs before a general equation */
-.wk-inputs {
+/* inputs before a general equation (scoped under .wk-row to beat surface dl/dt/dd styles) */
+.wk-row .wk-inputs {
   display: grid;
   grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
   gap: 1px 12px;
   margin: 0;
+  padding: 0;
+  border: 0;
   font-size: 11.5px;
 }
 .wk-inputs > div {
   display: contents;
 }
-.wk-inputs dt {
+.wk-row .wk-inputs dt {
+  margin: 0;
+  font-size: inherit;
   color: var(--ev-mute);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.wk-inputs dd {
+.wk-row .wk-inputs dd {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   margin: 0;
+  font-size: inherit;
+  color: inherit;
+}
+.wk-stated {
+  font-size: 11.5px;
+  color: var(--ev-bad);
 }
 
 /* object results as facts, never JSON */

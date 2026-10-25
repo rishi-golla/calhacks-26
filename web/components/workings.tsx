@@ -22,6 +22,7 @@ import {
   resultFacts,
   type Check,
   type Operand,
+  type Recheck as RecheckResult,
   type Working,
   type WorkingLayout,
   type WorkingUnit,
@@ -42,8 +43,7 @@ export function BasisChip({ basis }: { basis: string }) {
   );
 }
 
-function Recheck({ w }: { w: Working }) {
-  const r = recheckWorking(w);
+function Recheck({ w, r }: { w: Working; r: RecheckResult }) {
   if (r.status === "unchecked") return null;
   if (r.status === "match")
     return (
@@ -53,7 +53,7 @@ function Recheck({ w }: { w: Working }) {
     );
   return (
     <span className="wk-recheck bad" title="The dashboard recomputed this formula from the inputs shown and got a different result.">
-      {r.computed === undefined ? "≠ does not recompute" : `≠ recomputes to ${formatValue(r.computed, typeof r.computed === "boolean" ? "bool" : w.unit)}`}
+      {r.computed === undefined ? "≠ does not follow from its inputs" : `≠ recomputes to ${formatValue(r.computed, typeof r.computed === "boolean" ? "bool" : w.unit)}`}
     </span>
   );
 }
@@ -115,7 +115,16 @@ function Comparison({ left, op, right, holds, gap, w }: { left: Operand; op: str
   );
 }
 
-function Body({ w, layout }: { w: Working; layout: WorkingLayout }) {
+/** What the agent stated, shown beside a verdict the dashboard recomputed and disputes. */
+function Stated({ w }: { w: Working }) {
+  return (
+    <div className="wk-stated fl-mono">
+      <span className="wk-side-k">Agent stated</span> <Result w={w} />
+    </div>
+  );
+}
+
+function Body({ w, layout, disputed }: { w: Working; layout: WorkingLayout; disputed: boolean }) {
   switch (layout.kind) {
     case "tally":
     case "note": {
@@ -151,11 +160,16 @@ function Body({ w, layout }: { w: Working; layout: WorkingLayout }) {
       );
     }
     case "compare":
-      return <Comparison {...layout} w={w} />;
+      return (
+        <>
+          <Comparison {...layout} w={w} />
+          {disputed && layout.holds !== undefined && <Stated w={w} />}
+        </>
+      );
     case "table":
       return (
         <>
-          <div className="wk-table-wrap">
+          <div className="wk-table-wrap" tabIndex={0} role="region" aria-label={`${w.label}: lines`}>
             <table className="wk-table fl-mono">
               <thead>
                 <tr>
@@ -197,6 +211,7 @@ function Body({ w, layout }: { w: Working; layout: WorkingLayout }) {
             </table>
           </div>
           {layout.comparison && <Comparison {...layout.comparison} w={w} />}
+          {layout.comparison && disputed && <Stated w={w} />}
           {!layout.net && !layout.comparison && (
             <div className="wk-eq fl-mono">
               <span className="wk-eqs">=</span> <Result w={w} />
@@ -266,14 +281,15 @@ function Body({ w, layout }: { w: Working; layout: WorkingLayout }) {
 export function WorkingRow({ working, nested = false }: { working: Working; nested?: boolean }) {
   const w = working;
   const layout = layoutWorking(w);
+  const recheck = recheckWorking(w);
   return (
     <div className={`wk-row ${nested ? "nested" : ""}`} data-layout={layout.kind}>
       <div className="wk-head">
         <span className="wk-label">{w.label}</span>
         <BasisChip basis={w.basis} />
-        <Recheck w={w} />
+        <Recheck w={w} r={recheck} />
       </div>
-      <Body w={w} layout={layout} />
+      <Body w={w} layout={layout} disputed={recheck.status === "mismatch"} />
       {w.formula && (
         <div className="wk-sym fl-mono" title="Formula as published by the agent">
           {w.formula}

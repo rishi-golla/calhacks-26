@@ -129,7 +129,7 @@ export function formatValue(value: unknown, unit: WorkingUnit = "text"): string 
   }
   if (typeof value === "number") return grouped(value, 4);
   if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.length ? value.slice(0, 12).map((v) => (typeof v === "string" ? inputLabel(v) : formatValue(v, unit))).join(", ") : "none";
+  if (Array.isArray(value)) return value.length ? value.slice(0, 12).map((v) => (typeof v === "string" && /^[a-z][a-z0-9_]*$/.test(v) ? inputLabel(v) : formatValue(v, unit))).join(", ") : "none";
   try {
     const s = JSON.stringify(value);
     return s.length > 80 ? `${s.slice(0, 80)}…` : s;
@@ -538,6 +538,9 @@ export function resultFacts(value: unknown, unit: WorkingUnit): Fact[] | null {
     });
 }
 
+const setMembers = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v) => typeof v === "string" || typeof v === "number").map(String) : [];
+
 /** Lay a working out for reading. Pure; unrecognized shapes become an `expression`. */
 export function layoutWorking(w: Pick<Working, "formula" | "inputs" | "result" | "unit" | "evidence_refs">): WorkingLayout {
   const f = w.formula.trim();
@@ -549,8 +552,8 @@ export function layoutWorking(w: Pick<Working, "formula" | "inputs" | "result" |
   // required_documents - received_documents, both lists.
   const set = /^([A-Za-z_]\w*)\s*-\s*([A-Za-z_]\w*)$/.exec(f);
   if (set && Array.isArray(w.inputs[set[1]]) && Array.isArray(w.inputs[set[2]])) {
-    const have = new Set((w.inputs[set[2]] as unknown[]).map(String));
-    const names = [...new Set((w.inputs[set[1]] as unknown[]).map(String))].slice(0, 20);
+    const have = new Set(setMembers(w.inputs[set[2]]));
+    const names = [...new Set(setMembers(w.inputs[set[1]]))].slice(0, 20);
     return { kind: "set", title: inputLabel(set[1]), items: names.map((name) => ({ name, label: inputLabel(name), present: have.has(name) })) };
   }
 
@@ -569,7 +572,14 @@ export function layoutWorking(w: Pick<Working, "formula" | "inputs" | "result" |
         kind: "tally",
         lines: tokens
           .filter((_, i) => i % 2 === 0)
-          .map((t, n) => ({ ...operand(w, String(t.v)), op: n === 0 ? "" : tokens[2 * n - 1].v === "+" ? "+" : "−" })),
+          .map((t, n) => {
+            const key = String(t.v);
+            const line = operand(w, key);
+            if (n === 0) return { ...line, op: "" as const };
+            const amount = toNumber(w.inputs[key]) as number;
+            const plus = (tokens[2 * n - 1].v === "+") === amount >= 0;
+            return { ...line, value: formatInput(key, Math.abs(amount), w.unit), op: plus ? ("+" as const) : ("−" as const) };
+          }),
       };
   }
 
@@ -582,14 +592,15 @@ export function layoutWorking(w: Pick<Working, "formula" | "inputs" | "result" |
       const holds = evaluateFormula(f, w.inputs);
       const diff = Math.abs(a - b);
       const unit = inputUnit(l, w.inputs[l], w.unit);
-      const word = holds ? (o === "==" ? "" : "headroom") : o === "<=" || o === "<" ? "over" : o === ">=" || o === ">" ? "short" : "off";
+      // Where the left side sits against the right; whether that is good depends on the rule.
+      const word = a > b ? "over" : "under";
       return {
         kind: "compare",
         left: operand(w, l),
         op: PRETTY_COMPARE[o],
         right: operand(w, r),
         holds: typeof holds === "boolean" ? holds : undefined,
-        ...(diff > 1e-9 && word ? { gap: `${formatValue(diff, unit)} ${word}` } : {}),
+        ...(diff > 1e-9 ? { gap: `${formatValue(diff, unit)} ${word}` } : {}),
       };
     }
   }
@@ -634,7 +645,9 @@ function lineModel(w: Pick<Working, "formula" | "inputs">): LineModel | null {
     const left = column(sides[1]);
     const right = column(sides[3]);
     if (left && right) {
-      const holds = evaluateFormula(`a ${sides[2]} b`, { a: totals[columns.indexOf(left)], b: totals[columns.indexOf(right)] });
+      // Whole cents: float sums of balanced entries can differ in the last bits.
+      const cents = (c: string) => Math.round(totals[columns.indexOf(c)] * 100);
+      const holds = evaluateFormula(`a ${sides[2]} b`, { a: cents(left), b: cents(right) });
       if (typeof holds === "boolean") model.sides = { left, op: sides[2], right, holds };
     }
     return model;
@@ -698,14 +711,16 @@ function recheckTable(w: Pick<Working, "formula" | "inputs" | "result" | "unit">
           return v === null || sameNumber(v, m.totals[m.columns.indexOf(c)], "usd");
         })
       : true;
-    return { status: flag === m.sides.holds && statedTotals ? "match" : "mismatch", computed: m.sides.holds };
+    if (flag !== m.sides.holds) return { status: "mismatch", computed: m.sides.holds };
+    // The verdict agrees but a stated total does not: no single recomputed value to show.
+    return statedTotals ? { status: "match", computed: m.sides.holds } : { status: "mismatch" };
   }
   // required_documents - received_documents: the stated missing list is the set difference.
   const set = /^([A-Za-z_]\w*)\s*-\s*([A-Za-z_]\w*)$/.exec(w.formula.trim());
   if (set && Array.isArray(w.inputs[set[1]]) && Array.isArray(w.inputs[set[2]]) && Array.isArray(w.result)) {
-    const have = new Set((w.inputs[set[2]] as unknown[]).map(String));
-    const missing = new Set((w.inputs[set[1]] as unknown[]).map(String).filter((d) => !have.has(d)));
-    const stated = new Set((w.result as unknown[]).map(String));
+    const have = new Set(setMembers(w.inputs[set[2]]));
+    const missing = new Set(setMembers(w.inputs[set[1]]).filter((d) => !have.has(d)));
+    const stated = new Set(setMembers(w.result));
     const same = missing.size === stated.size && [...missing].every((d) => stated.has(d));
     return { status: same ? "match" : "mismatch" };
   }

@@ -275,3 +275,24 @@ test("document packets, notes and lists", () => {
   // A function call is not a note.
   assert.equal(layoutWorking(at({ formula: "abs(delta)", inputs: { delta: -5 } })).kind, "expression");
 });
+
+test("review fixes: ids, negative lines, neutral gaps, cent-exact journals, stray set members", () => {
+  // IDs are shown verbatim; only snake_case names become labels.
+  assert.equal(formatValue(["BNK-3FA9C01B2E", "JE-ABC", "rate_confirmation"], "text"), "BNK-3FA9C01B2E, JE-ABC, Rate confirmation");
+  // A negative line (QuickPay discount) flips the operator instead of reading "+ -$43.00".
+  const quickpay = layoutWorking(at({ formula: "linehaul + quickpay_discount", inputs: { linehaul: 1000, quickpay_discount: -43 }, result: 957 }));
+  assert.deepEqual(quickpay.kind === "tally" && quickpay.lines.map((l) => [l.op, l.value]), [["", "$1,000.00"], ["−", "$43.00"]]);
+  const minusNegative = layoutWorking(at({ formula: "a - b", inputs: { a: 10, b: -5 }, result: 15 }));
+  assert.deepEqual(minusNegative.kind === "tally" && minusNegative.lines.map((l) => [l.op, l.value]), [["", "$10.00"], ["+", "$5.00"]]);
+  // The gap says where the left side sits, not whether that is good.
+  const window = layoutWorking(at({ formula: "received_before_payment_h < minimum_review_h", inputs: { received_before_payment_h: 19, minimum_review_h: 72 }, result: true, unit: "bool" }));
+  assert.equal(window.kind === "compare" && window.gap, "53 h under");
+  // Balanced entries at freight-unfriendly magnitudes still balance (whole-cent comparison).
+  const big = at({ formula: "sum(debits) == sum(credits)", inputs: { a_1: { debit: 0.1, credit: 0 }, b_2: { debit: 0.2, credit: 0 }, c_3: { debit: 0, credit: 0.3 } }, result: { balanced: true }, unit: "text" });
+  assert.equal(recheckWorking(big).status, "match");
+  // Verdict agrees but a stated total is wrong: mismatch without a misleading recomputed value.
+  assert.deepEqual(recheckWorking({ ...journal, result: { debits: 90, credits: 2150, balanced: true } }), { status: "mismatch" });
+  // Non-name set members are dropped, not shown as [object Object].
+  const odd = layoutWorking(at({ formula: "required_documents - received_documents", inputs: { required_documents: ["pod", { x: 1 }], received_documents: [] }, result: ["pod"], unit: "text" }));
+  assert.deepEqual(odd.kind === "set" && odd.items.map((d) => d.name), ["pod"]);
+});

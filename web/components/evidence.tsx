@@ -31,7 +31,7 @@ export function EvidenceChip({ evidenceRef, className = "", label }: { evidenceR
   const button = useRef<HTMLButtonElement>(null);
   if (!parsed.previewable)
     return (
-      <span className={`ev-chip static ${className}`} title={label ? `${evidenceRef} (no preview)` : "no preview for this source"}>
+      <span className={`ev-chip static ${className}`} title={label ? `${evidenceRef} (no preview)` : "no preview for this source"} aria-label={label ? `${label}: ${evidenceRef}` : undefined}>
         {label ?? evidenceRef}
       </span>
     );
@@ -43,6 +43,7 @@ export function EvidenceChip({ evidenceRef, className = "", label }: { evidenceR
         type="button"
         className={`ev-chip ${className}`}
         aria-haspopup="dialog"
+        aria-label={label ? `${label}: ${evidenceRef}` : undefined}
         title={`${label ? `${evidenceRef}: ` : ""}${parsed.kind === "mail" ? "Open the source email" : "Open the source document"}`}
         onClick={(e) => {
           // Chips live inside clickable rows; the chip owns this click.
